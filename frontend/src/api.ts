@@ -97,6 +97,19 @@ export function measureFaceInfo(modelId: string, ref: EntityRef) {
   return measureRequest<FaceInfoResult>(modelId, { type: 'face_info', ref })
 }
 
+/** Per-vertex thickness per part (server ray-cast; 0 = no data). */
+export async function fetchThickness(modelId: string): Promise<Map<number, Float32Array>> {
+  const res = await fetch(`/api/models/${modelId}/thickness.bin`)
+  if (!res.ok) throw new Error(`thickness fetch failed: ${res.status}`)
+  const pack = parseMeshPack(await res.arrayBuffer())
+  const out = new Map<number, Float32Array>()
+  for (const [name, arr] of Object.entries(pack.buffers)) {
+    const m = name.match(/^p(\d+):thickness$/)
+    if (m) out.set(Number(m[1]), arr as Float32Array)
+  }
+  return out
+}
+
 export async function getSidecar(modelId: string): Promise<Record<string, unknown>> {
   const res = await fetch(`/api/models/${modelId}/sidecar`)
   if (!res.ok) return {}

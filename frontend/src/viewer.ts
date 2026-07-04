@@ -79,6 +79,58 @@ export class Viewer {
     return this.partMeshes.get(partId)
   }
 
+  /** Thickness heatmap: red below threshold, grading to base blue when thick. */
+  setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
+    for (const [partId, t] of thickness) {
+      const mesh = this.partMeshes.get(partId)
+      if (!mesh) continue
+      const n = t.length
+      const colors = new Float32Array(n * 3)
+      for (let i = 0; i < n; i++) {
+        const v = t[i]
+        let r = 0.55
+        let g = 0.62
+        let b = 0.75 // no-data: neutral gray-blue
+        if (v > 0) {
+          const u = Math.min(v / (2 * threshold), 1)
+          if (u < 0.5) {
+            // thin: red -> yellow
+            const k = u / 0.5
+            r = 1
+            g = 0.15 + 0.75 * k
+            b = 0.08
+          } else {
+            // ok: yellow -> steel blue
+            const k = (u - 0.5) / 0.5
+            r = 1 - 0.65 * k
+            g = 0.9 - 0.35 * k
+            b = 0.08 + 0.72 * k
+          }
+        }
+        colors[i * 3] = r
+        colors[i * 3 + 1] = g
+        colors[i * 3 + 2] = b
+      }
+      mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      if (!mesh.userData.baseColor) mesh.userData.baseColor = mat.color.clone()
+      mat.vertexColors = true
+      mat.color.set(0xffffff)
+      mat.needsUpdate = true
+    }
+  }
+
+  clearThicknessColors(): void {
+    for (const mesh of this.partMeshes.values()) {
+      const mat = mesh.material as THREE.MeshStandardMaterial
+      if (mat.vertexColors) {
+        mat.vertexColors = false
+        if (mesh.userData.baseColor) mat.color.copy(mesh.userData.baseColor)
+        mat.needsUpdate = true
+      }
+    }
+  }
+
   /** Apply clipping planes to every model material (mesh + edge lines). */
   setClippingPlanes(planes: THREE.Plane[]): void {
     const list = planes.length ? planes : null

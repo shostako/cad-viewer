@@ -7,9 +7,15 @@ Phase 4: DXF/DWG (2D pipeline, separate route).
 from __future__ import annotations
 
 import io
+import math
 from pathlib import Path
 
 import trimesh
+import trimesh.graph
+
+# split vertices at edges sharper than this so flat faces shade flat
+# (also gives sane per-vertex normals for thickness rays)
+SMOOTH_ANGLE = math.radians(30)
 
 # formats trimesh handles directly (mesh route)
 MESH_EXTS = {".stl", ".3mf", ".obj", ".ply", ".off", ".glb", ".gltf"}
@@ -42,4 +48,4 @@ def load_mesh(data: bytes, filename: str) -> trimesh.Trimesh:
         loaded = loaded.to_mesh()
     if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
         raise ValueError("no triangle geometry found in file")
-    return loaded
+    return trimesh.graph.smooth_shade(loaded, angle=SMOOTH_ANGLE)

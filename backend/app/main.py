@@ -167,6 +167,46 @@ def measure_model(model_id: str, request: dict) -> dict:
         raise HTTPException(422, str(e)) from e
 
 
+@app.get("/api/models/{model_id}/thickness.bin")
+def get_thickness(model_id: str) -> Response:
+    """Per-vertex wall thickness for every part (computed lazily, cached)."""
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    blob = entry.extra.get("thickness_blob")
+    if blob is None:
+        import struct as _struct
+
+        import numpy as np
+
+        from .meshpack import pack_buffers
+        from .thickness import vertex_thickness
+
+        # decode the entry's own mesh blob (works for mesh & brep alike)
+        raw = entry.mesh_blob
+        (hlen,) = _struct.unpack_from("<I", raw, 0)
+        header = json.loads(raw[4 : 4 + hlen])
+        base = 4 + hlen
+
+        def buf(name: str, dtype):
+            d = header["buffers"][name]
+            return np.frombuffer(raw, dtype=dtype, count=d["count"], offset=base + d["offset"])
+
+        buffers = {}
+        for p in header["parts"]:
+            pid = p["id"]
+            positions = buf(f"p{pid}:positions", np.float32).reshape(-1, 3)
+            normals = buf(f"p{pid}:normals", np.float32).reshape(-1, 3)
+            indices = buf(f"p{pid}:indices", np.uint32).reshape(-1, 3)
+            t = vertex_thickness(positions, normals, indices)
+            # inf -> 0 sentinel (frontend treats <=0 as "no data")
+            t[~np.isfinite(t)] = 0.0
+            buffers[f"p{pid}:thickness"] = (t, 1)
+        blob = pack_buffers(buffers)
+        entry.extra["thickness_blob"] = blob
+    return Response(content=blob, media_type="application/octet-stream")
+
+
 def _sidecar_path(model_id: str) -> Path:
     entry = store.get(model_id)
     if entry is None:

@@ -1,7 +1,15 @@
 import './style.css'
 import GUI from 'lil-gui'
 import * as THREE from 'three'
-import { uploadModel, fetchMesh, fetchDrawingSvg, getSidecar, putSidecar, type ModelMeta } from './api'
+import {
+  uploadModel,
+  fetchMesh,
+  fetchDrawingSvg,
+  fetchThickness,
+  getSidecar,
+  putSidecar,
+  type ModelMeta,
+} from './api'
 import { Drawing2D } from './drawing2d'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
@@ -102,6 +110,38 @@ sectionFolder
   .add(sectionTool, 'flip')
   .name('反転')
   .onChange(() => sectionTool.update())
+
+// ---- thickness heatmap
+const thicknessState = { enabled: false, threshold: 1.5 }
+let thicknessCache: Map<number, Float32Array> | null = null
+async function updateThickness(): Promise<void> {
+  if (!currentModelId) return
+  if (!thicknessState.enabled) {
+    viewer.clearThicknessColors()
+    return
+  }
+  try {
+    if (!thicknessCache) {
+      hudInfo.textContent = '肉厚計算中...'
+      thicknessCache = await fetchThickness(currentModelId)
+      hudInfo.textContent = '肉厚ヒートマップ表示中（赤=閾値未満）'
+    }
+    viewer.setThicknessColors(thicknessCache, thicknessState.threshold)
+  } catch (e) {
+    thicknessState.enabled = false
+    hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
+  }
+}
+const thicknessFolder = gui.addFolder('肉厚')
+thicknessFolder.close()
+thicknessFolder
+  .add(thicknessState, 'enabled')
+  .name('ヒートマップ')
+  .onChange(() => void updateThickness())
+thicknessFolder
+  .add(thicknessState, 'threshold', 0.1, 10, 0.1)
+  .name('閾値 (mm)')
+  .onChange(() => void updateThickness())
 
 // ---- sidecar persistence (auto-save, debounced)
 let saveTimer: ReturnType<typeof setTimeout> | undefined
@@ -215,6 +255,8 @@ async function loadFile(file: File): Promise<void> {
     }
 
     show2D(false)
+    thicknessCache = null
+    thicknessState.enabled = false
     const pack = await fetchMesh(meta.id)
     const model = toModelData(pack)
     viewer.setModel(model)
