@@ -109,6 +109,12 @@ def pack_parts(meshes, tree, deflection: float) -> tuple[bytes, dict[str, Any]]:
             gmin = np.minimum(gmin, m.positions.min(axis=0))
             gmax = np.maximum(gmax, m.positions.max(axis=0))
 
+    # all-empty parts would leave inf/-inf here — JSON "Infinity" breaks
+    # the browser's JSON.parse, so fall back to a zero box
+    if not (np.isfinite(gmin).all() and np.isfinite(gmax).all()):
+        gmin = np.zeros(3)
+        gmax = np.zeros(3)
+
     header_extra = {
         "parts": parts_meta,
         "tree": tree.to_dict(),

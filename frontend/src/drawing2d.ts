@@ -105,6 +105,13 @@ export class Drawing2D {
       downAt = null
       if (moved <= 5 && this.measureMode) this.handleClick(e.clientX, e.clientY)
     })
+    // don't leave the pan state stuck if the pointer stream is interrupted
+    for (const ev of ['pointercancel', 'lostpointercapture'] as const) {
+      this.container.addEventListener(ev, () => {
+        panning = false
+        downAt = null
+      })
+    }
     this.container.addEventListener('wheel', (e) => {
       if (!this.svg) return
       e.preventDefault()

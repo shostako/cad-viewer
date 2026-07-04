@@ -52,6 +52,17 @@ async def upload_model(file: UploadFile) -> dict:
 
     content_hash = hashlib.sha256(data).hexdigest()[:32]
 
+    # identical content already in memory — reuse instead of duplicating
+    existing = store.get_by_hash(content_hash)
+    if existing is not None and existing.fmt == route:
+        return {
+            "id": existing.model_id,
+            "name": existing.name,
+            "format": existing.fmt,
+            **({"cached": True} if route == "brep" else {}),
+            **existing.meta,
+        }
+
     if route == "mesh":
         try:
             mesh = load_mesh(data, name)
@@ -99,7 +110,8 @@ async def upload_model(file: UploadFile) -> dict:
             meta=meta,
             mesh_blob=blob,
             brep={"meshes": meshes},  # Phase 2: face/edge maps for measurement
-            extra={"raw": data, "filename": name, "cached": False, "hash": content_hash},
+            # no "raw" here: brep handles are live, raw bytes would be dead weight
+            extra={"filename": name, "cached": False, "hash": content_hash},
         )
         store.add(entry)
         return {"id": entry.model_id, "name": name, "format": route, "cached": False, **meta}
@@ -144,13 +156,20 @@ def get_mesh(model_id: str) -> Response:
 
 
 def _brep_meshes(entry: ModelEntry):
-    """B-rep handles for measurement; lazily re-parsed after a cache hit."""
-    if entry.brep is None:
-        raw = entry.extra.get("raw")
-        if raw is None:
-            raise HTTPException(422, "model has no B-rep data (mesh formats can't be measured exactly)")
-        meshes, _tree, _defl = load_brep(raw, entry.extra["filename"])
-        entry.brep = {"meshes": meshes}
+    """B-rep handles for measurement; lazily re-parsed after a cache hit.
+
+    entry.lock serializes the re-parse: concurrent measure requests on a
+    fresh cache-hit entry would otherwise both run the expensive load_brep.
+    """
+    with entry.lock:
+        if entry.brep is None:
+            raw = entry.extra.get("raw")
+            if raw is None:
+                raise HTTPException(
+                    422, "model has no B-rep data (mesh formats can't be measured exactly)"
+                )
+            meshes, _tree, _defl = load_brep(raw, entry.extra["filename"])
+            entry.brep = {"meshes": meshes}
     return entry.brep["meshes"]
 
 
@@ -181,8 +200,10 @@ def get_thickness(model_id: str, method: str = "ray") -> Response:
     if entry is None:
         raise HTTPException(404, "model not found")
     cache_key = f"thickness_blob_{method}"
-    blob = entry.extra.get(cache_key)
-    if blob is None:
+    with entry.lock:
+        blob = entry.extra.get(cache_key)
+        if blob is not None:
+            return Response(content=blob, media_type="application/octet-stream")
         import struct as _struct
 
         import numpy as np

@@ -123,6 +123,8 @@ def _snap_points(msp) -> list[tuple[tuple[float, float], str]]:
             out.append(((x, y), kind))
 
     for e in msp:
+        if len(out) >= MAX_SNAP_POINTS:
+            break  # cap reached — stop scanning entities entirely
         t = e.dxftype()
         try:
             if t == "LINE":

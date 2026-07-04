@@ -342,7 +342,6 @@ def _edge_polyline(edge, ancestors: TopTools_IndexedDataMapOfShapeListOfShape) -
     if not ancestors.Contains(edge):
         return None
     faces = ancestors.FindFromKey(edge)
-    it = faces.begin() if hasattr(faces, "begin") else None
     face_shape = faces.First() if faces.Size() > 0 else None
     if face_shape is None:
         return None

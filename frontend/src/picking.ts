@@ -146,6 +146,11 @@ export class Picker {
   }
 }
 
+// Contract (backend tessellation.py): faceRanges/edgeRanges are emitted in
+// ascending triStart/segStart order with no overlap — triangles are packed
+// per face in TopTools map order. The binary searches below rely on this.
+// Note: hit.faceIndex maps to the ORIGINAL triangle order because the BVH is
+// built with {indirect: true}; the E2E pick tests pin this behavior.
 function findRange(ranges: FaceRange[], triIndex: number): number | null {
   let lo = 0
   let hi = ranges.length - 1

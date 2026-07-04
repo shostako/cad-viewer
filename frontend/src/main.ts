@@ -97,6 +97,7 @@ sectionFolder.close()
 sectionFolder
   .add(sectionTool, 'enabled')
   .name('有効')
+  .listen() // state can change programmatically (2D switch) — keep UI in sync
   .onChange(() => sectionTool.update())
 sectionFolder
   .add(sectionTool, 'axis', ['X', 'Y', 'Z'] as Axis[])
@@ -146,6 +147,7 @@ thicknessFolder.close()
 thicknessFolder
   .add(thicknessState, 'enabled')
   .name('ヒートマップ')
+  .listen() // reset programmatically on errors / model switch
   .onChange(() => void updateThickness())
 thicknessFolder
   .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
@@ -250,57 +252,76 @@ function fmtBBox(meta: ModelMeta): string {
   return d.map((v) => v.toFixed(1)).join(' × ')
 }
 
+// generation token: a newer loadFile call supersedes older in-flight ones
+let loadGen = 0
+
 async function loadFile(file: File): Promise<void> {
+  const gen = ++loadGen
   hudInfo.textContent = `読み込み中: ${file.name} ...`
+
   try {
     const meta = await uploadModel(file)
+    if (gen !== loadGen) return // superseded by a newer load
 
-    if (meta.format === 'drawing') {
-      const svg = await fetchDrawingSvg(meta.id)
-      drawing2d.load(svg, meta.snapPoints ?? [])
-      show2D(true)
-      currentModelId = meta.id
-      const d = meta.bbox2d
-        ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
-        : '?'
-      hudInfo.textContent = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
-      return
-    }
-
-    show2D(false)
-    thicknessCache.clear()
-    thicknessState.enabled = false
-    const pack = await fetchMesh(meta.id)
-    const model = toModelData(pack)
-    viewer.setModel(model)
-    picker.setModel(model.parts)
-    measureTool.setModel(meta.id, meta.format === 'brep')
-    currentModelId = meta.id
-    sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
-
-    // restore persisted measurements / annotations
+    // --- teardown of the previous model -----------------------------------
+    // ORDER MATTERS (sidecar corruption hazard):
+    // 1. cancel any pending debounced save (it captured the OLD model id)
+    // 2. restoring=true so teardown emits can't schedule new saves
+    // 3. only then swap currentModelId and clear tools
+    clearTimeout(saveTimer)
     restoring = true
     try {
+      currentModelId = meta.id
+      measureTool.clearAll()
+      thicknessCache.clear()
+      thicknessState.enabled = false
+      viewer.clearThicknessColors()
+
+      if (meta.format === 'drawing') {
+        const svg = await fetchDrawingSvg(meta.id)
+        if (gen !== loadGen) return
+        sectionTool.enabled = false
+        sectionTool.update()
+        drawing2d.load(svg, meta.snapPoints ?? [])
+        show2D(true)
+        const d = meta.bbox2d
+          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
+          : '?'
+        hudInfo.textContent = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+        return
+      }
+
+      show2D(false)
+      const pack = await fetchMesh(meta.id)
+      if (gen !== loadGen) return
+      const model = toModelData(pack)
+      viewer.setModel(model)
+      picker.setModel(model.parts)
+      measureTool.setModel(meta.id, meta.format === 'brep')
+      sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
+
+      // restore persisted measurements / annotations
       const sidecar = await getSidecar(meta.id)
+      if (gen !== loadGen) return
       const entries = (sidecar.entries ?? []) as EntryData[]
       if (entries.length) measureTool.restore(entries)
+
+      if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
+        renderTree(treeBody, model.tree, (partId, visible) =>
+          viewer.setPartVisible(partId, visible),
+        )
+        treePanel.classList.remove('hidden')
+      } else {
+        treePanel.classList.add('hidden')
+      }
+
+      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
+      hudInfo.textContent =
+        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
+        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
     } finally {
-      restoring = false
+      if (gen === loadGen) restoring = false
     }
-
-    if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
-      renderTree(treeBody, model.tree, (partId, visible) =>
-        viewer.setPartVisible(partId, visible),
-      )
-      treePanel.classList.remove('hidden')
-    } else {
-      treePanel.classList.add('hidden')
-    }
-
-    const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
-    hudInfo.textContent =
-      `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
-      `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
   } catch (e) {
     hudInfo.textContent = `エラー: ${e instanceof Error ? e.message : e}`
   }

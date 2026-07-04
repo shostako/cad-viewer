@@ -93,6 +93,11 @@ export class Viewer {
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
       if (!mesh) continue
+      // contract: one thickness value per display vertex
+      if (t.length !== mesh.geometry.getAttribute('position').count) {
+        console.warn(`thickness length mismatch for part ${partId} — skipped`)
+        continue
+      }
       const n = t.length
       const colors = new Float32Array(n * 3)
       for (let i = 0; i < n; i++) {

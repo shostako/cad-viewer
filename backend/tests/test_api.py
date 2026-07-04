@@ -139,3 +139,21 @@ def test_3mf_roundtrip(client):
     meta = r.json()
     assert meta["format"] == "mesh"
     assert meta["triangleCount"] == 12
+
+
+def test_store_lru_eviction_and_dedup(client):
+    from app.store import ModelStore, ModelEntry
+
+    s = ModelStore(max_entries=3)
+    for i in range(5):
+        s.add(ModelEntry(model_id=f"m{i}", name=f"n{i}", fmt="mesh", meta={}, extra={"hash": f"h{i}"}))
+    assert s.get("m0") is None and s.get("m1") is None  # evicted
+    assert s.get("m4") is not None
+    assert s.get_by_hash("h0") is None  # hash index cleaned up
+    assert s.get_by_hash("h3").model_id == "m3"
+
+
+def test_upload_dedup_same_content(client):
+    meta1 = _upload_box(client)
+    meta2 = _upload_box(client)  # identical bytes
+    assert meta1["id"] == meta2["id"], "identical content must reuse the entry"

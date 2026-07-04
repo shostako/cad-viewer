@@ -1,14 +1,19 @@
-"""In-memory model store.
+"""In-memory model store with LRU eviction and content-hash dedup.
 
-Phase 0: holds trimesh meshes loaded from uploaded files.
-Phase 1+: will also hold TopoDS_Shape and topology ID maps for B-rep models.
+Entries can be heavy (packed mesh blob, raw file bytes, OCCT shapes), so the
+store keeps at most MAX_ENTRIES models — least-recently-used beyond that are
+evicted. Re-uploading identical content reuses the existing entry instead of
+duplicating it.
 """
 from __future__ import annotations
 
 import threading
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
+
+MAX_ENTRIES = 16
 
 
 @dataclass
@@ -17,29 +22,60 @@ class ModelEntry:
     name: str
     fmt: str
     meta: dict[str, Any]
-    # Phase 0: packed binary mesh payload (see meshpack.py)
+    # packed binary mesh payload (see meshpack.py)
     mesh_blob: bytes = b""
-    # Phase 1+: server-side B-rep handles (TopoDS_Shape, ID maps)
+    # server-side B-rep handles (PartMesh list with TopoDS maps)
     brep: Any = None
     extra: dict[str, Any] = field(default_factory=dict)
+    # serializes heavy lazy work on this entry (brep re-parse, thickness)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
 
 class ModelStore:
-    def __init__(self) -> None:
+    def __init__(self, max_entries: int = MAX_ENTRIES) -> None:
         self._lock = threading.Lock()
-        self._models: dict[str, ModelEntry] = {}
+        self._models: OrderedDict[str, ModelEntry] = OrderedDict()
+        self._by_hash: dict[str, str] = {}
+        self._max = max_entries
 
     def add(self, entry: ModelEntry) -> None:
         with self._lock:
             self._models[entry.model_id] = entry
+            self._models.move_to_end(entry.model_id)
+            content_hash = entry.extra.get("hash")
+            if content_hash:
+                self._by_hash[content_hash] = entry.model_id
+            while len(self._models) > self._max:
+                _mid, evicted = self._models.popitem(last=False)
+                self._drop_hash(evicted)
 
     def get(self, model_id: str) -> ModelEntry | None:
         with self._lock:
-            return self._models.get(model_id)
+            entry = self._models.get(model_id)
+            if entry is not None:
+                self._models.move_to_end(model_id)
+            return entry
+
+    def get_by_hash(self, content_hash: str) -> ModelEntry | None:
+        with self._lock:
+            model_id = self._by_hash.get(content_hash)
+            if model_id is None:
+                return None
+            entry = self._models.get(model_id)
+            if entry is not None:
+                self._models.move_to_end(model_id)
+            return entry
 
     def remove(self, model_id: str) -> None:
         with self._lock:
-            self._models.pop(model_id, None)
+            entry = self._models.pop(model_id, None)
+            if entry is not None:
+                self._drop_hash(entry)
+
+    def _drop_hash(self, entry: ModelEntry) -> None:
+        content_hash = entry.extra.get("hash")
+        if content_hash and self._by_hash.get(content_hash) == entry.model_id:
+            del self._by_hash[content_hash]
 
     def list_meta(self) -> list[dict[str, Any]]:
         with self._lock:
