@@ -201,6 +201,10 @@ def get_thickness(model_id: str, method: str = "ray") -> Response:
     entry = store.get(model_id)
     if entry is None:
         raise HTTPException(404, "model not found")
+    # drawings (DXF/DWG) have no mesh payload — decoding would raise
+    # struct.error and surface as an uncontrolled 500
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "thickness requires a 3D model (mesh or B-rep)")
     cache_key = f"thickness_blob_{method}"
     with entry.lock:
         blob = entry.extra.get(cache_key)

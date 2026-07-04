@@ -294,17 +294,18 @@ async function loadFile(file: File): Promise<void> {
       thicknessCache.clear()
       thicknessState.enabled = false
       viewer.clearThicknessColors()
+      // Clear the stale 3D scene for BOTH branches: while the new model's
+      // fetch is in flight (or if it fails), the old geometry must not stay
+      // visible and pickable — clicks on it would be saved under the NEW
+      // model's sidecar with the old model's coordinates.
+      viewer.clearModel()
+      picker.setModel([])
+      treeBody.replaceChildren()
+      treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
-        // Clear the stale 3D state: the hidden viewport keeps the previous
-        // model otherwise, and the NEXT 3D load reveals it (show2D(false))
-        // before its own fetch completes — visible and pickable if that
-        // fetch is slow or fails.
-        viewer.clearModel()
-        picker.setModel([])
-        treeBody.replaceChildren()
         sectionTool.enabled = false
         sectionTool.update()
         drawing2d.load(svg, meta.snapPoints ?? [])

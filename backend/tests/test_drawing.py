@@ -74,3 +74,10 @@ def test_dwg_without_oda(model):
     r = client.post("/api/models", files={"file": ("a.dwg", b"AC1027garbage", "x")})
     assert r.status_code == 422
     assert "ODA File Converter" in r.json()["detail"]
+
+
+def test_thickness_rejected_for_drawing(model):
+    """Regression: drawings have no mesh_blob; thickness must 422, not 500."""
+    client, meta = model
+    r = client.get(f"/api/models/{meta['id']}/thickness.bin")
+    assert r.status_code == 422, (r.status_code, r.text[:200])
