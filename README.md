@@ -12,16 +12,38 @@
 設計原則: **メッシュは表示用の嘘、計測はB-repの真実**。
 テッセレーションメッシュにはトポロジID（face/edge/vertex）を付与して配信し、計測は必ずサーバ側でOCCTの真値計算を行う。
 
+## 起動（日常使い）
+
+**Windows デスクトップの `cad-viewer.vbs` をダブルクリック** → backend が起動し、
+既定ブラウザで開く（コンソール窓は出ない）。既に起動済みならブラウザを開くだけ（冪等）。
+
+内部では frontend を同梱した backend を **1プロセス(:8008)** で立てている（Vite dev
+サーバは不要）。WSL から直接なら:
+
+```bash
+./start.sh          # frontend/dist を配信する backend を :8008 で立て、ブラウザを開く
+```
+
+初回セットアップ（マルチPC再現）:
+1. `backend/.venv` を用意（下の「開発」参照）、`frontend` で `npm install`
+2. `launcher/cad-viewer.vbs` を Windows デスクトップにコピー
+   （WSL distro 名が `Ubuntu-24.04` 以外なら vbs 内を編集）
+3. `./start.sh` を一度叩くと `frontend/dist` が自動ビルドされる
+
+> single-server の仕組み: `frontend/dist` が存在すると `backend/app/main.py` が
+> それを `/` にマウントして配信する（`/api/*` は既存ルートが優先）。dist が無い開発
+> 時は下記の dev サーバ構成にフォールバックする。
+
 ## 開発
 
 ```bash
-# backend (WSL2)
+# backend (WSL2) — Python 3.11+ (新PCは 3.12 で動作確認済み)
 cd backend
-python3.11 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -r requirements.lock
 .venv/bin/uvicorn app.main:app --reload --port 8008
 
-# frontend
+# frontend（HMR 付き dev サーバ）
 cd frontend
 npm install
 npm run dev        # http://localhost:5173 （/api は 8008 にプロキシ）

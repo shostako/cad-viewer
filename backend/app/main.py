@@ -14,6 +14,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
+from fastapi.staticfiles import StaticFiles
 
 from . import cache, measure
 from .drawing import DrawingLoadError, load_drawing
@@ -294,3 +295,13 @@ def delete_model(model_id: str) -> dict:
         raise HTTPException(404, "model not found")
     store.remove(model_id)
     return {"deleted": model_id}
+
+
+# --- static frontend (production single-server mode) -------------------------
+# When frontend/dist exists (built via `npm run build`), serve the SPA from this
+# same server so the whole app runs as ONE process on port 8008 — no separate
+# Vite dev server. Mounted LAST so every /api/* route above matches first;
+# absent dist (dev mode) leaves this off and the Vite dev server proxies /api.
+_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+if _DIST.is_dir():
+    app.mount("/", StaticFiles(directory=_DIST, html=True), name="spa")
