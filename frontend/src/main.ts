@@ -134,19 +134,25 @@ async function updateThickness(): Promise<void> {
   // recolor the wrong model and poison the (already cleared) cache.
   const requestedId = currentModelId
   const requestedGen = loadGen
+  const requestedMethod = thicknessState.method // method can also change mid-flight
   try {
-    let data = thicknessCache.get(thicknessState.method)
+    let data = thicknessCache.get(requestedMethod)
     if (!data) {
       hudInfo.textContent =
-        thicknessState.method === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
-      data = await fetchThickness(requestedId, thicknessState.method)
-      if (requestedGen !== loadGen || requestedId !== currentModelId || !thicknessState.enabled)
+        requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
+      data = await fetchThickness(requestedId, requestedMethod)
+      if (
+        requestedGen !== loadGen ||
+        requestedId !== currentModelId ||
+        requestedMethod !== thicknessState.method ||
+        !thicknessState.enabled
+      )
         return // superseded: don't cache, don't recolor, don't touch the HUD
-      thicknessCache.set(thicknessState.method, data)
+      thicknessCache.set(requestedMethod, data)
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
     hudInfo.textContent = `肉厚ヒートマップ表示中（${
-      thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
+      requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'
     }、赤=閾値未満）`
   } catch (e) {
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure

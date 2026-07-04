@@ -40,6 +40,9 @@ const DIM_COLOR = 0xffd060
 export class MeasureTool {
   private viewer: Viewer
   private modelId: string | null = null
+  // bumped on every clearAll(): invalidates in-flight requests even when a
+  // re-upload of identical content yields the same (deduped) model id
+  private session = 0
   private isBrep = false
   private pending: { pick: PickResult; marker: THREE.Object3D } | null = null
   private entries: MeasureEntry[] = []
@@ -90,7 +93,15 @@ export class MeasureTool {
     this.pending = null
     this.busy = true
     try {
-      const res = await measureDistance(this.modelId, toRef(a.pick), toRef(pick))
+      // capture: setModel()/clearAll() can run while the request is in flight,
+      // and a late result must not be added to (and autosaved under) the new model
+      const requestedModelId = this.modelId
+      const requestedSession = this.session
+      const res = await measureDistance(requestedModelId, toRef(a.pick), toRef(pick))
+      if (this.modelId !== requestedModelId || this.session !== requestedSession) {
+        this.viewer.disposeOverlayObject(a.marker)
+        return '' // stale: model switched mid-flight
+      }
       // temporary first-click marker is replaced by the restored-from-data entry
       this.viewer.disposeOverlayObject(a.marker)
       const pa = res.pointA
@@ -162,9 +173,13 @@ export class MeasureTool {
 
   private async reportEntityInfo(pick: PickResult): Promise<void> {
     if (!this.modelId) return
+    // same stale-response hazard as handlePick: drop late results after a model switch
+    const requestedModelId = this.modelId
+    const requestedSession = this.session
     try {
       if (pick.kind === 'edge') {
-        const info = await measureEdgeInfo(this.modelId, toRef(pick))
+        const info = await measureEdgeInfo(requestedModelId, toRef(pick))
+        if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.curve === 'circle' && info.diameter !== undefined && info.center) {
           this.addFromData({
             text: `円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
@@ -173,7 +188,8 @@ export class MeasureTool {
           })
         }
       } else if (pick.kind === 'face') {
-        const info = await measureFaceInfo(this.modelId, toRef(pick))
+        const info = await measureFaceInfo(requestedModelId, toRef(pick))
+        if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.surface === 'cylinder' && info.diameter !== undefined) {
           this.addFromData({
             text: `円筒面 ⌀${fmt(info.diameter)}`,
@@ -212,6 +228,7 @@ export class MeasureTool {
   }
 
   clearAll(): void {
+    this.session++
     this.cancelPending()
     for (const e of this.entries) for (const o of e.objects) this.viewer.disposeOverlayObject(o)
     this.entries = []
