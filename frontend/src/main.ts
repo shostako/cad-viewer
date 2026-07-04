@@ -9,6 +9,7 @@ import {
   getSidecar,
   putSidecar,
   __stallNextMeasure,
+  __stallNextSidecar,
   type ModelMeta,
 } from './api'
 import { Drawing2D } from './drawing2d'
@@ -185,16 +186,31 @@ thicknessFolder
 // anything is written to the OLD model's sidecar.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSave: { id: string; body: unknown } | undefined
+// The sidecar PUT currently being written. A teardown flush must await THIS —
+// not just a queued pendingSave — because a debounce-timer flush may have
+// already fired the PUT and cleared pendingSave. Without it, a same-id reload
+// can getSidecar() before that write lands and restore stale data.
+let inFlightSave: Promise<void> = Promise.resolve()
 
 async function flushSidecar(): Promise<void> {
   if (saveTimer !== undefined) {
     clearTimeout(saveTimer)
     saveTimer = undefined
   }
-  if (!pendingSave) return
-  const save = pendingSave
-  pendingSave = undefined
-  await putSidecar(save.id, save.body)
+  if (pendingSave) {
+    const save = pendingSave
+    pendingSave = undefined
+    const prev = inFlightSave
+    inFlightSave = (async () => {
+      await prev.catch(() => {}) // preserve write ordering; ignore prior failure
+      try {
+        await putSidecar(save.id, save.body)
+      } catch {
+        /* best-effort autosave; a failed write must not block teardown */
+      }
+    })()
+  }
+  await inFlightSave
 }
 
 measureTool.onChange(() => {
@@ -409,6 +425,7 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
   }
 }
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
+testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   const rect = viewer.renderer.domElement.getBoundingClientRect()
   const ndc = new THREE.Vector2(

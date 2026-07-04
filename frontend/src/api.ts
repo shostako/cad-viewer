@@ -131,7 +131,19 @@ export async function getSidecar(modelId: string): Promise<Record<string, unknow
   return res.json()
 }
 
+// test-only: lets an E2E hold the NEXT sidecar PUT in flight, to exercise a
+// teardown flush racing a debounce-timer save (one-shot, self-clearing)
+let _stallNextSidecarMs = 0
+export function __stallNextSidecar(ms: number): void {
+  _stallNextSidecarMs = ms
+}
+
 export async function putSidecar(modelId: string, body: unknown): Promise<void> {
+  if (_stallNextSidecarMs > 0) {
+    const ms = _stallNextSidecarMs
+    _stallNextSidecarMs = 0
+    await new Promise((r) => setTimeout(r, ms))
+  }
   await fetch(`/api/models/${modelId}/sidecar`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
