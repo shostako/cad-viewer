@@ -211,7 +211,9 @@ export class Viewer {
 
     if (part.edges.length >= 6) {
       const edgeGeo = new LineSegmentsGeometry()
-      edgeGeo.setPositions(Array.from(part.edges))
+      // pass the typed array directly — Array.from() would box millions of
+      // floats into JS numbers on large assemblies (memory blowup / tab freeze)
+      edgeGeo.setPositions(part.edges)
       const edgeMat = new LineMaterial({ color: EDGE_COLOR, linewidth: 1.5 })
       const size = new THREE.Vector2()
       this.renderer.getSize(size)

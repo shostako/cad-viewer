@@ -67,17 +67,34 @@ export class Picker {
     const hits = this.raycaster.intersectObjects(visible, false)
     if (hits.length === 0) return null
 
-    const hit = hits[0]
+    // The raycaster tests the raw geometry; with the section tool active the
+    // nearest hits may lie on the clipped-away side of the plane. Take the
+    // first hit that is NOT clipped, so clicks in a sectioned view never
+    // select (and measure/annotate) geometry the user cannot see.
+    const hit = hits.find((h) => {
+      const planes = (h.object as THREE.Mesh).material as THREE.Material
+      const clip = (planes as THREE.Material & { clippingPlanes?: THREE.Plane[] }).clippingPlanes
+      if (!clip || clip.length === 0) return true
+      return clip.every((p) => p.distanceToPoint(h.point) >= 0)
+    })
+    if (!hit) return null
     const partId = hit.object.userData.partId as number
     const part = this.parts.get(partId)
     if (!part || hit.faceIndex === undefined || hit.faceIndex === null) return null
 
+    // snap candidates must respect the same clipping planes as the hit —
+    // a clipped-away vertex/edge within snap radius must not win
+    const hitMat = (hit.object as THREE.Mesh).material as THREE.Material & {
+      clippingPlanes?: THREE.Plane[]
+    }
+    const clip = hitMat.clippingPlanes ?? []
+
     // 1) vertex snap (screen-space)
-    const v = this.snapVertex(part, hit.point)
+    const v = this.snapVertex(part, hit.point, clip)
     if (v) return v
 
     // 2) edge snap (screen-space distance to edge segments)
-    const e = this.snapEdge(part, hit.point)
+    const e = this.snapEdge(part, hit.point, clip)
     if (e) return e
 
     // 3) face
@@ -101,7 +118,11 @@ export class Picker {
     return height / this.viewer.renderer.domElement.clientHeight
   }
 
-  private snapVertex(part: PartData, hitPoint: THREE.Vector3): PickResult | null {
+  private snapVertex(
+    part: PartData,
+    hitPoint: THREE.Vector3,
+    clip: THREE.Plane[] = [],
+  ): PickResult | null {
     const maxDist = VERTEX_SNAP_PX * this.pxScale(hitPoint)
     let best = -1
     let bestD = maxDist
@@ -109,6 +130,7 @@ export class Picker {
     const p = new THREE.Vector3()
     for (let i = 0; i < vs.length; i += 3) {
       p.set(vs[i], vs[i + 1], vs[i + 2])
+      if (clip.length && !clip.every((pl) => pl.distanceToPoint(p) >= 0)) continue
       const d = p.distanceTo(hitPoint)
       if (d < bestD) {
         bestD = d
@@ -124,7 +146,11 @@ export class Picker {
     }
   }
 
-  private snapEdge(part: PartData, hitPoint: THREE.Vector3): PickResult | null {
+  private snapEdge(
+    part: PartData,
+    hitPoint: THREE.Vector3,
+    clip: THREE.Plane[] = [],
+  ): PickResult | null {
     const maxDist = EDGE_SNAP_PX * this.pxScale(hitPoint)
     const segs = part.edges
     let bestD = maxDist
@@ -139,6 +165,7 @@ export class Picker {
       b.set(segs[s * 6 + 3], segs[s * 6 + 4], segs[s * 6 + 5])
       line.set(a, b)
       line.closestPointToPoint(hitPoint, true, closest)
+      if (clip.length && !clip.every((pl) => pl.distanceToPoint(closest) >= 0)) continue
       const d = closest.distanceTo(hitPoint)
       if (d < bestD) {
         bestD = d
