@@ -92,11 +92,12 @@ export class MeasureTool {
     const a = this.pending
     this.pending = null
     this.busy = true
+    // capture: setModel()/clearAll()/cancelPending() can run while the request
+    // is in flight (each bumps session). A late result must neither be added to
+    // the new model NOR reset the busy flag the active request now owns.
+    const requestedModelId = this.modelId
+    const requestedSession = this.session
     try {
-      // capture: setModel()/clearAll() can run while the request is in flight,
-      // and a late result must not be added to (and autosaved under) the new model
-      const requestedModelId = this.modelId
-      const requestedSession = this.session
       const res = await measureDistance(requestedModelId, toRef(a.pick), toRef(pick))
       if (this.modelId !== requestedModelId || this.session !== requestedSession) {
         this.viewer.disposeOverlayObject(a.marker)
@@ -124,7 +125,10 @@ export class MeasureTool {
       this.viewer.disposeOverlayObject(a.marker)
       throw e
     } finally {
-      this.busy = false
+      // only release busy if we still own it: cancelPending() or a newer pick
+      // bumps session and takes over the picker, so a stale return must not
+      // clear the busy flag out from under the active request
+      if (this.session === requestedSession) this.busy = false
     }
   }
 
@@ -168,6 +172,11 @@ export class MeasureTool {
     // invalidate in-flight distance / entity-info requests too — leaving
     // measure mode must not let a late response add (and autosave) an entry
     this.session++
+    // free the picker immediately: the in-flight request (if any) is now stale
+    // and its late response is dropped by the session guard, so don't make the
+    // user wait for it to release busy. (Slow exact B-rep measurements used to
+    // freeze all new picks until the abandoned request returned.)
+    this.busy = false
     if (this.pending) {
       this.viewer.disposeOverlayObject(this.pending.marker)
       this.pending = null

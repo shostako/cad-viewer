@@ -85,7 +85,19 @@ async function measureRequest<T>(modelId: string, body: unknown): Promise<T> {
   return res.json()
 }
 
-export function measureDistance(modelId: string, a: EntityRef, b: EntityRef) {
+// test-only: lets an E2E hold the NEXT distance request in flight, to exercise
+// measure-mode cancellation while a request is pending (one-shot, self-clearing)
+let _stallNextMeasureMs = 0
+export function __stallNextMeasure(ms: number): void {
+  _stallNextMeasureMs = ms
+}
+
+export async function measureDistance(modelId: string, a: EntityRef, b: EntityRef) {
+  if (_stallNextMeasureMs > 0) {
+    const ms = _stallNextMeasureMs
+    _stallNextMeasureMs = 0
+    await new Promise((r) => setTimeout(r, ms))
+  }
   return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b })
 }
 

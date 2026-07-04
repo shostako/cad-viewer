@@ -8,6 +8,7 @@ import {
   fetchThickness,
   getSidecar,
   putSidecar,
+  __stallNextMeasure,
   type ModelMeta,
 } from './api'
 import { Drawing2D } from './drawing2d'
@@ -177,14 +178,30 @@ thicknessFolder
   .onChange(() => void updateThickness())
 
 // ---- sidecar persistence (auto-save, debounced)
+// The pending payload is captured eagerly (target id + an entries snapshot)
+// rather than re-read inside the timer, so it can be flushed synchronously on
+// teardown. Otherwise, switching models within the 800ms debounce window drops
+// the last edit — the timer is cleared and clearAll() wipes the entries before
+// anything is written to the OLD model's sidecar.
 let saveTimer: ReturnType<typeof setTimeout> | undefined
+let pendingSave: { id: string; body: unknown } | undefined
+
+function flushSidecar(): void {
+  if (saveTimer !== undefined) {
+    clearTimeout(saveTimer)
+    saveTimer = undefined
+  }
+  if (pendingSave) {
+    void putSidecar(pendingSave.id, pendingSave.body)
+    pendingSave = undefined
+  }
+}
+
 measureTool.onChange(() => {
   if (restoringOwner !== 0 || !currentModelId) return
   clearTimeout(saveTimer)
-  const id = currentModelId
-  saveTimer = setTimeout(() => {
-    void putSidecar(id, { version: 1, entries: measureTool.toJSON() })
-  }, 800)
+  pendingSave = { id: currentModelId, body: { version: 1, entries: measureTool.toJSON() } }
+  saveTimer = setTimeout(flushSidecar, 800)
 })
 
 // ---- annotation input (small floating text box at the click point)
@@ -283,10 +300,11 @@ async function loadFile(file: File): Promise<void> {
 
     // --- teardown of the previous model -----------------------------------
     // ORDER MATTERS (sidecar corruption hazard):
-    // 1. cancel any pending debounced save (it captured the OLD model id)
+    // 1. FLUSH any pending debounced save to the OLD model (it captured the old
+    //    id + an entries snapshot), so an edit within the 800ms window survives
     // 2. restoring=true so teardown emits can't schedule new saves
     // 3. only then swap currentModelId and clear tools
-    clearTimeout(saveTimer)
+    flushSidecar()
     restoringOwner = gen
     try {
       currentModelId = meta.id
@@ -387,6 +405,7 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
     y: rect.top + ((1 - v.y) / 2) * rect.height,
   }
 }
+testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   const rect = viewer.renderer.domElement.getBoundingClientRect()
   const ndc = new THREE.Vector2(
