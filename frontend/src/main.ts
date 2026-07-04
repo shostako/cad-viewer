@@ -67,7 +67,11 @@ function show2D(on: boolean): void {
 }
 
 let currentModelId: string | null = null
-let restoring = false
+// Sidecar-save suppression during model teardown/restore. Generation-tagged
+// (not a plain boolean) so a superseded load releases its own claim without
+// clobbering a newer load's — a boolean got stuck true when the newer load
+// failed before entering its own teardown, silently killing all saves.
+let restoringOwner = 0 // 0 = not restoring; otherwise the loadGen that owns it
 
 const gui = new GUI({ title: '操作' })
 const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
@@ -125,12 +129,19 @@ async function updateThickness(): Promise<void> {
     viewer.clearThicknessColors()
     return
   }
+  // Capture the request context: a slow fetch can resolve after the user has
+  // switched models (or toggled off) — applying that late response would
+  // recolor the wrong model and poison the (already cleared) cache.
+  const requestedId = currentModelId
+  const requestedGen = loadGen
   try {
     let data = thicknessCache.get(thicknessState.method)
     if (!data) {
       hudInfo.textContent =
         thicknessState.method === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
-      data = await fetchThickness(currentModelId, thicknessState.method)
+      data = await fetchThickness(requestedId, thicknessState.method)
+      if (requestedGen !== loadGen || requestedId !== currentModelId || !thicknessState.enabled)
+        return // superseded: don't cache, don't recolor, don't touch the HUD
       thicknessCache.set(thicknessState.method, data)
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
@@ -138,6 +149,7 @@ async function updateThickness(): Promise<void> {
       thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
     }、赤=閾値未満）`
   } catch (e) {
+    if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
     thicknessState.enabled = false
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
   }
@@ -161,7 +173,7 @@ thicknessFolder
 // ---- sidecar persistence (auto-save, debounced)
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 measureTool.onChange(() => {
-  if (restoring || !currentModelId) return
+  if (restoringOwner !== 0 || !currentModelId) return
   clearTimeout(saveTimer)
   const id = currentModelId
   saveTimer = setTimeout(() => {
@@ -269,7 +281,7 @@ async function loadFile(file: File): Promise<void> {
     // 2. restoring=true so teardown emits can't schedule new saves
     // 3. only then swap currentModelId and clear tools
     clearTimeout(saveTimer)
-    restoring = true
+    restoringOwner = gen
     try {
       currentModelId = meta.id
       measureTool.clearAll()
@@ -320,7 +332,8 @@ async function loadFile(file: File): Promise<void> {
         `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
         `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
     } finally {
-      if (gen === loadGen) restoring = false
+      // release only our own claim: a newer load may have taken ownership
+      if (restoringOwner === gen) restoringOwner = 0
     }
   } catch (e) {
     hudInfo.textContent = `エラー: ${e instanceof Error ? e.message : e}`

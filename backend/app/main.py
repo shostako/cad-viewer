@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -261,9 +263,20 @@ def get_sidecar(model_id: str) -> dict:
 def put_sidecar(model_id: str, body: dict) -> dict:
     path = _sidecar_path(model_id)
     SIDECAR_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(body, ensure_ascii=False))
-    tmp.replace(path)
+    # Unique temp file per request: a fixed <hash>.json.tmp name races when two
+    # saves for the same content hash run concurrently (one request's replace()
+    # removes the other's temp file -> FileNotFoundError / stale data).
+    fd, tmp = tempfile.mkstemp(dir=SIDECAR_DIR, suffix=".json.tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(json.dumps(body, ensure_ascii=False))
+        os.replace(tmp, path)
+    except OSError:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
     return {"saved": True}
 
 

@@ -157,3 +157,31 @@ def test_upload_dedup_same_content(client):
     meta1 = _upload_box(client)
     meta2 = _upload_box(client)  # identical bytes
     assert meta1["id"] == meta2["id"], "identical content must reuse the entry"
+
+
+def test_sidecar_concurrent_puts_no_tmp_collision(client):
+    """Regression: fixed .json.tmp name raced under concurrent saves for the
+    same content hash (one request's replace() removed the other's temp file
+    -> FileNotFoundError / stale data). Unique mkstemp names must not collide."""
+    import concurrent.futures
+
+    meta = _upload_box(client)
+    mid = meta["id"]
+
+    def save(i):
+        r = client.put(f"/api/models/{mid}/sidecar", json={"n": i})
+        return r.status_code
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+        results = list(ex.map(save, range(32)))
+    assert all(s == 200 for s in results), results
+
+    r = client.get(f"/api/models/{mid}/sidecar")
+    assert r.status_code == 200
+    # last-writer-wins is fine; the payload must be one of the writes, intact
+    assert r.json().get("n") in range(32)
+
+    # no leftover temp files
+    from app.main import SIDECAR_DIR
+    leftovers = list(SIDECAR_DIR.glob("*.tmp"))
+    assert leftovers == [], leftovers

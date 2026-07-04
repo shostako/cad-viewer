@@ -1,6 +1,12 @@
 from playwright.sync_api import sync_playwright
 
-STEP = "/home/shostako/ClaudeCode/cad-viewer/testdata/mini_mold.step"
+import os
+from pathlib import Path
+
+TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
+BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5173")
+
+STEP = str(TESTDATA / "mini_mold.step")
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -9,7 +15,7 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
-    page.goto("http://127.0.0.1:5183")
+    page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
 
     page.set_input_files("#file-input", STEP)
