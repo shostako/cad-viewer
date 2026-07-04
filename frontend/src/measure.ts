@@ -264,11 +264,11 @@ export class MeasureTool {
 }
 
 function toRef(pick: PickResult): EntityRef {
-  if (pick.kind === 'vertex') {
-    // vertices snap to exact B-rep coords already; send the point (works
-    // uniformly and avoids vertexId ambiguity across seam duplicates)
-    return { kind: 'point', xyz: [pick.point.x, pick.point.y, pick.point.z] }
-  }
+  // Always send the topology ref. Vertex picks used to be flattened to a
+  // 'point' ref, but the snapped coordinate comes from the float32 display
+  // mesh — on large-coordinate STEP/IGES models that rounding defeats the
+  // exact B-rep measurement. The id IS the 1-based TopTools vertex map index,
+  // which the backend resolves to the exact vertex.
   return { partId: pick.partId, kind: pick.kind, id: pick.id }
 }
 

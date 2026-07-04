@@ -121,3 +121,63 @@ def test_measure_after_cache_hit(model):
         },
     )
     assert r.status_code == 200
+
+
+def test_vertex_ref_exact_distance(model):
+    """Vertex topology refs must give exact B-rep distance (regression: the
+    frontend used to flatten vertex picks to float32 'point' refs, losing
+    precision on large-coordinate models). Plate is a 100x60x15 box: the
+    max vertex-to-vertex distance is the space diagonal sqrt(100^2+60^2+15^2)."""
+    client, mid, _ = model
+    # find the plate part id (name == 'plate')
+    r = client.get(f"/api/models/{mid}/mesh.bin")
+    assert r.status_code == 200
+    import json as _json
+    import struct as _struct
+    (hlen,) = _struct.unpack_from("<I", r.content, 0)
+    header = _json.loads(r.content[4 : 4 + hlen])
+    plate = next(p for p in header["parts"] if p["name"] == "plate")
+    pid = plate["id"]
+
+    # box has 8 vertices (TopTools map 1..8); brute-force the max pair distance
+    best = 0.0
+    for a in range(1, 9):
+        for b in range(a + 1, 9):
+            res = _measure(model, {
+                "type": "distance",
+                "a": {"partId": pid, "kind": "vertex", "id": a},
+                "b": {"partId": pid, "kind": "vertex", "id": b},
+            })
+            best = max(best, res["value"])
+    assert best == pytest.approx((100**2 + 60**2 + 15**2) ** 0.5, abs=1e-9)
+
+
+def test_raw_bytes_released_after_lazy_reparse():
+    """Regression: cache-hit entries kept the original upload bytes forever
+    after the B-rep was lazily rebuilt, doubling memory for the LRU lifetime."""
+    client = TestClient(app)
+    data = STEP.read_bytes()
+    from app.store import store as _store
+
+    r1 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
+    assert r1.status_code == 200
+    # drop the live entry so the re-upload takes the DISK-cache-hit path
+    # (same-process re-uploads are deduped by the store and never carry raw)
+    _store.remove(r1.json()["id"])
+    r2 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
+    assert r2.status_code == 200
+    mid = r2.json()["id"]
+
+    entry = _store.get(mid)
+    assert "raw" in entry.extra, "expected a disk-cache-hit entry carrying raw bytes"
+
+    # trigger the lazy reparse via a measurement
+    res = client.post(
+        f"/api/models/{mid}/measure",
+        json={"type": "distance",
+              "a": {"kind": "point", "xyz": [0, 0, 0]},
+              "b": {"kind": "point", "xyz": [1, 0, 0]}},
+    )
+    assert res.status_code == 200
+    assert "raw" not in entry.extra, "upload bytes must be dropped after reparse"
+    assert entry.brep is not None

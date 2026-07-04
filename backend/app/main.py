@@ -172,6 +172,10 @@ def _brep_meshes(entry: ModelEntry):
                 )
             meshes, _tree, _defl = load_brep(raw, entry.extra["filename"])
             entry.brep = {"meshes": meshes}
+            # brep handles are live now — keeping the original upload bytes
+            # would double the entry's memory for its whole LRU lifetime
+            # (uploads can be hundreds of MB). Fresh uploads never store them.
+            entry.extra.pop("raw", None)
     return entry.brep["meshes"]
 
 
