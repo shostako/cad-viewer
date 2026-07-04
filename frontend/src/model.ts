@@ -23,6 +23,8 @@ export interface PartData {
   normals: Float32Array
   indices: Uint32Array
   edges: Float32Array
+  /** exact B-rep vertex coords; row i = vertexId i+1 */
+  vertices: Float32Array
 }
 
 export interface TreeNodeData {
@@ -52,6 +54,7 @@ export function toModelData(pack: MeshPack): ModelData {
     normals: pack.buffers[`p${p.id}:normals`] as Float32Array,
     indices: pack.buffers[`p${p.id}:indices`] as Uint32Array,
     edges: pack.buffers[`p${p.id}:edges`] as Float32Array,
+    vertices: (pack.buffers[`p${p.id}:vertices`] as Float32Array) ?? new Float32Array(0),
   }))
   const tree = pack.header.tree as TreeNodeData
   return { parts, tree }

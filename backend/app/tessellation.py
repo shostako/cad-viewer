@@ -33,7 +33,14 @@ from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.TDocStd import TDocStd_Document
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_REVERSED, TopAbs_ShapeEnum
+from OCP.gp import gp_Pnt
+from OCP.TopAbs import (
+    TopAbs_EDGE,
+    TopAbs_FACE,
+    TopAbs_REVERSED,
+    TopAbs_ShapeEnum,
+    TopAbs_VERTEX,
+)
 from OCP.TopExp import TopExp
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Shape
@@ -80,9 +87,11 @@ class PartMesh:
     face_ranges: list[dict[str, int]]
     edge_positions: np.ndarray  # (K, 3) float32, consecutive pairs = segments
     edge_ranges: list[dict[str, int]]
-    # server-side topology handles for Phase 2 measurement
+    vertex_positions: np.ndarray = None  # (V, 3) float32, row i = vertexId i+1
+    # server-side topology handles for measurement
     face_map: TopTools_IndexedMapOfShape = None
     edge_map: TopTools_IndexedMapOfShape = None
+    vertex_map: TopTools_IndexedMapOfShape = None
 
 
 # ---------------------------------------------------------------- loading
@@ -304,6 +313,14 @@ def tessellate_part(part: Part, lin_deflection: float, ang_deflection: float = 0
         edge_ranges.append({"edgeId": ei, "segStart": seg_offset, "segCount": n_segs})
         seg_offset += n_segs
 
+    # ---- vertices: exact B-rep vertex coordinates (snap targets)
+    vertex_map = TopTools_IndexedMapOfShape()
+    TopExp.MapShapes_s(shape, TopAbs_VERTEX, vertex_map)
+    verts = np.empty((vertex_map.Extent(), 3), dtype=np.float32)
+    for vi in range(1, vertex_map.Extent() + 1):
+        p: gp_Pnt = BRep_Tool.Pnt_s(TopoDS.Vertex_s(vertex_map.FindKey(vi)))
+        verts[vi - 1] = (p.X(), p.Y(), p.Z())
+
     empty3 = np.empty((0, 3), dtype=np.float32)
     return PartMesh(
         part=part,
@@ -313,8 +330,10 @@ def tessellate_part(part: Part, lin_deflection: float, ang_deflection: float = 0
         face_ranges=face_ranges,
         edge_positions=np.vstack(seg_chunks) if seg_chunks else empty3,
         edge_ranges=edge_ranges,
+        vertex_positions=verts,
         face_map=face_map,
         edge_map=edge_map,
+        vertex_map=vertex_map,
     )
 
 

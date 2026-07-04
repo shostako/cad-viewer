@@ -86,6 +86,14 @@ def pack_parts(meshes, tree, deflection: float) -> tuple[bytes, dict[str, Any]]:
         buffers[f"p{pid}:normals"] = (m.normals.astype(np.float32), 3)
         buffers[f"p{pid}:indices"] = (m.indices.astype(np.uint32), 1)
         buffers[f"p{pid}:edges"] = (m.edge_positions.astype(np.float32), 3)
+        buffers[f"p{pid}:vertices"] = (
+            (
+                m.vertex_positions
+                if m.vertex_positions is not None
+                else np.empty((0, 3))
+            ).astype(np.float32),
+            3,
+        )
         parts_meta.append(
             {
                 "id": pid,
@@ -147,6 +155,7 @@ def pack_trimesh(mesh, name: str = "mesh") -> tuple[bytes, dict[str, Any]]:
             "p0:normals": (normals, 3),
             "p0:indices": (indices, 1),
             "p0:edges": (np.empty((0, 3), dtype=np.float32), 3),
+            "p0:vertices": (np.empty((0, 3), dtype=np.float32), 3),
         },
         extra_header={"parts": [part_meta], "tree": tree},
     )

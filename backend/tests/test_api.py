@@ -49,7 +49,13 @@ def test_mesh_binary_protocol(client):
     assert r.status_code == 200
     header, buf = _parse_blob(r.content)
 
-    assert set(header["buffers"]) == {"p0:positions", "p0:normals", "p0:indices", "p0:edges"}
+    assert set(header["buffers"]) == {
+        "p0:positions",
+        "p0:normals",
+        "p0:indices",
+        "p0:edges",
+        "p0:vertices",
+    }
     assert len(header["parts"]) == 1
 
     positions = buf("p0:positions", np.float32).reshape(-1, 3)

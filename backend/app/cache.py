@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
-CACHE_VERSION = 1  # bump when the binary protocol changes
+CACHE_VERSION = 2  # bump when the binary protocol changes
 
 
 def cache_key(data: bytes, params: str) -> str:

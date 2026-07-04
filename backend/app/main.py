@@ -9,7 +9,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 
-from . import cache
+from . import cache, measure
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
 from .store import ModelEntry, new_model_id, store
@@ -107,6 +107,30 @@ def get_mesh(model_id: str) -> Response:
     if not entry.mesh_blob:
         raise HTTPException(404, "model has no mesh payload")
     return Response(content=entry.mesh_blob, media_type="application/octet-stream")
+
+
+def _brep_meshes(entry: ModelEntry):
+    """B-rep handles for measurement; lazily re-parsed after a cache hit."""
+    if entry.brep is None:
+        raw = entry.extra.get("raw")
+        if raw is None:
+            raise HTTPException(422, "model has no B-rep data (mesh formats can't be measured exactly)")
+        meshes, _tree, _defl = load_brep(raw, entry.extra["filename"])
+        entry.brep = {"meshes": meshes}
+    return entry.brep["meshes"]
+
+
+@app.post("/api/models/{model_id}/measure")
+def measure_model(model_id: str, request: dict) -> dict:
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt != "brep":
+        raise HTTPException(422, "measurement requires a B-rep model (STEP/IGES)")
+    try:
+        return measure.run(request, _brep_meshes(entry))
+    except measure.MeasureError as e:
+        raise HTTPException(422, str(e)) from e
 
 
 @app.delete("/api/models/{model_id}")

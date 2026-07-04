@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import type { ModelData, PartData } from './model'
 
 const DEFAULT_PART_COLOR = 0x8fb4d8
@@ -13,10 +14,14 @@ export class Viewer {
   readonly camera: THREE.PerspectiveCamera
   readonly renderer: THREE.WebGLRenderer
   readonly controls: OrbitControls
+  readonly labelRenderer: CSS2DRenderer
+  /** overlay group for dimensions / markers / annotations */
+  readonly overlay = new THREE.Group()
   private modelGroup = new THREE.Group()
   private gridHelper: THREE.GridHelper | null = null
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
+  private partMeshes = new Map<number, THREE.Mesh>()
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -29,6 +34,12 @@ export class Viewer {
     this.renderer = new THREE.WebGLRenderer({ antialias: true })
     this.renderer.setPixelRatio(window.devicePixelRatio)
     container.appendChild(this.renderer.domElement)
+
+    this.labelRenderer = new CSS2DRenderer()
+    this.labelRenderer.domElement.style.position = 'absolute'
+    this.labelRenderer.domElement.style.inset = '0'
+    this.labelRenderer.domElement.style.pointerEvents = 'none'
+    container.appendChild(this.labelRenderer.domElement)
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableDamping = true
@@ -43,6 +54,7 @@ export class Viewer {
     this.scene.add(fill)
 
     this.scene.add(this.modelGroup)
+    this.scene.add(this.overlay)
 
     const resize = () => {
       const w = container.clientWidth
@@ -50,6 +62,7 @@ export class Viewer {
       this.camera.aspect = w / h
       this.camera.updateProjectionMatrix()
       this.renderer.setSize(w, h)
+      this.labelRenderer.setSize(w, h)
       for (const m of this.lineMaterials) m.resolution.set(w, h)
     }
     new ResizeObserver(resize).observe(container)
@@ -58,6 +71,32 @@ export class Viewer {
     this.renderer.setAnimationLoop(() => {
       this.controls.update()
       this.renderer.render(this.scene, this.camera)
+      this.labelRenderer.render(this.scene, this.camera)
+    })
+  }
+
+  getPartMesh(partId: number): THREE.Mesh | undefined {
+    return this.partMeshes.get(partId)
+  }
+
+  /** Create a screen-space label attached to a 3D point. */
+  makeLabel(text: string, position: THREE.Vector3, className = 'dim-label'): CSS2DObject {
+    const div = document.createElement('div')
+    div.className = className
+    div.textContent = text
+    const label = new CSS2DObject(div)
+    label.position.copy(position)
+    return label
+  }
+
+  disposeOverlayObject(obj: THREE.Object3D): void {
+    this.overlay.remove(obj)
+    obj.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof LineSegments2) {
+        o.geometry.dispose()
+        ;(o.material as THREE.Material).dispose()
+      }
+      if (o instanceof CSS2DObject) o.element.remove()
     })
   }
 
@@ -90,7 +129,9 @@ export class Viewer {
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 1,
     })
-    group.add(new THREE.Mesh(geo, mat))
+    const mesh = new THREE.Mesh(geo, mat)
+    group.add(mesh)
+    this.partMeshes.set(part.id, mesh)
 
     if (part.edges.length >= 6) {
       const edgeGeo = new LineSegmentsGeometry()
@@ -123,7 +164,9 @@ export class Viewer {
       })
     }
     this.partGroups.clear()
+    this.partMeshes.clear()
     this.lineMaterials = []
+    for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     if (this.gridHelper) {
       this.scene.remove(this.gridHelper)
       this.gridHelper.dispose()
