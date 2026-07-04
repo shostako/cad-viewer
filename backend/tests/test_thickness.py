@@ -51,3 +51,101 @@ def test_thickness_endpoint():
 def r0_vertex_count(client, mid):
     meta = [m for m in client.get("/api/models").json() if m["id"] == mid][0]
     return meta["vertexCount"]
+
+
+# ---------------------------------------------------------------- rolling ball
+
+
+def _facet_arrays(mesh):
+    import trimesh.graph
+
+    m = trimesh.graph.smooth_shade(mesh, angle=np.radians(30))
+    return (
+        np.asarray(m.vertices, dtype=np.float32),
+        np.asarray(m.vertex_normals, dtype=np.float32),
+        np.asarray(m.faces, dtype=np.uint32),
+    )
+
+
+def test_ball_equals_ray_on_parallel_plate():
+    """Parallel walls: tangent sphere diameter == ray distance == 2."""
+    from app.thickness import vertex_thickness, vertex_thickness_ball
+
+    plate = trimesh.creation.box(extents=(10, 10, 2)).subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(plate)
+    t_ray = vertex_thickness(pos, nrm, idx)
+    t_ball = vertex_thickness_ball(pos, nrm, idx)
+
+    # interior top/bottom face vertices (away from the sides)
+    interior = (
+        (np.abs(np.abs(pos[:, 2]) - 1.0) < 1e-6)
+        & (np.abs(pos[:, 0]) < 4.0)
+        & (np.abs(pos[:, 1]) < 4.0)
+    )
+    assert interior.sum() > 0
+    assert np.allclose(t_ray[interior], 2.0, atol=1e-3)
+    assert np.allclose(t_ball[interior], 2.0, atol=0.02)
+
+
+def test_ball_correct_on_wedge():
+    """Wedge (slanted wall): ray overestimates, ball matches theory.
+
+    Wedge angle θ with cosθ = 10/√164 (rise 8 over run 10):
+      ray  = z / cosθ          (perpendicular chord to the bottom)
+      ball = 2z / (1 + cosθ)   (max tangent sphere diameter)
+    """
+    from app.thickness import vertex_thickness, vertex_thickness_ball
+
+    verts = [(0, 0, 0), (10, 0, 0), (10, 0, 8), (0, 10, 0), (10, 10, 0), (10, 10, 8)]
+    faces = [
+        (0, 1, 2),
+        (3, 5, 4),
+        (0, 3, 1),
+        (1, 3, 4),  # bottom
+        (0, 2, 3),
+        (2, 5, 3),  # slanted
+        (1, 4, 2),
+        (2, 4, 5),  # back
+    ]
+    wedge = trimesh.Trimesh(vertices=verts, faces=faces)
+    wedge.fix_normals()
+    wedge = wedge.subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(wedge)
+    t_ray = vertex_thickness(pos, nrm, idx)
+    t_ball = vertex_thickness_ball(pos, nrm, idx)
+
+    cos_t = 10.0 / np.sqrt(164.0)
+    slant_n = np.array([-8.0, 0.0, 10.0]) / np.sqrt(164.0)
+    # interior vertices on the slanted face; z capped so the inward ray and
+    # the tangent sphere stay clear of the back wall (theory assumes only
+    # slant + bottom are involved — valid for z <= ~4.8 on this wedge)
+    on_slant = (nrm @ slant_n) > 0.999
+    interior = (
+        on_slant
+        & (pos[:, 2] > 2.0)
+        & (pos[:, 2] < 4.5)
+        & (pos[:, 1] > 2.0)
+        & (pos[:, 1] < 8.0)
+    )
+    assert interior.sum() > 0
+
+    z = pos[interior, 2].astype(np.float64)
+    expect_ray = z / cos_t
+    expect_ball = 2.0 * z / (1.0 + cos_t)
+
+    finite = np.isfinite(t_ray[interior])
+    assert np.allclose(t_ray[interior][finite], expect_ray[finite], rtol=0.03)
+    assert np.allclose(t_ball[interior][finite], expect_ball[finite], rtol=0.03)
+    # ball must be strictly below ray on the slanted wall (the whole point)
+    assert (t_ball[interior][finite] < t_ray[interior][finite] * 0.95).all()
+
+
+def test_thickness_endpoint_ball_method():
+    client = TestClient(app)
+    box = trimesh.creation.box(extents=(10, 10, 2))
+    stl = box.export(file_type="stl")
+    mid = client.post("/api/models", files={"file": ("p.stl", stl, "x")}).json()["id"]
+
+    r = client.get(f"/api/models/{mid}/thickness.bin?method=ball")
+    assert r.status_code == 200
+    assert client.get(f"/api/models/{mid}/thickness.bin?method=nope").status_code == 422

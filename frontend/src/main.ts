@@ -110,10 +110,14 @@ sectionFolder
   .add(sectionTool, 'flip')
   .name('反転')
   .onChange(() => sectionTool.update())
+sectionFolder
+  .add(sectionTool, 'caps')
+  .name('キャップ（切り口を塞ぐ）')
+  .onChange(() => sectionTool.update())
 
 // ---- thickness heatmap
-const thicknessState = { enabled: false, threshold: 1.5 }
-let thicknessCache: Map<number, Float32Array> | null = null
+const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as 'ray' | 'ball' }
+const thicknessCache = new Map<string, Map<number, Float32Array>>()
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
@@ -121,12 +125,17 @@ async function updateThickness(): Promise<void> {
     return
   }
   try {
-    if (!thicknessCache) {
-      hudInfo.textContent = '肉厚計算中...'
-      thicknessCache = await fetchThickness(currentModelId)
-      hudInfo.textContent = '肉厚ヒートマップ表示中（赤=閾値未満）'
+    let data = thicknessCache.get(thicknessState.method)
+    if (!data) {
+      hudInfo.textContent =
+        thicknessState.method === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
+      data = await fetchThickness(currentModelId, thicknessState.method)
+      thicknessCache.set(thicknessState.method, data)
     }
-    viewer.setThicknessColors(thicknessCache, thicknessState.threshold)
+    viewer.setThicknessColors(data, thicknessState.threshold)
+    hudInfo.textContent = `肉厚ヒートマップ表示中（${
+      thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
+    }、赤=閾値未満）`
   } catch (e) {
     thicknessState.enabled = false
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
@@ -137,6 +146,10 @@ thicknessFolder.close()
 thicknessFolder
   .add(thicknessState, 'enabled')
   .name('ヒートマップ')
+  .onChange(() => void updateThickness())
+thicknessFolder
+  .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
+  .name('方式')
   .onChange(() => void updateThickness())
 thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.1)
@@ -255,7 +268,7 @@ async function loadFile(file: File): Promise<void> {
     }
 
     show2D(false)
-    thicknessCache = null
+    thicknessCache.clear()
     thicknessState.enabled = false
     const pack = await fetchMesh(meta.id)
     const model = toModelData(pack)

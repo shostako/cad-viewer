@@ -31,7 +31,8 @@ export class Viewer {
     this.camera.up.set(0, 0, 1)
     this.camera.position.set(80, -60, 50)
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true })
+    // stencil: needed for section caps (three defaults stencil:false since r163)
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true })
     this.renderer.setPixelRatio(window.devicePixelRatio)
     container.appendChild(this.renderer.domElement)
 
@@ -77,6 +78,14 @@ export class Viewer {
 
   getPartMesh(partId: number): THREE.Mesh | undefined {
     return this.partMeshes.get(partId)
+  }
+
+  getPartMeshes(): ReadonlyMap<number, THREE.Mesh> {
+    return this.partMeshes
+  }
+
+  modelBBox(): THREE.Box3 {
+    return new THREE.Box3().setFromObject(this.modelGroup)
   }
 
   /** Thickness heatmap: red below threshold, grading to base blue when thick. */

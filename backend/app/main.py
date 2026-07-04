@@ -168,19 +168,29 @@ def measure_model(model_id: str, request: dict) -> dict:
 
 
 @app.get("/api/models/{model_id}/thickness.bin")
-def get_thickness(model_id: str) -> Response:
-    """Per-vertex wall thickness for every part (computed lazily, cached)."""
+def get_thickness(model_id: str, method: str = "ray") -> Response:
+    """Per-vertex wall thickness for every part (computed lazily, cached).
+
+    method=ray  — fast inward-normal ray probe (default)
+    method=ball — rolling ball (maximal tangent sphere), slower but exact
+                  at rib junctions and oblique walls
+    """
+    if method not in ("ray", "ball"):
+        raise HTTPException(422, "method must be 'ray' or 'ball'")
     entry = store.get(model_id)
     if entry is None:
         raise HTTPException(404, "model not found")
-    blob = entry.extra.get("thickness_blob")
+    cache_key = f"thickness_blob_{method}"
+    blob = entry.extra.get(cache_key)
     if blob is None:
         import struct as _struct
 
         import numpy as np
 
         from .meshpack import pack_buffers
-        from .thickness import vertex_thickness
+        from .thickness import vertex_thickness, vertex_thickness_ball
+
+        compute = vertex_thickness_ball if method == "ball" else vertex_thickness
 
         # decode the entry's own mesh blob (works for mesh & brep alike)
         raw = entry.mesh_blob
@@ -198,12 +208,12 @@ def get_thickness(model_id: str) -> Response:
             positions = buf(f"p{pid}:positions", np.float32).reshape(-1, 3)
             normals = buf(f"p{pid}:normals", np.float32).reshape(-1, 3)
             indices = buf(f"p{pid}:indices", np.uint32).reshape(-1, 3)
-            t = vertex_thickness(positions, normals, indices)
+            t = compute(positions, normals, indices)
             # inf -> 0 sentinel (frontend treats <=0 as "no data")
             t[~np.isfinite(t)] = 0.0
             buffers[f"p{pid}:thickness"] = (t, 1)
         blob = pack_buffers(buffers)
-        entry.extra["thickness_blob"] = blob
+        entry.extra[cache_key] = blob
     return Response(content=blob, media_type="application/octet-stream")
 
 
