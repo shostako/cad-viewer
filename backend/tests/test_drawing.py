@@ -81,3 +81,36 @@ def test_thickness_rejected_for_drawing(model):
     client, meta = model
     r = client.get(f"/api/models/{meta['id']}/thickness.bin")
     assert r.status_code == 422, (r.status_code, r.text[:200])
+
+
+def test_snap_points_inside_blocks(tmp_path):
+    """Regression: INSERT block contents are drawn in the SVG but their
+    endpoints/centers were not snappable (only the insertion point was)."""
+    import ezdxf
+
+    doc = ezdxf.new()
+    blk = doc.blocks.new(name="HOLE")
+    blk.add_circle((0, 0), radius=5)
+    blk.add_line((-5, 0), (5, 0))
+    msp = doc.modelspace()
+    msp.add_line((0, 0), (200, 0))  # base geometry so the bbox is sane
+    # two inserts, one translated + scaled
+    msp.add_blockref("HOLE", (50, 40))
+    msp.add_blockref("HOLE", (150, 40), dxfattribs={"xscale": 2, "yscale": 2})
+    path = tmp_path / "block_drawing.dxf"
+    doc.saveas(path)
+
+    client = TestClient(app)
+    r = client.post("/api/models", files={"file": ("block_drawing.dxf", path.read_bytes(), "x")})
+    assert r.status_code == 200, r.text
+    snaps = r.json()["snapPoints"]
+    pts = {(round(s["dxf"][0], 3), round(s["dxf"][1], 3)) for s in snaps}
+
+    # circle center inside insert #1 (translated)
+    assert (50.0, 40.0) in pts
+    # circle quadrant of insert #1: (50+5, 40)
+    assert (55.0, 40.0) in pts
+    # scaled insert #2: quadrant at 150 + 5*2 = 160
+    assert (160.0, 40.0) in pts
+    # line endpoint inside scaled insert: 150 - 5*2 = 140
+    assert (140.0, 40.0) in pts

@@ -114,43 +114,58 @@ def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
     return svg, meta
 
 
+MAX_INSERT_DEPTH = 4  # nested block references: expand a few levels, no more
+
+
 def _snap_points(msp) -> list[tuple[tuple[float, float], str]]:
-    """Endpoint / center / vertex snap targets from common entity types."""
+    """Endpoint / center / vertex snap targets from common entity types.
+
+    INSERT (block reference) entities are expanded via virtual_entities(),
+    which yields transformed copies of the block contents — the SVG renderer
+    draws that geometry, so it must be snappable too, not just the insertion
+    point. Depth-limited for nested blocks.
+    """
     out: list[tuple[tuple[float, float], str]] = []
 
     def add(x: float, y: float, kind: str) -> None:
         if len(out) < MAX_SNAP_POINTS:
             out.append(((x, y), kind))
 
-    for e in msp:
-        if len(out) >= MAX_SNAP_POINTS:
-            break  # cap reached — stop scanning entities entirely
-        t = e.dxftype()
-        try:
-            if t == "LINE":
-                add(e.dxf.start.x, e.dxf.start.y, "end")
-                add(e.dxf.end.x, e.dxf.end.y, "end")
-            elif t == "CIRCLE":
-                c, r = e.dxf.center, e.dxf.radius
-                add(c.x, c.y, "center")
-                for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r)):
-                    add(c.x + dx, c.y + dy, "quadrant")
-            elif t == "ARC":
-                c = e.dxf.center
-                add(c.x, c.y, "center")
-                sp, ep = e.start_point, e.end_point
-                add(sp.x, sp.y, "end")
-                add(ep.x, ep.y, "end")
-            elif t == "LWPOLYLINE":
-                for x, y, *_ in e.get_points():
-                    add(x, y, "vertex")
-            elif t == "POLYLINE":
-                for v in e.vertices:
-                    add(v.dxf.location.x, v.dxf.location.y, "vertex")
-            elif t == "POINT":
-                add(e.dxf.location.x, e.dxf.location.y, "point")
-            elif t == "INSERT":
-                add(e.dxf.insert.x, e.dxf.insert.y, "insert")
-        except Exception:
-            continue  # skip malformed entities
+    def scan(entities, depth: int) -> None:
+        for e in entities:
+            if len(out) >= MAX_SNAP_POINTS:
+                return  # cap reached — stop scanning entities entirely
+            t = e.dxftype()
+            try:
+                if t == "LINE":
+                    add(e.dxf.start.x, e.dxf.start.y, "end")
+                    add(e.dxf.end.x, e.dxf.end.y, "end")
+                elif t == "CIRCLE":
+                    c, r = e.dxf.center, e.dxf.radius
+                    add(c.x, c.y, "center")
+                    for dx, dy in ((r, 0), (-r, 0), (0, r), (0, -r)):
+                        add(c.x + dx, c.y + dy, "quadrant")
+                elif t == "ARC":
+                    c = e.dxf.center
+                    add(c.x, c.y, "center")
+                    sp, ep = e.start_point, e.end_point
+                    add(sp.x, sp.y, "end")
+                    add(ep.x, ep.y, "end")
+                elif t == "LWPOLYLINE":
+                    for x, y, *_ in e.get_points():
+                        add(x, y, "vertex")
+                elif t == "POLYLINE":
+                    for v in e.vertices:
+                        add(v.dxf.location.x, v.dxf.location.y, "vertex")
+                elif t == "POINT":
+                    add(e.dxf.location.x, e.dxf.location.y, "point")
+                elif t == "INSERT":
+                    add(e.dxf.insert.x, e.dxf.insert.y, "insert")
+                    if depth < MAX_INSERT_DEPTH:
+                        # transformed virtual copies of the block contents
+                        scan(e.virtual_entities(), depth + 1)
+            except Exception:
+                continue  # skip malformed entities
+
+    scan(msp, 0)
     return out
