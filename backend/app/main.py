@@ -6,6 +6,10 @@ Frontend dev server (Vite) proxies /api to this port.
 """
 from __future__ import annotations
 
+import hashlib
+import json
+from pathlib import Path
+
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 
@@ -18,6 +22,7 @@ from .tessellation import BrepLoadError, load_brep
 app = FastAPI(title="cad-viewer backend")
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
+SIDECAR_DIR = Path(__file__).resolve().parent.parent / ".sidecars"
 
 
 @app.get("/api/health")
@@ -44,6 +49,8 @@ async def upload_model(file: UploadFile) -> dict:
     except UnsupportedFormatError as e:
         raise HTTPException(415, str(e)) from e
 
+    content_hash = hashlib.sha256(data).hexdigest()[:32]
+
     if route == "mesh":
         try:
             mesh = load_mesh(data, name)
@@ -56,6 +63,7 @@ async def upload_model(file: UploadFile) -> dict:
             fmt=route,
             meta=meta,
             mesh_blob=blob,
+            extra={"hash": content_hash},
         )
         store.add(entry)
         return {"id": entry.model_id, "name": name, "format": route, **meta}
@@ -72,7 +80,7 @@ async def upload_model(file: UploadFile) -> dict:
                 meta=meta,
                 mesh_blob=blob,
                 # raw bytes kept for lazy B-rep re-parse on first measure (Phase 2)
-                extra={"raw": data, "filename": name, "cached": True},
+                extra={"raw": data, "filename": name, "cached": True, "hash": content_hash},
             )
             store.add(entry)
             return {"id": entry.model_id, "name": name, "format": route, "cached": True, **meta}
@@ -90,7 +98,7 @@ async def upload_model(file: UploadFile) -> dict:
             meta=meta,
             mesh_blob=blob,
             brep={"meshes": meshes},  # Phase 2: face/edge maps for measurement
-            extra={"raw": data, "filename": name, "cached": False},
+            extra={"raw": data, "filename": name, "cached": False, "hash": content_hash},
         )
         store.add(entry)
         return {"id": entry.model_id, "name": name, "format": route, "cached": False, **meta}
@@ -131,6 +139,35 @@ def measure_model(model_id: str, request: dict) -> dict:
         return measure.run(request, _brep_meshes(entry))
     except measure.MeasureError as e:
         raise HTTPException(422, str(e)) from e
+
+
+def _sidecar_path(model_id: str) -> Path:
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    content_hash = entry.extra.get("hash")
+    if not content_hash:
+        raise HTTPException(422, "model has no content hash")
+    return SIDECAR_DIR / f"{content_hash}.json"
+
+
+@app.get("/api/models/{model_id}/sidecar")
+def get_sidecar(model_id: str) -> dict:
+    path = _sidecar_path(model_id)
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+@app.put("/api/models/{model_id}/sidecar")
+def put_sidecar(model_id: str, body: dict) -> dict:
+    path = _sidecar_path(model_id)
+    SIDECAR_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(body, ensure_ascii=False))
+    tmp.replace(path)
+    return {"saved": True}
 
 
 @app.delete("/api/models/{model_id}")

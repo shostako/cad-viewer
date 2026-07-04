@@ -15,10 +15,23 @@ import {
 import type { PickResult } from './picking'
 import type { Viewer } from './viewer'
 
+/** Serializable form of an entry — persisted to the model's sidecar. */
+export interface EntryData {
+  /** list panel text */
+  text: string
+  /** 3D label content (empty = no label) */
+  labelText: string
+  labelPos: [number, number, number]
+  line?: [[number, number, number], [number, number, number]]
+  markers?: [number, number, number][]
+  annotation?: boolean
+}
+
 export interface MeasureEntry {
   id: number
   label: string
   objects: THREE.Object3D[]
+  data: EntryData
 }
 
 const MARKER_COLOR = 0xffb020
@@ -78,22 +91,23 @@ export class MeasureTool {
     this.busy = true
     try {
       const res = await measureDistance(this.modelId, toRef(a.pick), toRef(pick))
-      const pa = new THREE.Vector3(...res.pointA)
-      const pb = new THREE.Vector3(...res.pointB)
-      const objects: THREE.Object3D[] = [a.marker, this.makeMarker(pick.point)]
-      this.viewer.overlay.add(objects[1])
-
-      if (res.value > 1e-12) {
-        const line = this.makeDimLine(pa, pb)
-        this.viewer.overlay.add(line)
-        objects.push(line)
+      // temporary first-click marker is replaced by the restored-from-data entry
+      this.viewer.disposeOverlayObject(a.marker)
+      const pa = res.pointA
+      const pb = res.pointB
+      const mid: [number, number, number] = [
+        (pa[0] + pb[0]) / 2,
+        (pa[1] + pb[1]) / 2,
+        (pa[2] + pb[2]) / 2,
+      ]
+      const data: EntryData = {
+        text: `${describe(a.pick)} ↔ ${describe(pick)} : ${fmt(res.value)}`,
+        labelText: fmt(res.value),
+        labelPos: mid,
+        markers: [a.pick.point.toArray() as [number, number, number], pick.point.toArray() as [number, number, number]],
+        ...(res.value > 1e-12 ? { line: [pa, pb] as EntryData['line'] } : {}),
       }
-      const mid = pa.clone().add(pb).multiplyScalar(0.5)
-      const label = this.viewer.makeLabel(fmt(res.value), mid)
-      this.viewer.overlay.add(label)
-      objects.push(label)
-
-      this.addEntry(`${describe(a.pick)} ↔ ${describe(pick)} : ${fmt(res.value)}`, objects)
+      this.addFromData(data)
       return `距離 ${fmt(res.value)}`
     } catch (e) {
       this.viewer.disposeOverlayObject(a.marker)
@@ -101,6 +115,42 @@ export class MeasureTool {
     } finally {
       this.busy = false
     }
+  }
+
+  /** Build overlay graphics from serializable data and register the entry. */
+  addFromData(data: EntryData): void {
+    const objects: THREE.Object3D[] = []
+    for (const m of data.markers ?? []) {
+      const marker = this.makeMarker(new THREE.Vector3(...m))
+      this.viewer.overlay.add(marker)
+      objects.push(marker)
+    }
+    if (data.line) {
+      const line = this.makeDimLine(
+        new THREE.Vector3(...data.line[0]),
+        new THREE.Vector3(...data.line[1]),
+      )
+      this.viewer.overlay.add(line)
+      objects.push(line)
+    }
+    if (data.labelText) {
+      const label = this.viewer.makeLabel(
+        data.labelText,
+        new THREE.Vector3(...data.labelPos),
+        data.annotation ? 'note-label' : 'dim-label',
+      )
+      this.viewer.overlay.add(label)
+      objects.push(label)
+    }
+    this.addEntry(data.text, objects, data)
+  }
+
+  toJSON(): EntryData[] {
+    return this.entries.map((e) => e.data)
+  }
+
+  restore(datas: EntryData[]): void {
+    for (const d of datas) this.addFromData(d)
   }
 
   cancelPending(): void {
@@ -116,17 +166,20 @@ export class MeasureTool {
       if (pick.kind === 'edge') {
         const info = await measureEdgeInfo(this.modelId, toRef(pick))
         if (info.curve === 'circle' && info.diameter !== undefined && info.center) {
-          const center = new THREE.Vector3(...info.center)
-          const label = this.viewer.makeLabel(`⌀${fmt(info.diameter)}`, center)
-          this.viewer.overlay.add(label)
-          this.addEntry(`円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`, [label])
+          this.addFromData({
+            text: `円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
+            labelText: `⌀${fmt(info.diameter)}`,
+            labelPos: info.center,
+          })
         }
       } else if (pick.kind === 'face') {
         const info = await measureFaceInfo(this.modelId, toRef(pick))
-        if (info.surface === 'cylinder' && info.diameter !== undefined && info.center) {
-          const label = this.viewer.makeLabel(`⌀${fmt(info.diameter)}`, pick.point)
-          this.viewer.overlay.add(label)
-          this.addEntry(`円筒面 ⌀${fmt(info.diameter)}`, [label])
+        if (info.surface === 'cylinder' && info.diameter !== undefined) {
+          this.addFromData({
+            text: `円筒面 ⌀${fmt(info.diameter)}`,
+            labelText: `⌀${fmt(info.diameter)}`,
+            labelPos: pick.point.toArray() as [number, number, number],
+          })
         }
       }
     } catch {
@@ -134,8 +187,19 @@ export class MeasureTool {
     }
   }
 
-  private addEntry(label: string, objects: THREE.Object3D[]): void {
-    this.entries.push({ id: this.nextId++, label, objects })
+  /** Add a text annotation pinned to a 3D point. */
+  addAnnotation(text: string, at: THREE.Vector3): void {
+    this.addFromData({
+      text: `📌 ${text}`,
+      labelText: text,
+      labelPos: at.toArray() as [number, number, number],
+      markers: [at.toArray() as [number, number, number]],
+      annotation: true,
+    })
+  }
+
+  private addEntry(label: string, objects: THREE.Object3D[], data: EntryData): void {
+    this.entries.push({ id: this.nextId++, label, objects, data })
     this.emit()
   }
 

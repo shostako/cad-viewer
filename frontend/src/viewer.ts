@@ -79,6 +79,16 @@ export class Viewer {
     return this.partMeshes.get(partId)
   }
 
+  /** Apply clipping planes to every model material (mesh + edge lines). */
+  setClippingPlanes(planes: THREE.Plane[]): void {
+    const list = planes.length ? planes : null
+    this.modelGroup.traverse((o) => {
+      if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
+        ;(o.material as THREE.Material).clippingPlanes = list
+      }
+    })
+  }
+
   /** Create a screen-space label attached to a 3D point. */
   makeLabel(text: string, position: THREE.Vector3, className = 'dim-label'): CSS2DObject {
     const div = document.createElement('div')

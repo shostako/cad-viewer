@@ -1,10 +1,11 @@
 import './style.css'
 import GUI from 'lil-gui'
 import * as THREE from 'three'
-import { uploadModel, fetchMesh, type ModelMeta } from './api'
-import { MeasureTool } from './measure'
+import { uploadModel, fetchMesh, getSidecar, putSidecar, type ModelMeta } from './api'
+import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
 import { Picker } from './picking'
+import { SectionTool, type Axis } from './section'
 import { renderTree } from './tree'
 import { Viewer } from './viewer'
 
@@ -40,9 +41,13 @@ const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 const viewer = new Viewer(viewport)
 const picker = new Picker(viewer)
 const measureTool = new MeasureTool(viewer)
+const sectionTool = new SectionTool(viewer)
+
+let currentModelId: string | null = null
+let restoring = false
 
 const gui = new GUI({ title: '操作' })
-const state = { measureMode: false }
+const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
 const actions = {
   open: () => fileInput.click(),
   fit: () => viewer.fitToView(),
@@ -51,13 +56,68 @@ const actions = {
 gui.add(actions, 'open').name('ファイルを開く')
 gui.add(actions, 'fit').name('全体表示')
 gui
-  .add(state, 'measureMode')
-  .name('計測モード')
-  .onChange((on: boolean) => {
-    if (!on) measureTool.cancelPending()
-    viewport.style.cursor = on ? 'crosshair' : ''
+  .add(state, 'mode', ['なし', '計測', '注記'])
+  .name('モード')
+  .onChange((mode: string) => {
+    if (mode !== '計測') measureTool.cancelPending()
+    viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
   })
 gui.add(actions, 'clearMeasure').name('計測クリア')
+
+const sectionFolder = gui.addFolder('断面')
+sectionFolder.close()
+sectionFolder
+  .add(sectionTool, 'enabled')
+  .name('有効')
+  .onChange(() => sectionTool.update())
+sectionFolder
+  .add(sectionTool, 'axis', ['X', 'Y', 'Z'] as Axis[])
+  .name('軸')
+  .onChange(() => sectionTool.update())
+sectionFolder
+  .add(sectionTool, 'position', 0, 1, 0.01)
+  .name('位置')
+  .onChange(() => sectionTool.update())
+sectionFolder
+  .add(sectionTool, 'flip')
+  .name('反転')
+  .onChange(() => sectionTool.update())
+
+// ---- sidecar persistence (auto-save, debounced)
+let saveTimer: ReturnType<typeof setTimeout> | undefined
+measureTool.onChange(() => {
+  if (restoring || !currentModelId) return
+  clearTimeout(saveTimer)
+  const id = currentModelId
+  saveTimer = setTimeout(() => {
+    void putSidecar(id, { version: 1, entries: measureTool.toJSON() })
+  }, 800)
+})
+
+// ---- annotation input (small floating text box at the click point)
+function promptAnnotation(screenX: number, screenY: number, at: THREE.Vector3): void {
+  const input = document.createElement('input')
+  input.type = 'text'
+  input.className = 'note-input'
+  input.placeholder = '注記を入力しEnter'
+  input.style.left = `${screenX}px`
+  input.style.top = `${screenY}px`
+  document.body.appendChild(input)
+  input.focus()
+  let closed = false
+  const done = (commit: boolean) => {
+    if (closed) return
+    closed = true
+    const text = input.value.trim()
+    input.remove() // fires blur synchronously — guarded by `closed`
+    if (commit && text) measureTool.addAnnotation(text, at)
+  }
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') done(true)
+    else if (e.key === 'Escape') done(false)
+  })
+  input.addEventListener('blur', () => done(false))
+}
 
 measureTool.onChange(() => {
   const entries = measureTool.list()
@@ -75,13 +135,13 @@ measureTool.onChange(() => {
   }
 })
 
-// click-to-measure (suppress when the user is orbiting)
+// click-to-pick (suppress when the user is orbiting)
 let downAt: [number, number] | null = null
 viewport.addEventListener('pointerdown', (e) => {
   downAt = [e.clientX, e.clientY]
 })
 viewport.addEventListener('pointerup', (e) => {
-  if (!state.measureMode || !downAt) return
+  if (state.mode === 'なし' || !downAt) return
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1])
   downAt = null
   if (moved > 5 || measureTool.busy) return
@@ -92,6 +152,12 @@ viewport.addEventListener('pointerup', (e) => {
   )
   const pick = picker.pick(ndc)
   if (!pick) return
+
+  if (state.mode === '注記') {
+    promptAnnotation(e.clientX, e.clientY, pick.point)
+    return
+  }
+
   if (!measureTool.available) {
     hudInfo.textContent = '計測はSTEP/IGESモデルのみ（メッシュ形式に真値はない）'
     return
@@ -120,6 +186,18 @@ async function loadFile(file: File): Promise<void> {
     viewer.setModel(model)
     picker.setModel(model.parts)
     measureTool.setModel(meta.id, meta.format === 'brep')
+    currentModelId = meta.id
+    sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
+
+    // restore persisted measurements / annotations
+    restoring = true
+    try {
+      const sidecar = await getSidecar(meta.id)
+      const entries = (sidecar.entries ?? []) as EntryData[]
+      if (entries.length) measureTool.restore(entries)
+    } finally {
+      restoring = false
+    }
 
     if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
       renderTree(treeBody, model.tree, (partId, visible) =>

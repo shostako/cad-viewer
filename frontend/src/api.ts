@@ -87,3 +87,17 @@ export function measureEdgeInfo(modelId: string, ref: EntityRef) {
 export function measureFaceInfo(modelId: string, ref: EntityRef) {
   return measureRequest<FaceInfoResult>(modelId, { type: 'face_info', ref })
 }
+
+export async function getSidecar(modelId: string): Promise<Record<string, unknown>> {
+  const res = await fetch(`/api/models/${modelId}/sidecar`)
+  if (!res.ok) return {}
+  return res.json()
+}
+
+export async function putSidecar(modelId: string, body: unknown): Promise<void> {
+  await fetch(`/api/models/${modelId}/sidecar`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+}

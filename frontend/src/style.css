@@ -176,6 +176,33 @@ body,
   color: #ff6b6b;
 }
 
+.note-label {
+  color: #e8eef5;
+  background: rgba(40, 90, 60, 0.92);
+  border: 1px solid #4a9e6e;
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  font-family: system-ui, sans-serif;
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-input {
+  position: fixed;
+  z-index: 100;
+  width: 200px;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: #e8eef5;
+  background: rgba(20, 24, 30, 0.95);
+  border: 1px solid #4a9e6e;
+  border-radius: 4px;
+  outline: none;
+}
+
 .dim-label {
   color: #1d2126;
   background: #ffd060;
