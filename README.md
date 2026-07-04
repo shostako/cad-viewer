@@ -40,7 +40,7 @@ cd backend && .venv/bin/pytest
 | 1 | STEP/IGES＋トポロジプロトコル（faceRanges/edges、XCAF色・アセンブリツリー、キャッシュ） | ✅ |
 | 2 | ピッキング＋計測（スナップ、点間・エッジ長・面間・穴径） | ✅ |
 | 3 | 断面＋注記（クリッピング、JSONサイドカー永続化） | ✅ |
-| 4 | 2D（DXF/DWG→ODA変換）＋3MF | — |
+| 4 | 2D（DXF/DWG→ODA変換）＋3MF | ✅ |
 | 5 | 肉厚チェック＋性能 | — |
 
 詳細計画: 初期プラン参照（`~/.claude/plans/pc-cad-quizzical-barto.md`）

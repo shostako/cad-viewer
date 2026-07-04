@@ -18,6 +18,22 @@ body,
   inset: 0;
 }
 
+#viewport.hidden {
+  display: none;
+}
+
+#viewport2d {
+  position: absolute;
+  inset: 0;
+  background: #f2f2ef;
+  touch-action: none;
+  overflow: hidden;
+}
+
+#viewport2d.hidden {
+  display: none;
+}
+
 #viewport canvas {
   display: block;
 }

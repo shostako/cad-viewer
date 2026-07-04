@@ -127,3 +127,15 @@ def test_broken_step(client):
 
 def test_missing_model(client):
     assert client.get("/api/models/nope/mesh.bin").status_code == 404
+
+
+def test_3mf_roundtrip(client):
+    import trimesh
+
+    box = trimesh.creation.box(extents=(10, 20, 30))
+    data = trimesh.exchange.export.export_mesh(box, file_obj=None, file_type="3mf")
+    r = client.post("/api/models", files={"file": ("box.3mf", data, "model/3mf")})
+    assert r.status_code == 200, r.text
+    meta = r.json()
+    assert meta["format"] == "mesh"
+    assert meta["triangleCount"] == 12

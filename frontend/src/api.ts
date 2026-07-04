@@ -9,6 +9,15 @@ export interface ModelMeta {
   partCount: number
   cached?: boolean
   bbox: { min: number[]; max: number[] }
+  // drawing (2D) payloads
+  bbox2d?: { min: [number, number]; max: [number, number] }
+  snapPoints?: { dxf: [number, number]; svg: [number, number]; kind: string }[]
+}
+
+export async function fetchDrawingSvg(modelId: string): Promise<string> {
+  const res = await fetch(`/api/models/${modelId}/drawing.svg`)
+  if (!res.ok) throw new Error(`svg fetch failed: ${res.status}`)
+  return res.text()
 }
 
 export async function uploadModel(file: File): Promise<ModelMeta> {

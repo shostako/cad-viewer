@@ -13,6 +13,8 @@ testdata/*.stl
 testdata/*.step
 testdata/*.stp
 testdata/*.3mf
+testdata/*.dxf
+testdata/*.dwg
 *.log
 backend/.cache/
 backend/.sidecars/

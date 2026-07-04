@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 
 from . import cache, measure
+from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
 from .store import ModelEntry, new_model_id, store
@@ -103,8 +104,33 @@ async def upload_model(file: UploadFile) -> dict:
         store.add(entry)
         return {"id": entry.model_id, "name": name, "format": route, "cached": False, **meta}
 
-    # drawing route arrives in Phase 4
+    if route == "drawing":
+        try:
+            svg, meta = load_drawing(data, name)
+        except DrawingLoadError as e:
+            raise HTTPException(422, str(e)) from e
+        entry = ModelEntry(
+            model_id=new_model_id(),
+            name=name,
+            fmt=route,
+            meta=meta,
+            extra={"svg": svg, "hash": content_hash},
+        )
+        store.add(entry)
+        return {"id": entry.model_id, "name": name, "format": route, **meta}
+
     raise HTTPException(501, f"{route} route not implemented yet")
+
+
+@app.get("/api/models/{model_id}/drawing.svg")
+def get_drawing_svg(model_id: str) -> Response:
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    svg = entry.extra.get("svg")
+    if not svg:
+        raise HTTPException(404, "model has no drawing payload")
+    return Response(content=svg, media_type="image/svg+xml")
 
 
 @app.get("/api/models/{model_id}/mesh.bin")

@@ -1,7 +1,8 @@
 import './style.css'
 import GUI from 'lil-gui'
 import * as THREE from 'three'
-import { uploadModel, fetchMesh, getSidecar, putSidecar, type ModelMeta } from './api'
+import { uploadModel, fetchMesh, fetchDrawingSvg, getSidecar, putSidecar, type ModelMeta } from './api'
+import { Drawing2D } from './drawing2d'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
 import { Picker } from './picking'
@@ -12,6 +13,7 @@ import { Viewer } from './viewer'
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
   <div id="viewport"></div>
+  <div id="viewport2d" class="hidden"></div>
   <div id="dropzone" class="hidden">ここにドロップして読み込み</div>
   <div id="tree-panel" class="hidden">
     <div id="tree-title">部品ツリー</div>
@@ -25,7 +27,7 @@ app.innerHTML = `
     <div id="hud-title">cad-viewer</div>
     <div id="hud-info">STEP / IGES / STL / 3MF をドロップ、またはメニューから選択</div>
   </div>
-  <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply" hidden />
+  <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
 `
 
 const viewport = document.querySelector<HTMLDivElement>('#viewport')!
@@ -38,10 +40,23 @@ const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
+const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
+
 const viewer = new Viewer(viewport)
 const picker = new Picker(viewer)
 const measureTool = new MeasureTool(viewer)
 const sectionTool = new SectionTool(viewer)
+const drawing2d = new Drawing2D(viewport2d, (msg) => {
+  hudInfo.textContent = msg
+})
+
+let is2D = false
+function show2D(on: boolean): void {
+  is2D = on
+  viewport2d.classList.toggle('hidden', !on)
+  viewport.classList.toggle('hidden', on)
+  treePanel.classList.toggle('hidden', on || !treeBody.hasChildNodes())
+}
 
 let currentModelId: string | null = null
 let restoring = false
@@ -50,8 +65,11 @@ const gui = new GUI({ title: '操作' })
 const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
 const actions = {
   open: () => fileInput.click(),
-  fit: () => viewer.fitToView(),
-  clearMeasure: () => measureTool.clearAll(),
+  fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
+  clearMeasure: () => {
+    measureTool.clearAll()
+    drawing2d.clearMeasurements()
+  },
 }
 gui.add(actions, 'open').name('ファイルを開く')
 gui.add(actions, 'fit').name('全体表示')
@@ -60,7 +78,9 @@ gui
   .name('モード')
   .onChange((mode: string) => {
     if (mode !== '計測') measureTool.cancelPending()
+    drawing2d.measureMode = mode === '計測'
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
+    viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
   })
 gui.add(actions, 'clearMeasure').name('計測クリア')
 
@@ -181,6 +201,20 @@ async function loadFile(file: File): Promise<void> {
   hudInfo.textContent = `読み込み中: ${file.name} ...`
   try {
     const meta = await uploadModel(file)
+
+    if (meta.format === 'drawing') {
+      const svg = await fetchDrawingSvg(meta.id)
+      drawing2d.load(svg, meta.snapPoints ?? [])
+      show2D(true)
+      currentModelId = meta.id
+      const d = meta.bbox2d
+        ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
+        : '?'
+      hudInfo.textContent = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+      return
+    }
+
+    show2D(false)
     const pack = await fetchMesh(meta.id)
     const model = toModelData(pack)
     viewer.setModel(model)
