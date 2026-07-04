@@ -298,6 +298,13 @@ async function loadFile(file: File): Promise<void> {
       if (meta.format === 'drawing') {
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
+        // Clear the stale 3D state: the hidden viewport keeps the previous
+        // model otherwise, and the NEXT 3D load reveals it (show2D(false))
+        // before its own fetch completes — visible and pickable if that
+        // fetch is slow or fails.
+        viewer.clearModel()
+        picker.setModel([])
+        treeBody.replaceChildren()
         sectionTool.enabled = false
         sectionTool.update()
         drawing2d.load(svg, meta.snapPoints ?? [])

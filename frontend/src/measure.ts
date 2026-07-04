@@ -165,6 +165,9 @@ export class MeasureTool {
   }
 
   cancelPending(): void {
+    // invalidate in-flight distance / entity-info requests too — leaving
+    // measure mode must not let a late response add (and autosave) an entry
+    this.session++
     if (this.pending) {
       this.viewer.disposeOverlayObject(this.pending.marker)
       this.pending = null
@@ -228,8 +231,7 @@ export class MeasureTool {
   }
 
   clearAll(): void {
-    this.session++
-    this.cancelPending()
+    this.cancelPending() // bumps session — invalidates all in-flight requests
     for (const e of this.entries) for (const o of e.objects) this.viewer.disposeOverlayObject(o)
     this.entries = []
     this.emit()

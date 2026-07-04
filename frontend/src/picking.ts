@@ -81,6 +81,13 @@ export class Picker {
     if (e) return e
 
     // 3) face
+    // Mesh formats (STL/3MF/...) ship faceRanges: [] — no B-rep face ids exist.
+    // Still return a generic face pick (id -1) so annotation mode gets its
+    // hit.point and measure mode can show the "STEP/IGES only" HUD message
+    // instead of silently ignoring every click on the model surface.
+    if (part.faceRanges.length === 0) {
+      return { partId, kind: 'face', id: -1, point: hit.point.clone() }
+    }
     const faceId = findRange(part.faceRanges, hit.faceIndex)
     if (faceId === null) return null
     return { partId, kind: 'face', id: faceId, point: hit.point.clone() }
