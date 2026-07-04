@@ -186,22 +186,22 @@ thicknessFolder
 let saveTimer: ReturnType<typeof setTimeout> | undefined
 let pendingSave: { id: string; body: unknown } | undefined
 
-function flushSidecar(): void {
+async function flushSidecar(): Promise<void> {
   if (saveTimer !== undefined) {
     clearTimeout(saveTimer)
     saveTimer = undefined
   }
-  if (pendingSave) {
-    void putSidecar(pendingSave.id, pendingSave.body)
-    pendingSave = undefined
-  }
+  if (!pendingSave) return
+  const save = pendingSave
+  pendingSave = undefined
+  await putSidecar(save.id, save.body)
 }
 
 measureTool.onChange(() => {
   if (restoringOwner !== 0 || !currentModelId) return
   clearTimeout(saveTimer)
   pendingSave = { id: currentModelId, body: { version: 1, entries: measureTool.toJSON() } }
-  saveTimer = setTimeout(flushSidecar, 800)
+  saveTimer = setTimeout(() => void flushSidecar(), 800)
 })
 
 // ---- annotation input (small floating text box at the click point)
@@ -300,11 +300,14 @@ async function loadFile(file: File): Promise<void> {
 
     // --- teardown of the previous model -----------------------------------
     // ORDER MATTERS (sidecar corruption hazard):
-    // 1. FLUSH any pending debounced save to the OLD model (it captured the old
-    //    id + an entries snapshot), so an edit within the 800ms window survives
+    // 1. FLUSH any pending debounced save to the OLD model and AWAIT it — for a
+    //    deduped/same-id reload the PUT must land before the getSidecar() below,
+    //    or the GET races ahead and restores a sidecar missing the just-entered
+    //    edit (which a later save then persists over)
     // 2. restoring=true so teardown emits can't schedule new saves
     // 3. only then swap currentModelId and clear tools
-    flushSidecar()
+    await flushSidecar()
+    if (gen !== loadGen) return // flush await yielded — a newer load may have won
     restoringOwner = gen
     try {
       currentModelId = meta.id

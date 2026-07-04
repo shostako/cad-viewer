@@ -2,8 +2,9 @@
 """Codexレビュー指摘の取りこぼし監査。
 
 Codex(chatgpt-codex-connector[bot])が付けた各インラインレビューコメントに、
-リポジトリオーナーからの返信（対応証跡: "fixed in <sha>" / "tracked in #N"）が
-一件でも紐づいているかを機械的に突合する。
+リポジトリオーナーからの返信で**対応証跡**（バッククォート囲みのコミットSHA、
+または Issue/PR 参照 `#N`）を含むものが一件でも紐づいているかを機械突合する。
+"thanks" のような証跡なしの返信は「対応済み」と認めない。
 
 返信の付いていないCodexコメント = 未処理 として列挙する。ゼロなら取りこぼしなし。
 GitHubのコメントスレッド自体を台帳として使うので、別途の状態ファイルを持たない。
@@ -19,11 +20,17 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 
 REPO = "shostako/cad-viewer"
 CODEX_LOGIN = "chatgpt-codex-connector"
+
+# 対応証跡パターン: コミットSHA（バッククォート囲みの7-40桁hex）または
+# Issue/PR参照（#N）を含む返信だけを「対応済み」と認める。"thanks" のような
+# 任意テキストの返信で未解決の指摘が監査から消えるのを防ぐ。
+EVIDENCE = re.compile(r"`[0-9a-f]{7,40}`|#\d+", re.IGNORECASE)
 
 
 def gh_json(path: str) -> list | dict:
@@ -72,11 +79,14 @@ def audit_pr(pr: int, owner: str) -> list[dict]:
         for c in comments
         if CODEX_LOGIN in c["user"]["login"] and not c.get("in_reply_to_id")
     ]
-    # comment ids that received a reply from the repo owner
+    # comment ids that received an owner reply carrying a valid evidence token
+    # (commit SHA in backticks, or #N). A bare "thanks" does NOT count.
     addressed = {
         c["in_reply_to_id"]
         for c in comments
-        if c.get("in_reply_to_id") and c["user"]["login"] == owner
+        if c.get("in_reply_to_id")
+        and c["user"]["login"] == owner
+        and EVIDENCE.search(c["body"] or "")
     }
     return [c for c in codex_top if c["id"] not in addressed]
 
@@ -111,8 +121,8 @@ def main() -> int:
 
     print()
     if total_unaddressed:
-        print(f"取りこぼし {total_unaddressed} 件。各コメントに fixed in <sha> "
-              "か tracked in #N を返信して紐づけろ。")
+        print(f"取りこぼし {total_unaddressed} 件。各コメントに証跡付きの返信"
+              "（コミットSHAを `...` で囲む、または #N を含める）を打って紐づけろ。")
         return 1
     print("取りこぼしなし。全Codex指摘に対応証跡が紐づいている。")
     return 0
