@@ -37,7 +37,7 @@ cd backend && .venv/bin/pytest
 | Phase | 内容 | 状態 |
 |---|---|---|
 | 0 | 骨組み＋STLビューア（アップロード→バイナリメッシュ配信→Three.js表示） | ✅ |
-| 1 | STEP/IGES＋トポロジプロトコル（faceRanges/edges、XCAF色・アセンブリツリー、キャッシュ） | — |
+| 1 | STEP/IGES＋トポロジプロトコル（faceRanges/edges、XCAF色・アセンブリツリー、キャッシュ） | ✅ |
 | 2 | ピッキング＋計測（スナップ、点間・エッジ長・面間・穴径） | — |
 | 3 | 断面＋注記（クリッピング、JSONサイドカー永続化） | — |
 | 4 | 2D（DXF/DWG→ODA変換）＋3MF | — |
@@ -48,7 +48,12 @@ cd backend && .venv/bin/pytest
 ## バイナリメッシュプロトコル
 
 `GET /api/models/{id}/mesh.bin` — `[uint32 headerLen][header JSON][buffers...]`
-ヘッダの `buffers` に各セクションの offset/dtype/itemSize。Phase 1 で `groups`（faceRanges）と `edges`（ポリライン）が同じ器で追加される。
+バッファは部品ごとに `p{id}:positions` / `p{id}:normals` / `p{id}:indices` / `p{id}:edges`（線分ペア）。
+ヘッダに `parts`（name / color / faceRanges / edgeRanges）と `tree`（アセンブリ階層）。
+STL等のメッシュ形式も同じ「1部品」形式に統一（フロントのデコードパスは1本）。
+faceId/edgeId は `TopTools_IndexedMapOfShape` のindexで、サーバ側B-repと1:1対応（Phase 2の計測で使用）。
+
+テッセレーション結果は `backend/.cache/` にディスクキャッシュされる（キー: ファイルsha256＋パラメータ）。
 
 ## 既知の注意点
 

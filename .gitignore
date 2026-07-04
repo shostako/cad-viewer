@@ -11,5 +11,7 @@ frontend/dist/
 # local data
 testdata/*.stl
 testdata/*.step
+testdata/*.stp
 testdata/*.3mf
 *.log
+backend/.cache/

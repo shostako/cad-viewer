@@ -63,3 +63,60 @@ body,
 #dropzone.hidden {
   display: none;
 }
+
+#tree-panel {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  min-width: 180px;
+  max-width: 300px;
+  max-height: 60vh;
+  overflow-y: auto;
+  color: #cfd8e3;
+  background: rgba(20, 24, 30, 0.85);
+  border: 1px solid #3a4250;
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 13px;
+  user-select: none;
+}
+
+#tree-panel.hidden {
+  display: none;
+}
+
+#tree-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #8fb4d8;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+}
+
+#tree-panel ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+#tree-panel ul ul {
+  padding-left: 18px;
+}
+
+#tree-panel label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tree-panel label:hover {
+  color: #fff;
+}
+
+#tree-panel input[type='checkbox'] {
+  accent-color: #8fb4d8;
+}

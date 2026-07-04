@@ -6,6 +6,8 @@ export interface ModelMeta {
   format: string
   vertexCount: number
   triangleCount: number
+  partCount: number
+  cached?: boolean
   bbox: { min: number[]; max: number[] }
 }
 

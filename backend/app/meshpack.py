@@ -66,29 +66,100 @@ def pack_buffers(
     return struct.pack("<I", len(header_bytes)) + header_bytes + b"".join(chunks)
 
 
-def pack_trimesh(mesh) -> tuple[bytes, dict[str, Any]]:
-    """Pack a trimesh.Trimesh into the binary protocol.
+def pack_parts(meshes, tree, deflection: float) -> tuple[bytes, dict[str, Any]]:
+    """Pack tessellated B-rep parts (see tessellation.PartMesh) into the protocol.
 
-    Returns (blob, meta) where meta contains display stats.
+    Buffers are namespaced per part: "p{id}:positions", "p{id}:normals",
+    "p{id}:indices", "p{id}:edges". The header carries parts metadata
+    (name, color, faceRanges, edgeRanges) and the assembly tree.
+    """
+    buffers: dict[str, tuple[np.ndarray, int]] = {}
+    parts_meta: list[dict[str, Any]] = []
+    total_tris = 0
+    total_verts = 0
+    gmin = np.full(3, np.inf)
+    gmax = np.full(3, -np.inf)
+
+    for m in meshes:
+        pid = m.part.part_id
+        buffers[f"p{pid}:positions"] = (m.positions.astype(np.float32), 3)
+        buffers[f"p{pid}:normals"] = (m.normals.astype(np.float32), 3)
+        buffers[f"p{pid}:indices"] = (m.indices.astype(np.uint32), 1)
+        buffers[f"p{pid}:edges"] = (m.edge_positions.astype(np.float32), 3)
+        parts_meta.append(
+            {
+                "id": pid,
+                "name": m.part.name,
+                "color": list(m.part.color) if m.part.color else None,
+                "faceRanges": m.face_ranges,
+                "edgeRanges": m.edge_ranges,
+            }
+        )
+        total_tris += len(m.indices)
+        total_verts += len(m.positions)
+        if len(m.positions):
+            gmin = np.minimum(gmin, m.positions.min(axis=0))
+            gmax = np.maximum(gmax, m.positions.max(axis=0))
+
+    header_extra = {
+        "parts": parts_meta,
+        "tree": tree.to_dict(),
+        "deflection": deflection,
+    }
+    blob = pack_buffers(buffers, extra_header=header_extra)
+    meta = {
+        "vertexCount": int(total_verts),
+        "triangleCount": int(total_tris),
+        "partCount": len(parts_meta),
+        "bbox": {
+            "min": [float(v) for v in gmin],
+            "max": [float(v) for v in gmax],
+        },
+        "tree": tree.to_dict(),
+        "parts": [
+            {"id": p["id"], "name": p["name"], "color": p["color"]} for p in parts_meta
+        ],
+    }
+    return blob, meta
+
+
+def pack_trimesh(mesh, name: str = "mesh") -> tuple[bytes, dict[str, Any]]:
+    """Pack a trimesh.Trimesh as a single anonymous part (unified format).
+
+    Uses the same per-part namespaced layout as pack_parts so the frontend
+    has exactly one decoding path.
     """
     positions = np.asarray(mesh.vertices, dtype=np.float32)
     normals = np.asarray(mesh.vertex_normals, dtype=np.float32)
     indices = np.asarray(mesh.faces, dtype=np.uint32)
 
+    part_meta = {
+        "id": 0,
+        "name": name,
+        "color": None,
+        "faceRanges": [],
+        "edgeRanges": [],
+    }
+    tree = {"name": "root", "children": [{"name": name, "partId": 0}]}
     blob = pack_buffers(
         {
-            "positions": (positions, 3),
-            "normals": (normals, 3),
-            "indices": (indices, 1),
-        }
+            "p0:positions": (positions, 3),
+            "p0:normals": (normals, 3),
+            "p0:indices": (indices, 1),
+            "p0:edges": (np.empty((0, 3), dtype=np.float32), 3),
+        },
+        extra_header={"parts": [part_meta], "tree": tree},
     )
     bbox = mesh.bounds  # (2, 3) min/max
     meta = {
         "vertexCount": int(len(positions)),
         "triangleCount": int(len(indices)),
+        "partCount": 1,
         "bbox": {
             "min": [float(v) for v in bbox[0]],
             "max": [float(v) for v in bbox[1]],
         },
+        "tree": tree,
+        "parts": [{"id": 0, "name": name, "color": None}],
     }
     return blob, meta

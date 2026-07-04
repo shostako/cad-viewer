@@ -1,6 +1,12 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
-import type { MeshPack } from './meshpack'
+import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
+import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
+import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
+import type { ModelData, PartData } from './model'
+
+const DEFAULT_PART_COLOR = 0x8fb4d8
+const EDGE_COLOR = 0x20262e
 
 export class Viewer {
   readonly scene = new THREE.Scene()
@@ -9,6 +15,8 @@ export class Viewer {
   readonly controls: OrbitControls
   private modelGroup = new THREE.Group()
   private gridHelper: THREE.GridHelper | null = null
+  private lineMaterials: LineMaterial[] = []
+  private partGroups = new Map<number, THREE.Group>()
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -42,6 +50,7 @@ export class Viewer {
       this.camera.aspect = w / h
       this.camera.updateProjectionMatrix()
       this.renderer.setSize(w, h)
+      for (const m of this.lineMaterials) m.resolution.set(w, h)
     }
     new ResizeObserver(resize).observe(container)
     resize()
@@ -52,36 +61,69 @@ export class Viewer {
     })
   }
 
-  /** Replace current model with mesh from the binary protocol. */
-  setModel(pack: MeshPack): THREE.Mesh {
+  setModel(model: ModelData): void {
     this.clearModel()
+    for (const part of model.parts) this.addPart(part)
+    this.fitToView()
+  }
+
+  private addPart(part: PartData): void {
+    const group = new THREE.Group()
+    group.name = part.name
+    group.userData.partId = part.id
 
     const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(pack.buffers.positions, 3))
-    geo.setAttribute('normal', new THREE.BufferAttribute(pack.buffers.normals, 3))
-    geo.setIndex(new THREE.BufferAttribute(pack.buffers.indices as Uint32Array, 1))
+    geo.setAttribute('position', new THREE.BufferAttribute(part.positions, 3))
+    geo.setAttribute('normal', new THREE.BufferAttribute(part.normals, 3))
+    geo.setIndex(new THREE.BufferAttribute(part.indices, 1))
 
+    const color = part.color
+      ? new THREE.Color().setRGB(part.color[0], part.color[1], part.color[2])
+      : new THREE.Color(DEFAULT_PART_COLOR)
     const mat = new THREE.MeshStandardMaterial({
-      color: 0x8fb4d8,
+      color,
       metalness: 0.1,
       roughness: 0.65,
       side: THREE.DoubleSide,
+      // pull faces slightly back so overlaid edges win the depth fight
+      polygonOffset: true,
+      polygonOffsetFactor: 1,
+      polygonOffsetUnits: 1,
     })
-    const mesh = new THREE.Mesh(geo, mat)
-    this.modelGroup.add(mesh)
+    group.add(new THREE.Mesh(geo, mat))
 
-    this.fitToView()
-    return mesh
+    if (part.edges.length >= 6) {
+      const edgeGeo = new LineSegmentsGeometry()
+      edgeGeo.setPositions(Array.from(part.edges))
+      const edgeMat = new LineMaterial({ color: EDGE_COLOR, linewidth: 1.5 })
+      const size = new THREE.Vector2()
+      this.renderer.getSize(size)
+      edgeMat.resolution.copy(size)
+      this.lineMaterials.push(edgeMat)
+      group.add(new LineSegments2(edgeGeo, edgeMat))
+    }
+
+    this.partGroups.set(part.id, group)
+    this.modelGroup.add(group)
+  }
+
+  setPartVisible(partId: number, visible: boolean): void {
+    const g = this.partGroups.get(partId)
+    if (g) g.visible = visible
   }
 
   clearModel(): void {
     for (const child of [...this.modelGroup.children]) {
       this.modelGroup.remove(child)
-      if (child instanceof THREE.Mesh) {
-        child.geometry.dispose()
-        ;(child.material as THREE.Material).dispose()
-      }
+      child.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
+          o.geometry.dispose()
+          ;(o.material as THREE.Material).dispose()
+        }
+      })
     }
+    this.partGroups.clear()
+    this.lineMaterials = []
     if (this.gridHelper) {
       this.scene.remove(this.gridHelper)
       this.gridHelper.dispose()

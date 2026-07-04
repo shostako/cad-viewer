@@ -9,9 +9,11 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 
+from . import cache
 from .loaders import UnsupportedFormatError, classify, load_mesh
-from .meshpack import pack_trimesh
+from .meshpack import pack_parts, pack_trimesh
 from .store import ModelEntry, new_model_id, store
+from .tessellation import BrepLoadError, load_brep
 
 app = FastAPI(title="cad-viewer backend")
 
@@ -47,7 +49,7 @@ async def upload_model(file: UploadFile) -> dict:
             mesh = load_mesh(data, name)
         except Exception as e:
             raise HTTPException(422, f"failed to parse mesh: {e}") from e
-        blob, meta = pack_trimesh(mesh)
+        blob, meta = pack_trimesh(mesh, name=name)
         entry = ModelEntry(
             model_id=new_model_id(),
             name=name,
@@ -58,7 +60,42 @@ async def upload_model(file: UploadFile) -> dict:
         store.add(entry)
         return {"id": entry.model_id, "name": name, "format": route, **meta}
 
-    # brep / drawing routes arrive in Phase 1 / Phase 4
+    if route == "brep":
+        key = cache.cache_key(data, "defl_rel=1e-3;ang=0.35")
+        cached = cache.get(key)
+        if cached is not None:
+            blob, meta = cached
+            entry = ModelEntry(
+                model_id=new_model_id(),
+                name=name,
+                fmt=route,
+                meta=meta,
+                mesh_blob=blob,
+                # raw bytes kept for lazy B-rep re-parse on first measure (Phase 2)
+                extra={"raw": data, "filename": name, "cached": True},
+            )
+            store.add(entry)
+            return {"id": entry.model_id, "name": name, "format": route, "cached": True, **meta}
+
+        try:
+            meshes, tree, defl = load_brep(data, name)
+        except BrepLoadError as e:
+            raise HTTPException(422, str(e)) from e
+        blob, meta = pack_parts(meshes, tree, defl)
+        cache.put(key, blob, meta)
+        entry = ModelEntry(
+            model_id=new_model_id(),
+            name=name,
+            fmt=route,
+            meta=meta,
+            mesh_blob=blob,
+            brep={"meshes": meshes},  # Phase 2: face/edge maps for measurement
+            extra={"raw": data, "filename": name, "cached": False},
+        )
+        store.add(entry)
+        return {"id": entry.model_id, "name": name, "format": route, "cached": False, **meta}
+
+    # drawing route arrives in Phase 4
     raise HTTPException(501, f"{route} route not implemented yet")
 
 
