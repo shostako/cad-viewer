@@ -8,7 +8,9 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT=8008
-URL="http://localhost:${PORT}"
+# 127.0.0.1 固定（localhost だと Windows 側で ::1(IPv6) が先に解決され、IPv4 しか
+# 聴いていない uvicorn に届かず黒穴タイムアウトする — mirrored モードで実害あり）
+URL="http://127.0.0.1:${PORT}"
 VENV="${ROOT}/backend/.venv"
 
 log() { printf '[cad-viewer] %s\n' "$1"; }
