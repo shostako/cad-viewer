@@ -51,6 +51,10 @@ def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
         if ext == "dwg":
             if shutil.which("ODAFileConverter") is None:
                 raise DrawingLoadError(ODA_HINT)
+            # WSLg では WAYLAND_DISPLAY が立っており、Qt が wayland プラグインを
+            # 探して stderr に警告を吐く。ezdxf の odafc は stderr 非空を失敗と
+            # みなすため、xcb を明示して警告ごと黙らせる（変換自体は headless）。
+            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
             from ezdxf.addons import odafc
 
             try:
