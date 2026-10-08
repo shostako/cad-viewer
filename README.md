@@ -29,7 +29,7 @@ backend より backend のコードが新しければ backend を立て直す。
 初回セットアップ（マルチPC再現）:
 1. `backend/.venv` を用意（下の「開発」参照）、`frontend` で `npm install`
 2. `launcher/cad-viewer.vbs` を Windows デスクトップにコピー
-   （WSL distro 名が `Ubuntu-24.04` 以外なら vbs 内を編集）
+   （既定の WSL distro（`wsl.exe -l -v` で * の付いたもの）で起動するので編集は不要）
 3. `./start.sh` を一度叩くと `frontend/dist` が自動ビルドされる
 
 > single-server の仕組み: `frontend/dist` が存在すると `backend/app/main.py` が
