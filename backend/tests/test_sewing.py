@@ -219,3 +219,68 @@ def test_small_body_without_gap_still_closes(client, tmp_path):
     data = _write_iges(tmp_path, faces_one_by_one=True, size=(5.0, 5.0, 5.0))
     meta = _upload(client, data)
     assert [p["name"] for p in meta["parts"]] == ["ソリッド", "曲線（2 本）"]
+
+
+def test_sewn_solid_volume_is_exact_and_positive(tmp_path):
+    """an outward-facing solid: the volume is the box volume, not its negative"""
+    from app.tessellation import _volume, load_brep
+
+    data = _write_iges(tmp_path, faces_one_by_one=True)
+    meshes, _, _ = load_brep(data, "box.igs")
+    assert meshes[0].part.name == "ソリッド"
+    assert _volume(meshes[0].part.shape) == pytest.approx(BOX[0] * BOX[1] * BOX[2], rel=1e-9)
+
+
+def _write_box_with_sheet_above(tmp_path, lift: float) -> bytes:
+    """a 100 x 50 x 20 box as loose faces, plus a separate 100 x 50 sheet `lift`
+    mm above its top face. The box closes at the first tolerance; the sheet can
+    never close."""
+    w = IGESControl_Writer("MM", 0)
+    e = TopExp_Explorer(BRepPrimAPI_MakeBox(100.0, 50.0, 20.0).Shape(), TopAbs_FACE)
+    while e.More():
+        w.AddShape(e.Current())
+        e.Next()
+    sheet = BRepPrimAPI_MakeBox(100.0, 50.0, 1.0).Shape()
+    e = TopExp_Explorer(sheet, TopAbs_FACE)
+    while e.More():
+        face = e.Current()
+        if _is_top(face, 1.0):  # reuse the top face of a thin box as the sheet
+            t = gp_Trsf()
+            t.SetTranslation(gp_Vec(0, 0, 20.0 + lift - 1.0))
+            w.AddShape(BRepBuilderAPI_Transform(face, t, True).Shape())
+        e.Next()
+    w.ComputeModel()
+    path = tmp_path / "box_sheet.igs"
+    assert w.Write(str(path))
+    return path.read_bytes()
+
+
+def test_closed_body_settles_before_wider_tolerances(client, tmp_path):
+    """The open sheet sends sewing on to 0.01 mm, a tolerance that spans the
+    0.005 mm to the box's top edges. The box closed at 0.0001 mm and must stay
+    a clean 6-face solid; the sheet stays a separate surface.
+
+    This guards the outcome, not the mechanism: OCCT's sewing pairs the closest
+    edges first, so re-sewing everything at 0.01 mm (the earlier approach) gave
+    the same result in every case tried (also two boxes 0.003-0.008 mm apart,
+    same shape tolerances). Settling closed shells early is defensive."""
+    meta = _upload(client, _write_box_with_sheet_above(tmp_path, lift=0.005))
+    names = [p["name"] for p in meta["parts"]]
+    assert names == ["ソリッド", "サーフェス"], names
+    header, _ = _mesh(client, meta["id"])
+    assert len(header["parts"][0]["faceRanges"]) == 6
+    assert len(header["parts"][1]["faceRanges"]) == 1
+
+
+def test_sewing_failure_opens_the_file_unsewn(client, tmp_path, monkeypatch):
+    from app import tessellation
+
+    def boom(shapes):
+        raise RuntimeError("simulated sewing failure")
+
+    monkeypatch.setattr(tessellation, "_sew", boom)
+    meta = _upload(client, _write_iges(tmp_path, faces_one_by_one=True))
+    names = [p["name"] for p in meta["parts"]]
+    assert len(names) == 6 + 2 and "ソリッド" not in names, names  # 6 faces + 2 lines, as read
+    header, _ = _mesh(client, meta["id"])
+    assert sum(len(p["faceRanges"]) for p in header["parts"]) == 6

@@ -14,6 +14,7 @@ Output per part:
 """
 from __future__ import annotations
 
+import logging
 import math
 from dataclasses import dataclass, field
 from typing import Any
@@ -26,8 +27,10 @@ from OCP.BRepAdaptor import BRepAdaptor_Curve
 from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepLib import BRepLib_ToolTriangulatedShape
+from OCP.BRepGProp import BRepGProp
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GCPnts import GCPnts_TangentialDeflection
+from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.IGESCAFControl import IGESCAFControl_Reader
 from OCP.Quantity import Quantity_Color, Quantity_TOC_sRGB
@@ -53,6 +56,9 @@ from OCP.TopTools import (
     TopTools_IndexedMapOfShape,
 )
 from OCP.XCAFDoc import XCAFDoc_ColorType, XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
+
+
+_log = logging.getLogger(__name__)
 
 
 class BrepLoadError(Exception):
@@ -224,11 +230,14 @@ def extract_parts(doc: TDocStd_Document) -> tuple[list[Part], TreeNode]:
 # ---------------------------------------------------------------- loose shapes
 
 # Sewing tolerances (model units, mm after OCCT's import conversion), tried in
-# order until every sewn shell closes. Exported IGES often leaves gaps of a few
-# microns to ~0.01 mm between neighbouring trimmed surfaces.
+# order. Exported IGES often leaves gaps of a few microns to ~0.01 mm between
+# neighbouring trimmed surfaces.
 SEW_TOLERANCES = (1e-4, 1e-3, 1e-2)
-# never sew wider than this fraction of the bounding-box diagonal: a tolerance
-# near the size of real features would weld them shut
+# never sew wider than this fraction of the sewn faces' bounding-box diagonal:
+# a tolerance near the size of real features would weld them shut. The
+# trade-off: exporter gaps are absolute, so a small part (diagonal < 10 mm)
+# only gets the 0.0001 mm step, and a 0.002 mm gap there stays open (the part
+# shows as a surface instead of a solid).
 SEW_MAX_REL = 1e-4
 
 def _contains(shape: TopoDS_Shape, kind) -> bool:
@@ -274,7 +283,11 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
     assemblies, and files whose top level is already solids, are left alone.
 
     Deterministic for the same input: the lazy B-rep re-parse after a cache hit
-    must reproduce the same part / face numbering as the cached mesh.
+    must reproduce the same part / face numbering as the cached mesh (sewing
+    runs single-threaded and the input order follows the tree; enabling
+    BRepBuilderAPI_Sewing's parallel mode would break this).
+
+    Sewing is a convenience: if it fails, the file opens unsewn.
     """
     top_ids = [c.part_id for c in tree.children if c.part_id is not None]
     by_id = {p.part_id: p for p in parts}
@@ -287,6 +300,16 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
     if not sheets and not curves:
         return parts, tree
 
+    bodies: list[TopoDS_Shape] = []
+    if sheets:
+        try:
+            bodies = _sew([p.shape for p in sheets])
+        except Exception:
+            _log.warning("sewing loose faces failed; opening the file unsewn", exc_info=True)
+            return parts, tree
+        if not bodies:
+            return parts, tree
+
     merged_ids = {p.part_id for p in sheets + curves}
     new_parts: list[Part] = []
     new_tree = TreeNode(name=tree.name)
@@ -296,16 +319,13 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
         new_parts.append(part)
         new_tree.children.append(TreeNode(name=name, part_id=part.part_id))
 
-    # untouched top-level entries keep their order; assembly subtrees are
-    # renumbered in place
-    remap: dict[int, int] = {}
-
+    # untouched top-level entries keep their order (ahead of the sewn bodies
+    # and the curve group); assembly subtrees are renumbered in place
     def copy_node(node: TreeNode) -> TreeNode:
         if node.part_id is not None:
             old = by_id[node.part_id]
             part = Part(part_id=len(new_parts), name=old.name, shape=old.shape, color=old.color)
             new_parts.append(part)
-            remap[old.part_id] = part.part_id
             return TreeNode(name=node.name, part_id=part.part_id)
         return TreeNode(name=node.name, children=[copy_node(c) for c in node.children])
 
@@ -314,8 +334,7 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
             continue
         new_tree.children.append(copy_node(child))
 
-    if sheets:
-        bodies = _sew([p.shape for p in sheets])
+    if bodies:
         solids = sum(1 for b in bodies if b.ShapeType() == TopAbs_ShapeEnum.TopAbs_SOLID)
         color = _common_color(sheets)
         for i, body in enumerate(bodies, 1):
@@ -333,55 +352,86 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
 
 
 def _common_color(parts: list[Part]):
+    # faces of differing colors sew into one body that has one color: fall back
+    # to the default color rather than pick one arbitrarily
     colors = {p.color for p in parts}
     return colors.pop() if len(colors) == 1 else None
 
 
 def _sew(shapes: list[TopoDS_Shape]) -> list[TopoDS_Shape]:
-    """Sew faces into bodies: closed shells become solids, the rest stay shells."""
+    """Sew faces into bodies: closed shells become solids, the rest stay shells.
+
+    Each shell settles at the smallest tolerance that closes it; only what is
+    still open goes on to the next, wider step. Otherwise one open face (or a
+    real gap) anywhere would drag every body up to the widest tolerance and
+    weld neighbouring sheets onto shells that had already closed cleanly.
+    Raises if sewing yields nothing (the caller then opens the file unsewn).
+    """
     # cap from the faces being sewn only: a long construction line or an
     # unrelated big solid elsewhere in the file must not widen the tolerance
-    # enough to weld real gaps in a small body
-    cap = max(_shape_diagonal(shapes) * SEW_MAX_REL, SEW_TOLERANCES[0])
-    tolerances = [t for t in SEW_TOLERANCES if t <= cap] or [SEW_TOLERANCES[0]]
-    bodies: list[TopoDS_Shape] = []
+    # enough to weld real gaps in a small body. The slack keeps a diagonal that
+    # lands exactly on a step (10 mm -> 0.001) from losing it to rounding.
+    cap = max(_shape_diagonal(shapes) * SEW_MAX_REL, SEW_TOLERANCES[0]) * (1 + 1e-9)
+    tolerances = [t for t in SEW_TOLERANCES if t <= cap]
+    settled: list[TopoDS_Shape] = []
+    pending = list(shapes)
     for tol in tolerances:
         sewing = BRepBuilderAPI_Sewing(tol)
-        for shape in shapes:
+        for shape in pending:
             sewing.Add(shape)
         sewing.Perform()
-        sewn = sewing.SewedShape()
-        bodies = _top_level(sewn)
-        if all(
-            b.ShapeType() == TopAbs_ShapeEnum.TopAbs_SHELL and BRep_Tool.IsClosed_s(b)
-            for b in bodies
-        ):
-            break  # everything closed — a wider tolerance can only do harm
-    return [_close(b) for b in bodies]
+        bodies = _top_level(sewing.SewedShape())
+        if not bodies:
+            raise ValueError(f"sewing at {tol} returned no shape")
+        settled += [b for b in bodies if _is_closed_shell(b)]
+        pending = [b for b in bodies if not _is_closed_shell(b)]
+        if not pending:
+            break
+    return [_close(b) for b in settled + pending]
 
 
-def _top_level(shape: TopoDS_Shape) -> list[TopoDS_Shape]:
+def _is_closed_shell(shape: TopoDS_Shape) -> bool:
+    return shape.ShapeType() == TopAbs_ShapeEnum.TopAbs_SHELL and BRep_Tool.IsClosed_s(shape)
+
+
+def _top_level(shape: TopoDS_Shape | None) -> list[TopoDS_Shape]:
+    """the shells / faces inside a sewing result, through nested compounds"""
+    if shape is None or shape.IsNull():
+        return []
     if shape.ShapeType() != TopAbs_ShapeEnum.TopAbs_COMPOUND:
         return [shape]
-    out = []
+    out: list[TopoDS_Shape] = []
     it = TopoDS_Iterator(shape)
     while it.More():
-        out.append(it.Value())
+        out += _top_level(it.Value())
         it.Next()
     return out
 
 
 def _close(body: TopoDS_Shape) -> TopoDS_Shape:
-    if body.ShapeType() != TopAbs_ShapeEnum.TopAbs_SHELL or not BRep_Tool.IsClosed_s(body):
+    """a closed shell as an outward-facing solid; anything else unchanged"""
+    if not _is_closed_shell(body):
         return body
     try:
         solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell_s(body)).Solid()
         fix = ShapeFix_Solid()  # orients the shell outward (a sewn shell may face in)
         fix.Init(solid)
         fix.Perform()
-        return fix.Solid()
+        result = fix.Solid()
+        volume = _volume(result)
+        if volume < 0:  # still inside-out: flip so volume / normals come out right
+            result = result.Reversed()
+        elif volume == 0:
+            return body  # degenerate: not worth calling a solid
+        return result
     except Exception:
         return body
+
+
+def _volume(shape: TopoDS_Shape) -> float:
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape, props)
+    return props.Mass()
 
 
 def _diagonal(parts: list[Part]) -> float:
