@@ -10,7 +10,11 @@ import type { ModelData, PartData } from './model'
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
 const WORLD_UP = new THREE.Vector3(0, 0, 1)
-/** keep the turntable camera this far (rad) from the poles: lookAt with up=Z degenerates there */
+/**
+ * Keep the turntable camera this far (rad, ~0.06 deg) from the poles: lookAt
+ * with up=Z degenerates there. The top / bottom presets stop at the same
+ * margin, so a key turn right after them doesn't snap.
+ */
 const POLE_MARGIN = 1e-3
 
 /**
@@ -101,6 +105,8 @@ export class Viewer {
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
     canvas.addEventListener('lostpointercapture', release)
+    // a button held while the window loses focus (Alt+Tab) never sends pointerup
+    window.addEventListener('blur', () => this.heldPointers.clear())
 
     // CAD-ish lighting: hemisphere + key + fill
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2))
@@ -455,7 +461,7 @@ export class Viewer {
         // Straight down/up is the turntable's pole, where lookAt with up=Z
         // has no answer. Step off it so the screen-up lands on the preset's
         // up (+X stays right): screen-up ~ -sign(dir.z) * nudge, hence the sign.
-        dir.addScaledVector(new THREE.Vector3(...p.up), -Math.sign(dir.z) * 1e-4).normalize()
+        dir.addScaledVector(new THREE.Vector3(...p.up), -Math.sign(dir.z) * POLE_MARGIN).normalize()
       }
     } else {
       this.camera.up.set(...p.up)
@@ -486,33 +492,38 @@ export class Viewer {
   }
 
   /**
-   * Drop the momentum of a drag that just ended. Without this, a preset view
-   * or fit set during the coast drifts away as the leftover spin is applied.
+   * End the coast of a drag that just ended. Without this, a preset view or
+   * fit set during the coast drifts away as the leftover spin is applied.
+   * Callers overwrite the camera right after, so how the coast ends doesn't
+   * matter as long as nothing is left pending.
    */
   private stopInertia(): void {
     // only the active scheme: update() on the inactive one would re-aim the
     // camera at its stale target (and OrbitControls assumes Z up)
     if (this._rotateMode === 'turntable') {
       if (this.controls.enableDamping) {
+        // OrbitControls has no public "stop": with damping off, update()
+        // applies the pending delta in one step (fast-forwards the coast)
+        // and clears it
         this.controls.enableDamping = false
-        this.controls.update() // applies (and clears) the pending delta at once
+        this.controls.update()
         this.controls.enableDamping = true
       }
       return
     }
-    // TrackballControls keeps its coast in these private fields (three r185)
-    const tb = this.trackball as unknown as {
-      _lastAngle: number
-      _movePrev: THREE.Vector2
-      _moveCurr: THREE.Vector2
-      _panStart: THREE.Vector2
-      _panEnd: THREE.Vector2
-      _zoomStart: THREE.Vector2
-      _zoomEnd: THREE.Vector2
+    // TrackballControls keeps its coast in private fields (three r185, which
+    // package.json pins). Touch them only if they are there: if a three update
+    // renames them, a stale coast is far better than every preset throwing.
+    const tb = this.trackball as unknown as Record<string, unknown>
+    if (typeof tb._lastAngle === 'number') tb._lastAngle = 0
+    for (const [from, to] of [
+      ['_moveCurr', '_movePrev'],
+      ['_panEnd', '_panStart'],
+      ['_zoomEnd', '_zoomStart'],
+    ]) {
+      const src = tb[from]
+      const dst = tb[to]
+      if (src instanceof THREE.Vector2 && dst instanceof THREE.Vector2) dst.copy(src)
     }
-    tb._lastAngle = 0
-    tb._movePrev.copy(tb._moveCurr)
-    tb._panStart.copy(tb._panEnd)
-    tb._zoomStart.copy(tb._zoomEnd)
   }
 }

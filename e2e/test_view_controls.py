@@ -236,6 +236,31 @@ with sync_playwright() as p:
     page.wait_for_timeout(500)
     assert close(a, offset_dir(), 1e-3), "auto-rotate off must stop the spin"
 
+    # ---- 5b. auto-rotate survives a button held while the window loses focus --
+    ctl("自動回転").locator("input").click()
+    page.mouse.move(640, 760)
+    page.mouse.down()
+    page.wait_for_timeout(200)
+    page.evaluate("window.dispatchEvent(new Event('blur'))")  # e.g. Alt+Tab mid-drag
+    a = offset_dir()
+    page.wait_for_timeout(500)
+    assert not close(a, offset_dir(), 1e-3), "a blur must release the held pointer"
+    page.mouse.up()
+    ctl("自動回転").locator("input").click()
+
+    # ---- 5c. a preset clicked during a drag's coast stays put -----------------
+    for mode in ("ターンテーブル", "自由回転"):
+        ctl("回転方式").locator("select").select_option(label=mode)
+        click_button("等角")
+        page.mouse.move(400, 600)
+        page.mouse.down()
+        page.mouse.move(900, 300, steps=4)  # fast flick: leaves a long coast
+        page.mouse.up()
+        click_button("正面")
+        page.wait_for_timeout(600)
+        assert close(offset_dir(), [0, -1, 0], 1e-3), (mode, "preset drifted with the coast", offset_dir())
+    ctl("回転方式").locator("select").select_option(label="ターンテーブル")
+
     page.screenshot(path="/tmp/cad_viewer_view_controls.png")
 
     # ---- 6. a touch cancelled by the OS must not leave auto-rotate paused -----

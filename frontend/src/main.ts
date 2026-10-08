@@ -184,8 +184,10 @@ function isTextEntry(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
   if (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)
     return true
+  // sliders use the arrows themselves — leave those alone
+  if (el.getAttribute('role') === 'slider') return true
   // checkboxes / buttons keep focus after a click — arrows must still navigate
-  return el instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'range'].includes(el.type)
+  return el instanceof HTMLInputElement && !['checkbox', 'radio', 'button'].includes(el.type)
 }
 // capture phase: lil-gui stops keydown propagation inside its panel, so after
 // clicking a view button the arrows would never reach a bubbling listener
