@@ -442,10 +442,39 @@ def test_mesh_hollow_turned_inside_out_as_a_whole():
     assert r["closed"] and r["volume"] == approx(5936), r
 
 
-def test_mesh_inverted_box_inside_inverted_box_is_a_cavity():
-    pos, idx = _boxes_mesh(((10, 20, 30), (0, 0, 0), True), ((4, 4, 4), (0, 0, 0), True))
+def test_mesh_same_orientation_nesting_is_an_overlap():
+    """a body inside another facing the same way is an overlap: summed, as
+    overlapping B-rep bodies are (both outward, and both inside out)"""
+    for inverted in (False, True):
+        pos, idx = _boxes_mesh(((10, 20, 30), (0, 0, 0), inverted), ((4, 4, 4), (0, 0, 0), inverted))
+        r = properties.mesh_part_properties(pos, idx)
+        assert r["closed"] and r["volume"] == approx(6064), (inverted, r)
+
+
+def test_mesh_exact_duplicate_body_gets_no_volume():
+    """two exact copies of one box (an STL exported twice) plus a separate box.
+    Merging vertices by position fuses the copies into one non-manifold body
+    (every edge used four times), so the part reads as not closed: no volume,
+    rather than a silently wrong one"""
+    pos, idx = _boxes_mesh(
+        ((10, 20, 30), (0, 0, 0), False), ((10, 20, 30), (0, 0, 0), False), ((10, 10, 10), (50, 0, 0), False)
+    )
     r = properties.mesh_part_properties(pos, idx)
-    assert r["volume"] == approx(5936), r
+    assert r["volume"] is None and r["reason"] == properties.OPEN, r
+
+
+def test_mesh_bodies_copies_enclosing_each_other_are_summed():
+    """_mesh_bodies itself, given two bodies that enclose each other (equal
+    bounds) and face the same way: the later one is an overlap of the first,
+    not a cavity of it (deciding largest first keeps one of them material)"""
+    a = trimesh.creation.box(extents=(10, 20, 30))
+    b = trimesh.creation.box(extents=(10, 20, 30))
+    c = trimesh.creation.box(extents=(10, 10, 10))
+    c.apply_translation((50, 0, 0))
+    m = trimesh.util.concatenate([a, b, c])  # not merged: three separate bodies
+    assert m.body_count == 3
+    volume, _ = properties._mesh_bodies(m)
+    assert volume == approx(2 * 6000 + 1000)
 
 
 def test_mesh_island_inside_a_cavity_is_material():

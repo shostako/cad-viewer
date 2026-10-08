@@ -96,7 +96,10 @@ export function buildView(d: ModelProperties, isVisible: (id: number) => boolean
     // parts whose computation failed have no area either: say so separately,
     // or the "面積は含める" note would be wrong for them
     const failed = visible.filter((p) => p.reason === 'failed').length
-    const k = visible.length - withVolume.length - failed
+    // parts without faces (curves only) have neither volume nor area: the row
+    // says so, and they change no total
+    const noFaces = visible.filter((p) => p.reason === 'no_faces').length
+    const k = visible.length - withVolume.length - failed - noFaces
     if (k > 0) notes.push(`体積なしの ${k} 部品は体積・重量の合計に含めない（面積は含める）`)
     if (failed > 0) notes.push(`計算できなかった ${failed} 部品は合計に含めない`)
   }

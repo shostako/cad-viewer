@@ -18,11 +18,13 @@ Orientation matters as much as closure: a closed shell whose faces disagree
 on which side is outside (B-rep), or a mesh body turned inside out, would make
 the signed volume integral cancel part of the body. A B-rep shell with mixed
 face orientation gets no volume (reason "winding"). A mesh is split into
-connected bodies: an inward-facing body inside another is a cavity and is
-subtracted; an inward-facing body anywhere else is a body turned inside out and
-counts with its absolute volume (as a B-rep body turned inside out does).
+connected bodies, and each body's role (material, cavity, island) follows from
+its immediate enclosing body and their relative orientation (see _mesh_bodies).
 
-Known limit: bodies that overlap inside one part are summed, not united.
+Known limits: bodies that overlap inside one part are summed, not united. A
+B-rep hollow whose outer and inner shells are separate closed shells (not one
+solid with two shells) is summed as two bodies; injection-moulded parts rarely
+have a closed inner void, so this is left as is.
 
 Totals: volume, weight and centre of mass come from the parts with a volume;
 the area total counts every part with faces (an open surface has an area too).
@@ -112,7 +114,9 @@ def _cavity_facing_out(shells: list[TopoDS_Shape]) -> bool:
         return False
     signed = [_volume(s)[0] for s in shells]
     outer = max(range(len(signed)), key=lambda k: abs(signed[k]))
-    return any(k != outer and v * signed[outer] > 0 for k, v in enumerate(signed))
+    # a shell with next to no volume has a sign set by rounding: do not judge it
+    tiny = abs(signed[outer]) * 1e-9
+    return any(k != outer and abs(v) > tiny and v * signed[outer] > 0 for k, v in enumerate(signed))
 
 
 def _part(closed: bool, volume, area, com, reason) -> dict[str, Any]:
@@ -191,23 +195,33 @@ def mesh_part_properties(positions: np.ndarray, indices: np.ndarray) -> dict[str
 
 def _mesh_bodies(m: trimesh.Trimesh) -> tuple[float, list[float]]:
     """volume and centre of mass of a closed, consistently wound mesh, body by
-    body, decided by nesting rather than by which way the triangles face: a
-    body inside an odd number of other bodies is a cavity (subtracted), one
-    inside an even number (none, or an island inside a cavity) is material
-    (added). Orientation-based rules break on an STL turned inside out as a
-    whole: its outer shell faces inward and its cavity outward. Summing the
-    signed volumes of the whole mesh would in turn subtract a separate body
-    that is inside out (6000 + inverted 1000 read 5000)."""
+    body. A body's role comes from its immediate parent (the smallest body that
+    encloses it) and their relative orientation: facing the other way flips the
+    role (material -> cavity -> island), facing the same way keeps it (an
+    overlap, summed like overlapping B-rep bodies). A body nobody encloses is
+    material. So the absolute orientation never matters: an STL turned inside
+    out as a whole gives the same volume, a separate inside-out body is added,
+    and two copies of one body are summed rather than both subtracted. Bodies
+    are decided largest first, so a parent is always decided before its child."""
     bodies = m.split(only_watertight=False) if m.body_count > 1 else [m]
     if len(bodies) == 1:
         return abs(float(m.volume)), [float(x) for x in m.center_mass]
+    signed = [float(b.volume) for b in bodies]
+    order = sorted(range(len(bodies)), key=lambda k: (-abs(signed[k]), k))
+    role: dict[int, int] = {}  # +1 material, -1 cavity
     total = 0.0
     moment = np.zeros(3)
-    for i, b in enumerate(bodies):
-        depth = sum(1 for k, o in enumerate(bodies) if k != i and _inside(b, o))
-        w = abs(float(b.volume)) * (-1 if depth % 2 else 1)
+    for k in order:
+        parents = [q for q in role if _inside(bodies[k], bodies[q])]
+        if not parents:
+            role[k] = 1
+        else:
+            p = min(parents, key=lambda q: abs(signed[q]))
+            same = signed[k] * signed[p] > 0
+            role[k] = role[p] if same else -role[p]
+        w = role[k] * abs(signed[k])
         total += w
-        moment += w * np.asarray(b.center_mass, dtype=np.float64)
+        moment += w * np.asarray(bodies[k].center_mass, dtype=np.float64)
     if total <= 0:
         return 0.0, [float(x) for x in m.center_mass]
     return total, [float(x) for x in moment / total]
