@@ -18,7 +18,10 @@ nothing was restored. No step here writes a sidecar.
 The checks use the B-rep edges of mini_mold, projected, to keep sample points
 away from lines: a sample point is at least 10 px from every edge (also the
 hidden ones, which show in ワイヤーフレーム), and the bins of an edge band are
-at least 8 px from every other edge.
+at least 8 px from every other edge. A point that is picked is at least 12 px
+from every edge and 16 px from every vertex: in ワイヤーフレーム and 半透明 a
+click within 10 px of a drawn line (14 px of a vertex) takes that line, of
+whichever part.
 
 Not named test_*.py, so the E2E loops do not run it on its own.
 """
@@ -290,6 +293,8 @@ class Disp:
         return min(pt_seg(pt, a, b) for k, (a, b) in enumerate(segs) if k not in exclude)
 
     def assert_clear(self, pt, segs, tag, min_px=10, pick_point=False):
+        if pick_point:
+            min_px = max(min_px, 12)  # the line snap of the see-through styles: 10 px
         d = self.clearance(pt, segs)
         assert d >= min_px, ("sample point too close to an edge", tag, round(d, 1))
         if pick_point:
@@ -400,11 +405,41 @@ class Disp:
     def mold_parts(self):
         """part ids from picks in the current view, and pin1's tree checkbox.
 
-        Pin1's checkbox: hide the first core_pin and pick pin1's top again; if
-        the answer changed, that box is pin1's, otherwise the second one is."""
+        Each part is picked on its top face, at a point clear of the lines and
+        vertices of the other parts on screen (in the see-through styles a
+        click near a drawn line takes that line, also one of a part behind; a
+        line of the part itself still gives its id). Pin1's checkbox: hide the
+        first core_pin and pick pin1's top again; if the answer changed, that
+        box is pin1's, otherwise the second one is."""
+        segs = self.segments()
+        # mold_edges() order: plate (12), block (12), pin1, pin2
+        n_box, n_pin = len(box_edges(*PLATE)), len(pin_edges(*PIN1))
+        own_edges = {"plate": range(0, n_box), "block": range(n_box, 2 * n_box), "pin1": range(2 * n_box, 2 * n_box + n_pin)}
+        corners = {"plate": box_edges(*PLATE), "block": box_edges(*BLOCK)}
+        verts = {
+            name: self.project_many(
+                [list(a) for nm, es in corners.items() if nm != name for a, _ in es]
+                + [[cx + PIN_R, cy, z] for nm, (cx, cy) in (("pin1", PIN1), ("pin2", PIN2)) if nm != name for z in PIN_Z]
+            )
+            for name in own_edges
+        }
+
+        def clear_point(name, cands):
+            for c in cands:
+                xy = self.project(c)
+                if self.clearance(xy, segs, exclude=own_edges[name]) >= 12 and min(math.dist(xy, v) for v in verts[name]) >= 16:
+                    return xy
+            raise AssertionError(("no pick point clear of the other parts' lines", name))
+
+        tops = {
+            "block": [(BLOCK_TOP[0] + dx, BLOCK_TOP[1] + dy, BLOCK[1][2]) for dx in (0, -5, 5, -10, 10) for dy in (0, -5, 5, -10, 10)],
+            "plate": [S, (90, 50, 15), (10, 50, 15), (10, 10, 15)],
+            "pin1": [PIN1_TOP],
+        }
+        pts = {name: clear_point(name, cands) for name, cands in tops.items()}
         ids = {}
-        for name, xyz in (("block", BLOCK_TOP), ("plate", S), ("pin1", PIN1_TOP)):
-            hit = self.pick(self.project(xyz))
+        for name, xy in pts.items():
+            hit = self.pick(xy)
             assert hit, (name, "pick missed")
             ids[name] = hit["partId"]
         assert len(set(ids.values())) == 3, ids
@@ -413,7 +448,7 @@ class Disp:
         first = boxes.nth(0)
         first.click()
         self.settle()
-        hit = self.pick(self.project(PIN1_TOP))
+        hit = self.pick(pts["pin1"])
         first.click()
         self.settle()
         pin1_box = first if (hit is None or hit["partId"] != ids["pin1"]) else boxes.nth(1)

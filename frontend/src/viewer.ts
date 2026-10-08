@@ -552,6 +552,20 @@ export class Viewer {
   }
 
   /**
+   * Faces are not drawn at all: ワイヤーフレーム on a model with B-rep edge
+   * lines. Parts without them (STL, 3MF, ...) draw their triangles' edges
+   * with the face material, so a heatmap still shows there.
+   */
+  get facesHidden(): boolean {
+    return this._displayStyle === 'wireframe' && this.partEdges.size > 0
+  }
+
+  /** the part draws B-rep edge lines (loose curves and mesh formats do not count) */
+  hasEdgeLines(partId: number): boolean {
+    return this.partEdges.has(partId)
+  }
+
+  /**
    * Switch how the model is drawn. Only material flags, uniforms and
    * visibility change: no geometry is built, and nothing is added per frame.
    */

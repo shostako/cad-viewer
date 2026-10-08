@@ -44,6 +44,8 @@ export class MeasureTool {
   // re-upload of identical content yields the same (deduped) model id
   private session = 0
   private isBrep = false
+  /** part names when the model has more than one part: a pick names its part (see describe) */
+  private partNames: ReadonlyMap<number, string> | null = null
   private pending: { pick: PickResult; marker: THREE.Object3D } | null = null
   private entries: MeasureEntry[] = []
   private nextId = 1
@@ -62,10 +64,11 @@ export class MeasureTool {
     for (const fn of this.listeners) fn()
   }
 
-  setModel(modelId: string, isBrep: boolean): void {
+  setModel(modelId: string, isBrep: boolean, partNames?: ReadonlyMap<number, string>): void {
     this.clearAll()
     this.modelId = modelId
     this.isBrep = isBrep
+    this.partNames = partNames && partNames.size > 1 ? partNames : null
   }
 
   get available(): boolean {
@@ -86,7 +89,7 @@ export class MeasureTool {
       this.pending = { pick, marker }
       // circular entity? report its exact diameter as a bonus entry
       void this.reportEntityInfo(pick)
-      return `${describe(pick)} を選択 — 相手をクリック`
+      return `${this.describe(pick)} を選択 — 相手をクリック`
     }
 
     const a = this.pending
@@ -113,7 +116,7 @@ export class MeasureTool {
         (pa[2] + pb[2]) / 2,
       ]
       const data: EntryData = {
-        text: `${describe(a.pick)} ↔ ${describe(pick)} : ${fmt(res.value)}`,
+        text: `${this.describe(a.pick)} ↔ ${this.describe(pick)} : ${fmt(res.value)}`,
         labelText: fmt(res.value),
         labelPos: mid,
         markers: [a.pick.point.toArray() as [number, number, number], pick.point.toArray() as [number, number, number]],
@@ -164,6 +167,17 @@ export class MeasureTool {
       throw e
     }
     this.addEntry(data.text, objects, data)
+  }
+
+  /**
+   * 面#6, or "cavity_block 面#6" in an assembly: in ワイヤーフレーム / 半透明 a
+   * click can go through one part to another, and the HUD and the list must
+   * say which part was taken.
+   */
+  private describe(pick: PickResult): string {
+    const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
+    const name = this.partNames?.get(pick.partId)
+    return name ? `${name} ${kind}#${pick.id}` : `${kind}#${pick.id}`
   }
 
   toJSON(): EntryData[] {
@@ -303,11 +317,6 @@ function toRef(pick: PickResult): EntityRef {
   // exact B-rep measurement. The id IS the 1-based TopTools vertex map index,
   // which the backend resolves to the exact vertex.
   return { partId: pick.partId, kind: pick.kind, id: pick.id }
-}
-
-function describe(pick: PickResult): string {
-  const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
-  return `${kind}#${pick.id}`
 }
 
 function fmt(v: number): string {

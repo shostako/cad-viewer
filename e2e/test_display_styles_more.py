@@ -2,11 +2,14 @@
 
 (c3) 半透明 writes no depth: a wall behind another wall of the same STL shows
 through it, from either side (whatever order the triangles are drawn in);
-(g) an STL in ワイヤーフレーム shows its triangles, not its faces, and is still
-picked; a switch builds no geometry; (k) after choosing a style the arrow keys
-turn the view; (f) the style applies to newly loaded models, survives a reload
-and a 2D drawing, and a bad stored value falls back to the default; (i) loose
-curves stay drawn in every style.
+(g) an STL opened after a STEP in ワイヤーフレーム shows its triangles, not its
+faces, and is still picked; the thickness heatmap colours its triangle edges
+and the HUD does not send the user to another style; a switch builds no
+geometry; (k) the arrow keys turn the view and never change the style while
+the select has the focus, also right after a choice; (f) the style applies to newly loaded models, survives a
+reload and a 2D drawing, and a bad stored value falls back to the default;
+(i) loose curves stay drawn in every style, and each style of the IGES looks
+the same after other styles (whole frames).
 
 Expected values: display_common.py. The STLs are written to a temp directory;
 the IGES fixture is generated like test_iges_sewing.py does.
@@ -17,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-from display_common import BG, CURVE, TESTDATA, box_stl, diff, display_session, pt_seg, quad, tri_stl
+from display_common import BG, CURVE, LABELS, TESTDATA, box_stl, diff, display_session, pt_seg, quad, tri_stl
 
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
 IGES = TESTDATA / "loose_faces_box.igs"
@@ -34,10 +37,12 @@ B = quad((0, 40, 0), (40, 40, 0), (40, 40, 40), (0, 40, 40))
 TINY_HI = [((40, 40, 40), (39.9, 40, 40), (40, 40, 39.9))]
 TINY_LO = [((0, 0, 0), (0.1, 0, 0), (0, 0, 0.1))]
 WALL_SAMPLES = {"正面": (12, 0, 28), "背面": (12, 40, 28)}
-# (g) a flat STL box
-BOX = ((0, 0, 0), (100, 60, 10))
-BOX_DIAG = ((0, 0, 10), (100, 60, 10))  # a triangle edge of the top face
-BOX_I = (75, 15, 10)  # top face, clear of every triangle edge
+# (g) a flat STL box, 2 mm thick: under the default threshold 1.5 the heatmap
+# colours it yellow-olive (2 / (2 x 1.5) = 0.67 on the scale), far from the
+# grey-blue of the part
+BOX = ((0, 0, 0), (100, 60, 2))
+BOX_DIAG = ((0, 0, 2), (100, 60, 2))  # a triangle edge of the top face
+BOX_I = (75, 15, 2)  # top face, clear of every triangle edge
 
 
 def box_tri_edges(lo, hi):
@@ -61,6 +66,10 @@ with display_session() as d:
         tri_stl(paths[name], tris)
     paths["box"] = os.path.join(d.tmp, "box.stl")
     box_stl(paths["box"], *BOX)
+    # its own bytes: the backend serves the same content under the name it was
+    # first opened with, and load() waits for this name
+    with open(paths["box"], "a") as f:
+        f.write("\n" * 5)
 
     # ---- (c3) 半透明 writes no depth --------------------------------------------
     d.select_style("xray")
@@ -100,6 +109,10 @@ with display_session() as d:
         assert do <= 2, ("opaque: the near wall hides the far one", view, do)
 
     # ---- (g) STL in ワイヤーフレーム: triangle edges, no faces --------------------
+    # right after a STEP in ワイヤーフレーム: no per-part state of the STEP (its
+    # edge lines under the same part ids) may carry over to the STL
+    d.select_style("wireframe")
+    d.load(d.mold)
     d.load(paths["box"])
     d.preset("上")
     segs = d.segments(box_tri_edges(*BOX))
@@ -111,7 +124,12 @@ with display_session() as d:
     def diag_bins(img):
         return d.band(img, g0, g1, 8, 0.15, 0.85)
 
-    d.select_style("wireframe")
+    def lit_pixels(img):
+        """the pixels of the diagonal's band that stand out from the background"""
+        px = np.concatenate([b for b, _ in diag_bins(img) if len(b)])
+        return px[(px - np.array(BG)).max(axis=1) >= 40]
+
+    assert d.view()["displayStyle"] == "wireframe"
     img = d.frame()
     lit = sum(1 for b, _ in diag_bins(img) if len(b) and (b - np.array(BG)).max() >= 40)
     i_wire = d.px(img, i_xy)
@@ -121,6 +139,22 @@ with display_session() as d:
     assert diff(i_wire, BG).max() <= 8, ("the STL's faces must not be drawn", i_wire)
     assert hit and hit["kind"] == "face" and hit["id"] == -1, hit
     assert max(abs(a - b) for a, b in zip(hit["point"], BOX_I)) <= 0.5, hit
+
+    # the heatmap colours the triangle edges: the HUD must not say they cannot show
+    plain = lit_pixels(img).mean(axis=0)
+    d.open_folder("肉厚")
+    d.check("ヒートマップ", True)
+    page.wait_for_function(
+        "document.querySelector('#hud-info').textContent.includes('肉厚ヒートマップ表示中')", timeout=60000
+    )
+    d.settle()
+    hud = page.text_content("#hud-info")
+    heat = lit_pixels(d.frame())
+    print("(g) heatmap HUD:", hud, " lit diagonal pixels plain / heatmap:", plain.round(1), heat.mean(axis=0).round(1), len(heat))
+    assert len(heat) >= 20, ("the triangle edges must stay drawn with the heatmap", len(heat))
+    assert diff(heat.mean(axis=0), plain).max() >= 20, ("the heatmap colours must show on the triangle edges", plain, heat.mean(axis=0))
+    assert "ワイヤーフレーム" not in hud, ("the colours do show on an STL in ワイヤーフレーム", hud)
+    d.check("ヒートマップ", False)
     d.select_style("shaded-edges")
     img = d.frame()
     i_sh = d.px(img, i_xy)
@@ -135,20 +169,28 @@ with display_session() as d:
     print("(g) render info:", infos)
     assert len({i["geometries"] for _, i in infos}) == 1, ("a style switch built or freed geometry", infos)
 
-    # ---- (k) after choosing a style the arrows turn the view ------------------
+    # ---- (k) the arrows turn the view while the style select has the focus ----
+    # (the rule for every GUI dropdown: a focused select must not change a
+    # setting under the view keys), also right after a choice; the style stays
     sel = d.style_select()
-    sel.focus()
-    sel.select_option(label="陰影のみ")
-    d.settle()
-    focused = sel.evaluate("s => document.activeElement === s")
-    before = d.view()["position"]
-    page.keyboard.press("ArrowRight")
-    d.settle()
-    v = d.view()
-    print("(k) select focused after the choice:", focused, "moved:", before != v["position"], v["displayStyle"])
-    assert not focused, "the style select must give up the focus"
-    assert max(abs(a - b) for a, b in zip(before, v["position"])) > 1e-6, "ArrowRight must turn the view"
-    assert v["displayStyle"] == "shaded", v["displayStyle"]
+    d.select_style("shaded-edges")
+    for how in ("focused", "right after a choice"):
+        sel.focus()
+        if how != "focused":
+            sel.select_option(label="陰影のみ")
+        d.settle()
+        assert sel.evaluate("s => document.activeElement === s"), ("(k) the select should hold the focus", how)
+        want_style = d.view()["displayStyle"]
+        before = d.view()["position"]
+        for key in ("ArrowDown", "ArrowRight"):
+            page.keyboard.press(key)
+            d.settle()
+            v = d.view()
+            print("(k)", how, key, "->", v["displayStyle"])
+            assert v["displayStyle"] == want_style, ("an arrow changed the style", how, key, v["displayStyle"])
+            assert max(abs(a - b) for a, b in zip(before, v["position"])) > 1e-6, ("the arrow did not turn the view", how, key)
+            before = v["position"]
+    assert d.view()["displayStyle"] == "shaded"
 
     # ---- (f) new models, reload, 2D drawing, bad stored value ------------------
     def see_through(tag):
@@ -174,22 +216,40 @@ with display_session() as d:
     assert d.style_label() == "半透明", d.style_label()
     see_through("3 after a drawing")
 
-    # ---- (i) loose curves stay drawn in every style ----------------------------
-    d.load(str(IGES))
-    d.preset("等角")
-
-    def amber():
-        img = d.frame()
+    # ---- (i) loose curves stay drawn in every style; nothing is left over ------
+    # Each style's first frame comes from the IGES opened fresh in that style
+    # (new materials, nothing switched yet; the box in between, so that load()
+    # sees the name change). Then every style again, in reverse and in order,
+    # after the others: the same frames, or a style left state behind.
+    def amber(img):
         return int(np.sum(np.abs(img - np.array(CURVE)).max(axis=2) < 40))
 
-    counts = {}
-    for key in ("shaded-edges", "shaded", "wireframe"):
+    styles = tuple(LABELS)
+    base = {}
+    cam = None
+    for key in styles:
         d.select_style(key)
-        counts[key] = amber()
+        d.load(paths["box"])
+        d.load(str(IGES))
+        d.preset("等角")
+        v = d.view()
+        c = v["position"] + v["target"] + v["up"]
+        cam = cam or c
+        assert max(abs(a - b) for a, b in zip(c, cam)) <= 1e-9, ("same model, same view", key)
+        base[key] = d.frame()
+    counts = {key: amber(base[key]) for key in ("shaded-edges", "shaded", "wireframe")}
     print("(i) amber pixels:", counts)
     assert counts["shaded-edges"] >= 200, counts
     for key in ("shaded", "wireframe"):
         assert counts[key] >= 0.8 * counts["shaded-edges"], ("loose curves must stay", key, counts)
+    out = []
+    for key in tuple(reversed(styles)) + styles:
+        d.select_style(key)
+        dd = np.abs(d.frame() - base[key]).max(axis=2)
+        out.append((key, int(dd.max()), int((dd > 2).sum())))
+    print("(i) round trip, max diff and pixels over 2:", out)
+    for key, mx, n in out:
+        assert mx <= 2, ("a style of the IGES looks different after other styles", key, mx, n)
 
     # ---- (f) 4. a bad stored style falls back to the default -------------------
     page.evaluate("localStorage.setItem('cad-viewer:view', JSON.stringify({style: 'bogus', grid: false}))")

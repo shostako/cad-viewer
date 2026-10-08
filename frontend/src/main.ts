@@ -257,17 +257,16 @@ viewer.setRotateMode(viewPrefs.rotateMode)
 viewer.setDisplayStyle(viewPrefs.style)
 
 const viewFolder = gui.addFolder('表示')
-const styleCtl = viewFolder
+// "Pick a style, then turn the model to look" works without blurring the
+// select: the arrows turn the view even while a GUI dropdown has the focus
+// (isTextEntry), and never step its options.
+viewFolder
   .add(viewPrefs, 'style', { '陰影＋稜線': 'shaded-edges', 陰影のみ: 'shaded', ワイヤーフレーム: 'wireframe', 半透明: 'xray' })
   .name('表示スタイル')
   .onChange((v: DisplayStyle) => {
     viewer.setDisplayStyle(v)
     saveViewPrefs()
     refreshHeatmapHud()
-    // a focused select takes the arrow keys (isTextEntry): the next arrow would
-    // switch the style again instead of turning the view, and "pick a style,
-    // then turn the model to look" is how this is used
-    styleCtl.domElement.querySelector('select')?.blur()
   })
 viewFolder
   .add(viewPrefs, 'grid')
@@ -452,8 +451,9 @@ const thicknessCache = new Map<string, Map<number, Float32Array>>()
 const HEATMAP_HUD = '肉厚ヒートマップ表示中'
 function heatmapHud(): string {
   const method = thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
-  // B-rep faces are not drawn in ワイヤーフレーム, so their colours cannot show
-  const note = viewer.displayStyle === 'wireframe' ? '。ワイヤーフレームでは面を描かないので、色は陰影か半透明で見る' : ''
+  // B-rep faces are not drawn in ワイヤーフレーム, so their colours cannot show;
+  // a mesh model (STL, ...) draws its triangles' edges in the colours instead
+  const note = viewer.facesHidden ? '。ワイヤーフレームでは面を描かないので、色は陰影か半透明で見る' : ''
   return `${HEATMAP_HUD}（${method}、赤=閾値未満${note}）`
 }
 /** a style switch updates the note only while the HUD shows the heatmap message */
@@ -1110,7 +1110,7 @@ async function loadFile(file: File): Promise<void> {
         setContentShown(true, file.name)
         showEmpty(false)
         picker.setModel(model.parts)
-        measureTool.setModel(meta.id, meta.format === 'brep')
+        measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         // restore persisted measurements / annotations
         const entries = Array.isArray(sidecar.entries) ? (sidecar.entries as EntryData[]) : []
