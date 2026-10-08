@@ -535,14 +535,22 @@ try:
         set_required(1.0)
 
         # b6. open STL (no base): the legend notes that its faces keep the file's
-        # orientation, once /properties has answered (held 4 s here)
-        page.evaluate("window.__cadStallProperties(4000)")
+        # orientation, once /properties has answered. The answer is held by a
+        # route until the colouring is on (a timed stall ran out on the slow CI
+        # runner before the check), then let through.
+        held_props = []
+        page.route("**/properties", lambda r: held_props.append(r))
         nav.load(OPEN)
         click_button("等角")
         page.keyboard.press("f")
         settle()
         toggle("色分け", True)
+        page.wait_for_timeout(300)
+        assert held_props, "b6 /properties was not requested"
         assert "緑と青が逆" not in legend(), ("b6 note before /properties answered", legend())
+        page.unroute("**/properties")
+        for r in held_props:
+            r.continue_()
         page.wait_for_function(
             "document.querySelector('#draft-legend').textContent.includes('緑と青が逆')", timeout=30000
         )
