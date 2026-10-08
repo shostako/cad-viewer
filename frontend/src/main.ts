@@ -389,14 +389,19 @@ function applyDensity(): void {
 }
 applyDensity()
 
-async function updateProperties(modelId: string, gen: number): Promise<void> {
+// Latest properties request wins. Not tied to loadGen: a replacement upload
+// that fails before the teardown bumps loadGen but leaves the current model on
+// screen, and that model's answer must still be shown (not 計算中… for good).
+let propsRequest = 0
+async function updateProperties(modelId: string): Promise<void> {
+  const req = ++propsRequest
   propsPanel.showLoading()
   try {
     const p = await fetchProperties(modelId)
-    if (gen !== loadGen || modelId !== currentModelId) return // superseded
+    if (req !== propsRequest || modelId !== currentModelId) return // superseded
     propsPanel.setData(p)
   } catch (e) {
-    if (gen !== loadGen || modelId !== currentModelId) return
+    if (req !== propsRequest || modelId !== currentModelId) return
     propsPanel.showError(e instanceof Error ? e.message : String(e))
   }
 }
@@ -641,7 +646,7 @@ async function loadFile(file: File): Promise<void> {
       picker.setModel(model.parts)
       measureTool.setModel(meta.id, meta.format === 'brep')
       sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
-      void updateProperties(meta.id, gen) // not awaited: the load goes on meanwhile
+      void updateProperties(meta.id) // not awaited: the load goes on meanwhile
 
       // restore persisted measurements / annotations
       const sidecar = await getSidecar(meta.id)

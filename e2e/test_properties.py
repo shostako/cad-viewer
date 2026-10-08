@@ -299,6 +299,24 @@ try:
         assert hidden("#props-panel"), "a stale answer brought the panel back"
         page.close()
 
+        # 10b. a replacement that fails before the teardown (a broken file) leaves
+        #      the current model on screen: its late answer must still be shown
+        page = new_page()
+        bad = TESTDATA / "_broken_for_props.stl"
+        bad.write_text("this is not an STL")
+        try:
+            page.evaluate("window.__cadStallProperties(2000)")
+            page.set_input_files("#file-input", STEP)
+            page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'", timeout=60000)
+            page.set_input_files("#file-input", str(bad))
+            page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
+            wait_values()  # the stalled answer for mini_mold arrives and is shown
+            assert title() == "合計（表示中 4/4 部品）", title()
+        finally:
+            bad.unlink()
+        errors[:] = [e for e in errors if "Failed to load resource" not in e]  # the broken file's 422
+        page.close()
+
         # 11. a part without a volume is listed but not summed
         page = new_page()
 
