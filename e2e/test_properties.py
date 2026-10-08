@@ -335,9 +335,10 @@ try:
         assert len(open_pin) == 1 and open_pin[0]["area"] == "7.29" and open_pin[0]["mass"] == "—", pins
         assert title() == "合計（表示中 4/4 部品）"
         v_closed = V["plate"] + V["core_pin"] + V["cavity_block"]
-        check_total(v_closed, A["plate"] + A["core_pin"] + A["cavity_block"], 1.19)
-        assert total()["volume"].startswith("115.257 cm³") and total()["area"] == "227.29 cm²", total()
-        assert page.inner_text("#props-note") == "体積なしの 1 部品は合計に含めない"
+        # volume / weight: closed parts only; area: every part with faces (the open pin too)
+        check_total(v_closed, A["plate"] + 2 * A["core_pin"] + A["cavity_block"], 1.19)
+        assert total()["volume"].startswith("115.257 cm³") and total()["area"] == "234.58 cm²", total()
+        assert page.inner_text("#props-note") == "体積なしの 1 部品は体積・重量の合計に含めない（面積は含める）"
 
         page.evaluate(f"localStorage.removeItem('{PREFS}')")
         page.screenshot(path="/tmp/cad_viewer_properties.png")

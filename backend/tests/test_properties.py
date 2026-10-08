@@ -345,3 +345,87 @@ def test_api_iges_after_sewing(client, tmp_path, open_box):
         s = by_name["ソリッド"]
         assert s["closed"] and s["volume"] == approx(6000, 1e-6)
         assert body["total"]["closedParts"] == 1 and body["total"]["openParts"] == 1
+
+
+# ---- orientation (review of #12): the signed volume integral must not cancel
+
+
+def _flipped_shell(flip_index):
+    """the 10x20x30 box at (1,2,3) as one shell, with one face turned around.
+    Topologically still closed (BRep_Tool.IsClosed ignores orientation)."""
+    from OCP.TopoDS import TopoDS_Shell
+
+    b = BRep_Builder()
+    sh = TopoDS_Shell()
+    b.MakeShell(sh)
+    for i, f in enumerate(faces(box())):
+        b.Add(sh, f.Reversed() if i == flip_index else f)
+    return sh
+
+
+@pytest.mark.parametrize("flip", [0, 5])
+def test_brep_solid_with_a_flipped_face_has_no_volume(flip):
+    from OCP.TopoDS import TopoDS_Solid
+
+    b = BRep_Builder()
+    solid = TopoDS_Solid()
+    b.MakeSolid(solid)
+    b.Add(solid, _flipped_shell(flip))
+    r = properties.brep_part_properties(solid)
+    # without the check it read 4000 mm3 (the flipped 10x20 face cancels) as closed
+    assert r["volume"] is None and r["reason"] == properties.WINDING, r
+    assert r["area"] == approx(2200)
+
+
+def test_brep_free_shell_with_a_flipped_face_has_no_volume():
+    r = properties.brep_part_properties(_flipped_shell(2))
+    assert r["volume"] is None and r["reason"] == properties.WINDING, r
+
+
+def _boxes_mesh(*specs):
+    """trimesh boxes: (extents, centre, inverted)"""
+    parts = []
+    for extents, centre, inverted in specs:
+        m = trimesh.creation.box(extents=extents)
+        m.apply_translation(centre)
+        if inverted:
+            m.invert()
+        parts.append(m)
+    m = trimesh.util.concatenate(parts)
+    return m.vertices.astype(np.float32), m.faces.astype(np.uint32)
+
+
+def test_mesh_separate_inverted_body_is_added():
+    """6000 (outward) + a separate 1000 turned inside out: 7000, not 6000 - 1000"""
+    pos, idx = _boxes_mesh(((10, 20, 30), (0, 0, 0), False), ((10, 10, 10), (50, 0, 0), True))
+    r = properties.mesh_part_properties(pos, idx)
+    assert r["closed"] and r["volume"] == approx(7000), r
+    assert r["centerOfMass"] == [approx(50 * 1000 / 7000), approx(0), approx(0)]
+
+
+def test_mesh_cavity_is_still_subtracted_next_to_an_inverted_body():
+    """a 4x4x4 cavity (facing inward, inside the 6000 box) is subtracted; the
+    separate inverted 1000 is added: 6000 - 64 + 1000"""
+    pos, idx = _boxes_mesh(
+        ((10, 20, 30), (0, 0, 0), False), ((4, 4, 4), (0, 0, 0), True), ((10, 10, 10), (50, 0, 0), True)
+    )
+    r = properties.mesh_part_properties(pos, idx)
+    assert r["closed"] and r["volume"] == approx(6936), r
+    assert r["centerOfMass"][0] == approx(50 * 1000 / 6936)
+
+
+def test_overlapping_solids_are_summed_not_united():
+    """known limit, pinned: two overlapping 10x20x30 boxes in one part count twice"""
+    r = properties.brep_part_properties(compound(box(), box(at=(6.0, 2.0, 3.0))))
+    assert r["closed"] and r["volume"] == approx(12000), r
+
+
+def test_total_area_counts_open_parts_too():
+    closed = {"closed": True, "volume": 6000.0, "area": 2200.0, "centerOfMass": [0, 0, 0], "reason": None}
+    open_ = {"closed": False, "volume": None, "area": 2000.0, "centerOfMass": None, "reason": "open"}
+    curves = {"closed": False, "volume": None, "area": 0.0, "centerOfMass": None, "reason": "no_faces"}
+    t = properties._model("brep", [closed, open_, curves])["total"]
+    assert t["volume"] == approx(6000) and t["area"] == approx(4200), t
+    assert t["closedParts"] == 1 and t["openParts"] == 2
+    t = properties._model("brep", [open_])["total"]
+    assert t["volume"] is None and t["area"] == approx(2000), t

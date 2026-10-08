@@ -80,17 +80,21 @@ export function buildView(d: ModelProperties, isVisible: (id: number) => boolean
   } else if (visible.length === 0) {
     view = { rows: [], title: '表示中の部品なし', total: none, notes }
   } else {
-    const sum = (f: (p: PartProperties) => number) => withVolume.reduce((s, p) => s + f(p), 0)
+    // volume / weight: the parts with a volume; area: every part with faces
+    // (an open surface has an area too), the same rule as the backend total
+    const withArea = visible.filter((p) => p.area !== null && p.reason !== 'no_faces')
     view = {
       rows: visible,
       title: `合計（表示中 ${visible.length}/${n} 部品）`,
-      total: withVolume.length
-        ? { volume: sum((p) => p.volume!), area: sum((p) => p.area ?? 0), reason: null }
-        : none,
+      total: {
+        volume: withVolume.length ? withVolume.reduce((s, p) => s + p.volume!, 0) : null,
+        area: withArea.length ? withArea.reduce((s, p) => s + p.area!, 0) : null,
+        reason: null,
+      },
       notes,
     }
     const k = visible.length - withVolume.length
-    if (k > 0) notes.push(`体積なしの ${k} 部品は合計に含めない`)
+    if (k > 0) notes.push(`体積なしの ${k} 部品は体積・重量の合計に含めない（面積は含める）`)
   }
   if (d.source === 'mesh') notes.push('メッシュの三角形から計算（単位は mm とみなす）')
   return view
