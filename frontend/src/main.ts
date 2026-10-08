@@ -6,16 +6,19 @@ import {
   fetchMesh,
   fetchDrawingSvg,
   fetchThickness,
+  fetchProperties,
   getSidecar,
   putSidecar,
   __stallNextMeasure,
   __stallNextSidecar,
+  __stallNextProperties,
   type ModelMeta,
 } from './api'
 import { Drawing2D } from './drawing2d'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
 import { Picker } from './picking'
+import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
 import { renderTree } from './tree'
 import { DRAG_PX, Viewer, type RotateMode, type ViewPreset } from './viewer'
@@ -29,9 +32,12 @@ app.innerHTML = `
     <div id="tree-title">部品ツリー</div>
     <div id="tree-body"></div>
   </div>
-  <div id="measure-panel" class="hidden">
-    <div id="measure-title">計測</div>
-    <ul id="measure-list"></ul>
+  <div id="corner-br">
+    <div id="measure-panel" class="hidden">
+      <div id="measure-title">計測</div>
+      <ul id="measure-list"></ul>
+    </div>
+    <div id="props-panel" class="hidden"></div>
   </div>
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
@@ -55,6 +61,7 @@ const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
 const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
+const propsEl = document.querySelector<HTMLDivElement>('#props-panel')!
 
 const viewer = new Viewer(viewport)
 const picker = new Picker(viewer)
@@ -309,6 +316,96 @@ thicknessFolder
   .name('閾値 (mm)')
   .onChange(() => void updateThickness())
 
+// ---- volume / area / weight
+// Resin and specific gravity survive a reload, like the view preferences.
+const PROPS_PREFS_KEY = 'cad-viewer:props'
+const propsPrefs = { resin: 'PMMA', density: RESIN_DENSITY.PMMA }
+try {
+  const saved = JSON.parse(localStorage.getItem(PROPS_PREFS_KEY) ?? '{}')
+  if (RESIN_NAMES.includes(saved.resin)) {
+    propsPrefs.resin = saved.resin
+    propsPrefs.density = RESIN_DENSITY[saved.resin]
+  } else if (saved.resin === OTHER_RESIN && Number.isFinite(saved.density) && saved.density > 0) {
+    propsPrefs.resin = OTHER_RESIN
+    propsPrefs.density = saved.density
+  }
+} catch {
+  /* defaults */
+}
+function savePropsPrefs(): void {
+  try {
+    localStorage.setItem(PROPS_PREFS_KEY, JSON.stringify(propsPrefs))
+  } catch {
+    /* best-effort */
+  }
+}
+
+// keep the bottom-right stack below the GUI column (fixed, z 1001, grows as folders open)
+function fitCornerStack(): void {
+  const guiBottom = gui.domElement.getBoundingClientRect().bottom
+  const measure = measurePanel.classList.contains('hidden') ? 0 : measurePanel.getBoundingClientRect().height + 8
+  propsPanel.fitHeight(window.innerHeight - 12 - (guiBottom + 8) - measure)
+}
+const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id), fitCornerStack)
+// Watch the GUI and the measure list only, never the props panel itself:
+// fitHeight resizes the panel's table, and watching that would loop
+// ("ResizeObserver loop" errors).
+new ResizeObserver(fitCornerStack).observe(gui.domElement)
+new ResizeObserver(fitCornerStack).observe(measurePanel)
+window.addEventListener('resize', fitCornerStack)
+
+const propsFolder = gui.addFolder('体積・重量')
+propsFolder.close()
+const resinCtl = propsFolder
+  .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
+  .name('樹脂')
+  .onChange((r: string) => {
+    // その他 keeps the current value: it is what the user typed
+    if (r !== OTHER_RESIN) {
+      propsPrefs.density = RESIN_DENSITY[r]
+      densityCtl.updateDisplay()
+    }
+    applyDensity()
+  })
+// min without max: lil-gui draws a slider only when both are set. step 0.001
+// keeps values like 1.185 as typed.
+const densityCtl = propsFolder
+  .add(propsPrefs, 'density')
+  .min(0.001)
+  .step(0.001)
+  .name('比重 (g/cm³)')
+  .onChange(() => {
+    // a typed value that differs from the resin's own is その他. Never guess a
+    // resin from the value (ABS and PS are both 1.05).
+    if (propsPrefs.resin !== OTHER_RESIN && propsPrefs.density !== RESIN_DENSITY[propsPrefs.resin]) {
+      propsPrefs.resin = OTHER_RESIN
+      resinCtl.updateDisplay()
+    }
+    applyDensity()
+  })
+function applyDensity(): void {
+  propsPanel.setDensity(propsPrefs.density, propsPrefs.resin)
+  savePropsPrefs()
+}
+applyDensity()
+
+// Latest properties request wins. Not tied to loadGen: a replacement upload
+// that fails before the teardown bumps loadGen but leaves the current model on
+// screen, and that model's answer must still be shown (not 計算中… for good).
+let propsRequest = 0
+async function updateProperties(modelId: string): Promise<void> {
+  const req = ++propsRequest
+  propsPanel.showLoading()
+  try {
+    const p = await fetchProperties(modelId)
+    if (req !== propsRequest || modelId !== currentModelId) return // superseded
+    propsPanel.setData(p)
+  } catch (e) {
+    if (req !== propsRequest || modelId !== currentModelId) return
+    propsPanel.showError(e instanceof Error ? e.message : String(e))
+  }
+}
+
 // ---- sidecar persistence (auto-save, debounced)
 // The pending payload is captured eagerly (target id + an entries snapshot)
 // rather than re-read inside the timer, so it can be flushed synchronously on
@@ -517,6 +614,7 @@ async function loadFile(file: File): Promise<void> {
       thicknessCache.clear()
       thicknessState.enabled = false
       viewer.clearThicknessColors()
+      propsPanel.hide()
       // Clear the stale 3D scene for BOTH branches: while the new model's
       // fetch is in flight (or if it fails), the old geometry must not stay
       // visible and pickable — clicks on it would be saved under the NEW
@@ -548,6 +646,7 @@ async function loadFile(file: File): Promise<void> {
       picker.setModel(model.parts)
       measureTool.setModel(meta.id, meta.format === 'brep')
       sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
+      void updateProperties(meta.id) // not awaited: the load goes on meanwhile
 
       // restore persisted measurements / annotations
       const sidecar = await getSidecar(meta.id)
@@ -556,9 +655,10 @@ async function loadFile(file: File): Promise<void> {
       if (entries.length) measureTool.restore(entries)
 
       if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
-        renderTree(treeBody, model.tree, (partId, visible) =>
-          viewer.setPartVisible(partId, visible),
-        )
+        renderTree(treeBody, model.tree, (partId, visible) => {
+          viewer.setPartVisible(partId, visible)
+          propsPanel.refresh()
+        })
         treePanel.classList.remove('hidden')
       } else {
         treePanel.classList.add('hidden')
@@ -622,6 +722,7 @@ testHooks.__cadView = () => ({
   far: viewer.camera.far,
 })
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
+testHooks.__cadStallProperties = (ms: number) => __stallNextProperties(ms)
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.camera.updateMatrixWorld()
   const r = picker.pick(toNdc(clientX, clientY))

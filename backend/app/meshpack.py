@@ -178,3 +178,33 @@ def pack_trimesh(mesh, name: str = "mesh") -> tuple[bytes, dict[str, Any]]:
         "parts": [{"id": 0, "name": name, "color": None}],
     }
     return blob, meta
+
+
+def unpack_parts(blob: bytes) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    """Inverse of pack_parts / pack_trimesh for the triangle buffers.
+
+    Returns (header, parts); each part is {"id", "name", "positions" (N, 3)
+    float32, "normals" (N, 3) float32, "indices" (M, 3) uint32}. The arrays
+    are read-only views into `blob` (no copy).
+    """
+    (hlen,) = struct.unpack_from("<I", blob, 0)
+    header = json.loads(blob[4 : 4 + hlen])
+    base = 4 + hlen
+
+    def buf(name: str, dtype) -> np.ndarray:
+        d = header["buffers"][name]
+        return np.frombuffer(blob, dtype=dtype, count=d["count"], offset=base + d["offset"])
+
+    parts = []
+    for p in header["parts"]:
+        pid = p["id"]
+        parts.append(
+            {
+                "id": pid,
+                "name": p["name"],
+                "positions": buf(f"p{pid}:positions", np.float32).reshape(-1, 3),
+                "normals": buf(f"p{pid}:normals", np.float32).reshape(-1, 3),
+                "indices": buf(f"p{pid}:indices", np.uint32).reshape(-1, 3),
+            }
+        )
+    return header, parts

@@ -25,3 +25,4 @@ for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
 - 計測・注記・サイドカー系のテストはサイドカーに書き込むため、`backend/.sidecars/` を消せばクリーンに戻る
 - テストは `window.__cadProject` / `__cadPick` / `__cadView` フック（main.ts）でワールド座標からクリック位置を決定論的に導出し、カメラの状態を読む（`__cadView` は near / far も返す）
 - `test_nav_fit.py`（全体表示）・`test_nav_wheel.py`（ホイールの拡大縮小）・`test_nav_pivot.py`（ダブルクリックの回転の中心）は、共通の部品を `nav_common.py` から使う。検査用の箱の STL は一時ディレクトリに書いて使い、最後に消す。1 本にまとめると CI の 1 本あたりの打ち切り（300 秒）を超えたので分けてある。1 本は目安 2 分以内に収める
+- `test_properties.py`（体積・重量のパネル）は `/properties` を持つ backend が要る。`window.__cadStallProperties(ms)` で次の 1 回の取得を遅らせ、古い応答を捨てることを確かめる
