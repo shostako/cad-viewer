@@ -461,6 +461,13 @@ try:
         for label, want in SIX.items():
             set_dir(label)
             expect(F_PTS, want, f"b2 {label} 1.0")
+            if label == "+Z":
+                # the flat copy is lit like the part: the top and the two walls
+                # face the light at different angles, so the same green comes
+                # out at different brightness (a copy with no usable normals
+                # shades them all alike)
+                lit = {k: sum(c) for k, c in colours(F_PTS).items()}
+                assert max(lit.values()) - min(lit.values()) >= 30, ("b2 flat copy not lit", lit)
         set_dir("+Z")
         set_required(3.0)
         expect(F_PTS, {"FTOP": "ok", "XW": "short", "YW": "short"}, "b3 +Z 3.0")

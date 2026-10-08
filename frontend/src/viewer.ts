@@ -355,6 +355,8 @@ export class Viewer {
     geo.setAttribute('position', new THREE.BufferAttribute(P, 3))
     const src = mesh.material as THREE.MeshStandardMaterial
     const mat = src.clone()
+    // three switches to flat shading by itself for a geometry without normals
+    // (WebGLPrograms); said here so the copy does not depend on that
     mat.flatShading = true
     mat.needsUpdate = true
     // the same plane objects as the part (clone() copies them), so a section
