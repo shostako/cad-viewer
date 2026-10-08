@@ -18,7 +18,7 @@ import { toModelData } from './model'
 import { Picker } from './picking'
 import { SectionTool, type Axis } from './section'
 import { renderTree } from './tree'
-import { Viewer, type RotateMode, type ViewPreset } from './viewer'
+import { DRAG_PX, Viewer, type RotateMode, type ViewPreset } from './viewer'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
@@ -419,9 +419,8 @@ viewport.addEventListener(
     e.stopPropagation()
     const scale = wheelScale(e)
     if (scale === 1) return
-    const ndc = toNdc(e.clientX, e.clientY)
-    viewer.camera.updateMatrixWorld() // keys may have moved the camera since the last frame
-    viewer.zoomAt(ndc, scale, picker.surfacePoint(ndc))
+    // zoomAt picks after finishing a running pivot slide, in the pose it zooms from
+    viewer.zoomAt(toNdc(e.clientX, e.clientY), scale, (ndc) => picker.surfacePoint(ndc))
   },
   { capture: true, passive: false },
 )
@@ -447,7 +446,7 @@ viewport.addEventListener('pointerup', (e) => {
   downAt = null
   if (e.button === 0) clickTravels = [clickTravels[1], Math.max(travel, moved)]
   if (state.mode === 'なし') return
-  if (moved > 5 || measureTool.busy) return
+  if (moved > DRAG_PX || measureTool.busy) return
   const ndc = toNdc(e.clientX, e.clientY)
   const pick = picker.pick(ndc)
   if (!pick) return
@@ -474,7 +473,7 @@ viewport.addEventListener('pointerup', (e) => {
 // Double-click (mode なし only: in 計測/注記 both clicks are picks) makes that
 // surface point the rotation centre.
 viewport.addEventListener('dblclick', (e) => {
-  if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > 5) return
+  if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > DRAG_PX) return
   const ndc = toNdc(e.clientX, e.clientY)
   viewer.camera.updateMatrixWorld()
   const p = picker.surfacePoint(ndc)

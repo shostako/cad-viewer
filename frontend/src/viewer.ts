@@ -32,6 +32,8 @@ const MAX_ZOOM_FAR = 0.25
 /** double-click pivot: slide duration, and how long the marker stays */
 const PIVOT_MS = 250
 const PIVOT_MARKER_MS = 1000
+/** a press that moves further than this (px) is a drag, not a click */
+export const DRAG_PX = 5
 
 /**
  * How mouse drags and arrow keys rotate the view.
@@ -123,20 +125,32 @@ export class Viewer {
     // paused for good. Release events are taken on window so a pointer let go
     // outside the canvas still counts.
     const canvas = this.renderer.domElement
+    // where each held pointer went down: a drag that starts mid-pivot finishes
+    // the slide first, so it orbits the new centre. A click does not: the
+    // clicks of a second double-click must pick from the pose on screen.
+    const downAt = new Map<number, [number, number]>()
     canvas.addEventListener('pointerdown', (e) => {
       this.heldPointers.add(e.pointerId)
-      // a drag that starts mid-pivot orbits the new centre. The controls only
-      // record screen coordinates on pointerdown, so finishing after them is safe.
-      this.finishViewAnim()
+      downAt.set(e.pointerId, [e.clientX, e.clientY])
+    })
+    canvas.addEventListener('pointermove', (e) => {
+      const d = downAt.get(e.pointerId)
+      if (d && this.viewAnim && Math.hypot(e.clientX - d[0], e.clientY - d[1]) > DRAG_PX) {
+        this.finishViewAnim()
+      }
     })
     const release = (e: PointerEvent) => {
       this.heldPointers.delete(e.pointerId)
+      downAt.delete(e.pointerId)
     }
     window.addEventListener('pointerup', release)
     window.addEventListener('pointercancel', release)
     canvas.addEventListener('lostpointercapture', release)
     // a button held while the window loses focus (Alt+Tab) never sends pointerup
-    window.addEventListener('blur', () => this.heldPointers.clear())
+    window.addEventListener('blur', () => {
+      this.heldPointers.clear()
+      downAt.clear()
+    })
 
     // CAD-ish lighting: hemisphere + key + fill
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2))
@@ -481,16 +495,17 @@ export class Viewer {
   // ---- zoom toward a point, double-click pivot ----------------------------
 
   /**
-   * Zoom about `anchor` (the surface point under the cursor) or, over empty
+   * Zoom about the surface point under the cursor (`pickSurface`) or, over empty
    * space, the point under the cursor on the plane through the target square
    * to the view. Camera and target both scale about that point, so the view
    * direction is unchanged and the point stays under the cursor. scale < 1 zooms in.
    */
-  zoomAt(ndc: THREE.Vector2, scale: number, anchor: THREE.Vector3 | null): void {
+  zoomAt(ndc: THREE.Vector2, scale: number, pickSurface: (ndc: THREE.Vector2) => THREE.Vector3 | null): void {
     if (!(scale > 0) || scale === 1) return
+    // finish a pivot slide first, then look under the cursor in that final pose
     this.finishViewAnim()
     this.camera.updateMatrixWorld()
-    const p = anchor ?? this.targetPlanePoint(ndc)
+    const p = pickSurface(ndc) ?? this.targetPlanePoint(ndc)
     const cam = this.camera.position
     const target = this.target.clone()
     let s = scale

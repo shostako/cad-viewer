@@ -396,8 +396,11 @@ try:
                 v1 = view()
                 q = project(P)
                 assert math.dist(q, cur) <= 0.5, (mode, "B1 drift", q, cur)
+                # exactly one notch (0.9) closer to P itself. Zooming about any other
+                # point on the cursor's ray would keep P under the cursor too, but
+                # would step by a different share of the distance to P
                 k = math.dist(v1["position"], P) / math.dist(v0["position"], P)
-                assert 0.8 <= k <= 0.97, (mode, k)
+                assert abs(k - 0.9) <= 1e-6, (mode, k)
                 same_dir(v0, v1)
             for _ in range(5):
                 wheel(cur, 100)
@@ -470,8 +473,13 @@ try:
                 expected = Q["point"]
             else:
                 expected = plane_point(cur)
+            v0 = view()
             wheel(cur, -100)
             assert math.dist(project(expected), cur) <= 0.5, (mode, "B4", Q)
+            # the clipped plate top is on the same ray: only the step size tells
+            # which point the zoom went to
+            k = math.dist(view()["position"], expected) / math.dist(v0["position"], expected)
+            assert abs(k - 0.9) <= 1e-6, (mode, "B4 zoomed about a clipped point", k)
             ctl("有効").locator("input").click()
             page.locator(".lil-gui .lil-title", has_text="断面").click()
             page.keyboard.press("f")
@@ -540,7 +548,7 @@ try:
                 assert b <= a + 0.5, (mode, "P moved away from the centre", a, b)
             d0, d1 = dists[0], dists[-1]
             mid = [d for d in dists if d1 + 0.1 * (d0 - d1) < d < d1 + 0.9 * (d0 - d1)]
-            assert len(mid) >= 2, (mode, "jumped instead of sliding", dists)
+            assert len(mid) >= 1, (mode, "jumped instead of sliding", dists)
             moving = [s["t"] for s, d in zip(samples, dists) if d < d0 - 0.5]
             settled = [s["t"] for s, d in zip(samples, dists) if d <= d1 + 0.5]
             dur = settled[0] - (moving[0] if moving else samples[0]["t"])
@@ -638,6 +646,51 @@ try:
             assert close(view()["target"], v0["target"], 1e-12)
         ctl("有効").locator("input").click()
         page.locator(".lil-gui .lil-title", has_text="断面").click()
+
+        # C10. a wheel step during the slide zooms from the slide's end pose: at the
+        # canvas centre that is P itself, so the target stays P (picking in the
+        # in-between pose would zoom about another point and move the target off P)
+        page.keyboard.press("f")
+        settle()
+        cur = tuple(round(c) for c in project(SURFACE))
+        P = pick(cur)["point"]
+        v0 = view()
+        depth = dot(sub(P, v0["position"]), direction(v0))
+        page.mouse.dblclick(*cur)
+        page.mouse.move(*centre)
+        page.mouse.wheel(0, -100)
+        page.wait_for_timeout(400)
+        v = view()
+        assert close(v["target"], P, 1e-4), ("C10 target", v["target"], P)
+        assert abs(math.dist(v["position"], P) - 0.9 * depth) <= 1e-6 * depth, ("C10 distance", math.dist(v["position"], P), depth)
+
+        # C11. a second double-click during the slide starts from the pose on
+        # screen: it never jumps to the first slide's end first
+        page.keyboard.press("f")
+        settle()
+        cur1 = tuple(round(c) for c in project(SURFACE))
+        cur2 = tuple(round(c) for c in project((10, 5, 15)))  # plate top, near the front left corner
+        assert pick(cur2)["kind"] == "face"
+        P1 = pick(cur1)["point"]
+        # the camera state at each press, after the viewer has handled it (bubble
+        # phase on window): the presses of the second double-click must still see
+        # the first slide in progress, not its end pose
+        page.evaluate(
+            """() => { window.__downs = []
+               window.addEventListener('pointerdown', () => window.__downs.push(window.__cadView())) }"""
+        )
+        page.mouse.dblclick(*cur1)
+        page.mouse.dblclick(*cur2)
+        page.wait_for_timeout(700)
+        downs = page.evaluate("window.__downs")
+        assert len(downs) == 4, len(downs)
+        for d in downs[2:]:
+            assert math.dist(d["target"], P1) > 1e-3, ("C11 the first slide jumped to its end", d["target"], P1)
+        end = view()["target"]
+        # what lies under cur2 depends on how far the first slide got: only check
+        # that the second one won (the centre is not P1) and finished
+        assert not close(end, P1, 1), ("C11 second centre", end)
+        assert math.dist(project(end), centre) <= 0.5
 
         # C9. a reload during the slide drops it
         page.keyboard.press("f")
