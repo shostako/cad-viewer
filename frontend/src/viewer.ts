@@ -8,6 +8,8 @@ import type { ModelData, PartData } from './model'
 
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
+/** loose curves (parts with no faces) — the dark edge color would vanish on the background */
+const CURVE_COLOR = 0xe0b050
 
 export class Viewer {
   readonly scene = new THREE.Scene()
@@ -84,8 +86,19 @@ export class Viewer {
     return this.partMeshes
   }
 
+  /**
+   * Bounds used to frame the model. Bodies only, when there are any: loose
+   * curves in a file are often construction lines (e.g. coordinate axes) far
+   * larger than the part, and framing them would shrink the part to a speck.
+   */
   modelBBox(): THREE.Box3 {
-    return new THREE.Box3().setFromObject(this.modelGroup)
+    const box = new THREE.Box3()
+    for (const [id, mesh] of this.partMeshes) {
+      if (mesh.geometry.index?.count && this.partGroups.get(id)?.visible !== false) {
+        box.expandByObject(mesh)
+      }
+    }
+    return box.isEmpty() ? new THREE.Box3().setFromObject(this.modelGroup) : box
   }
 
   /** Thickness heatmap: red below threshold, grading to base blue when thick. */
@@ -214,7 +227,8 @@ export class Viewer {
       // pass the typed array directly — Array.from() would box millions of
       // floats into JS numbers on large assemblies (memory blowup / tab freeze)
       edgeGeo.setPositions(part.edges)
-      const edgeMat = new LineMaterial({ color: EDGE_COLOR, linewidth: 1.5 })
+      const curveOnly = part.indices.length === 0
+      const edgeMat = new LineMaterial({ color: curveOnly ? CURVE_COLOR : EDGE_COLOR, linewidth: 1.5 })
       const size = new THREE.Vector2()
       this.renderer.getSize(size)
       edgeMat.resolution.copy(size)
@@ -253,7 +267,7 @@ export class Viewer {
   }
 
   fitToView(): void {
-    const box = new THREE.Box3().setFromObject(this.modelGroup)
+    const box = this.modelBBox()
     if (box.isEmpty()) return
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())

@@ -21,13 +21,17 @@ from typing import Any
 import numpy as np
 
 from OCP.Bnd import Bnd_Box
-from OCP.BRep import BRep_Tool
+from OCP.BRep import BRep_Builder, BRep_Tool
+from OCP.BRepAdaptor import BRepAdaptor_Curve
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeSolid, BRepBuilderAPI_Sewing
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepLib import BRepLib_ToolTriangulatedShape
 from OCP.BRepMesh import BRepMesh_IncrementalMesh
+from OCP.GCPnts import GCPnts_TangentialDeflection
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.IGESCAFControl import IGESCAFControl_Reader
 from OCP.Quantity import Quantity_Color, Quantity_TOC_sRGB
+from OCP.ShapeFix import ShapeFix_Solid
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TDataStd import TDataStd_Name
@@ -41,9 +45,9 @@ from OCP.TopAbs import (
     TopAbs_ShapeEnum,
     TopAbs_VERTEX,
 )
-from OCP.TopExp import TopExp
+from OCP.TopExp import TopExp, TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS, TopoDS_Shape
+from OCP.TopoDS import TopoDS, TopoDS_Compound, TopoDS_Iterator, TopoDS_Shape
 from OCP.TopTools import (
     TopTools_IndexedDataMapOfShapeListOfShape,
     TopTools_IndexedMapOfShape,
@@ -217,17 +221,183 @@ def extract_parts(doc: TDocStd_Document) -> tuple[list[Part], TreeNode]:
     return parts, root
 
 
-# ---------------------------------------------------------------- meshing
+# ---------------------------------------------------------------- loose shapes
+
+# Sewing tolerances (model units, mm after OCCT's import conversion), tried in
+# order until every sewn shell closes. Exported IGES often leaves gaps of a few
+# microns to ~0.01 mm between neighbouring trimmed surfaces.
+SEW_TOLERANCES = (1e-4, 1e-3, 1e-2)
+# never sew wider than this fraction of the bounding-box diagonal: a tolerance
+# near the size of real features would weld them shut
+SEW_MAX_REL = 1e-4
+
+def _contains(shape: TopoDS_Shape, kind) -> bool:
+    return TopExp_Explorer(shape, kind).More()
 
 
-def combined_deflection(parts: list[Part], relative: float = 1e-3) -> float:
+def _is_sheet(shape: TopoDS_Shape) -> bool:
+    """faces not yet part of a solid: FACE, SHELL, or a compound of those"""
+    t = shape.ShapeType()
+    if t in (TopAbs_ShapeEnum.TopAbs_FACE, TopAbs_ShapeEnum.TopAbs_SHELL):
+        return True
+    return (
+        t == TopAbs_ShapeEnum.TopAbs_COMPOUND
+        and _contains(shape, TopAbs_FACE)
+        and not _contains(shape, TopAbs_ShapeEnum.TopAbs_SOLID)
+    )
+
+
+def _is_curve(shape: TopoDS_Shape) -> bool:
+    t = shape.ShapeType()
+    if t in (TopAbs_ShapeEnum.TopAbs_EDGE, TopAbs_ShapeEnum.TopAbs_WIRE):
+        return True
+    return t == TopAbs_ShapeEnum.TopAbs_COMPOUND and not _contains(shape, TopAbs_FACE) and _contains(shape, TopAbs_EDGE)
+
+
+def _face_total(shapes: list[TopoDS_Shape]) -> int:
+    n = 0
+    for shape in shapes:
+        e = TopExp_Explorer(shape, TopAbs_FACE)
+        while e.More():
+            n += 1
+            e.Next()
+    return n
+
+
+def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], TreeNode]:
+    """Turn a heap of loose top-level faces / curves into bodies.
+
+    IGES (and some STEP) exports carry a solid as dozens of separate trimmed
+    surfaces, which XCAF reports as one "part" per face (the tree fills with
+    FACE, FACE, ...). Sew those faces into shells, close them into solids where
+    possible, and gather loose curves into a single part. Parts inside
+    assemblies, and files whose top level is already solids, are left alone.
+
+    Deterministic for the same input: the lazy B-rep re-parse after a cache hit
+    must reproduce the same part / face numbering as the cached mesh.
+    """
+    top_ids = [c.part_id for c in tree.children if c.part_id is not None]
+    by_id = {p.part_id: p for p in parts}
+    sheets = [by_id[i] for i in top_ids if _is_sheet(by_id[i].shape)]
+    curves = [by_id[i] for i in top_ids if _is_curve(by_id[i].shape)]
+    if _face_total([p.shape for p in sheets]) < 2:
+        sheets = []  # a single loose face has nothing to be sewn to
+    if len(curves) < 2:
+        curves = []
+    if not sheets and not curves:
+        return parts, tree
+
+    merged_ids = {p.part_id for p in sheets + curves}
+    new_parts: list[Part] = []
+    new_tree = TreeNode(name=tree.name)
+
+    def add(name: str, shape: TopoDS_Shape, color) -> None:
+        part = Part(part_id=len(new_parts), name=name, shape=shape, color=color)
+        new_parts.append(part)
+        new_tree.children.append(TreeNode(name=name, part_id=part.part_id))
+
+    # untouched top-level entries keep their order; assembly subtrees are
+    # renumbered in place
+    remap: dict[int, int] = {}
+
+    def copy_node(node: TreeNode) -> TreeNode:
+        if node.part_id is not None:
+            old = by_id[node.part_id]
+            part = Part(part_id=len(new_parts), name=old.name, shape=old.shape, color=old.color)
+            new_parts.append(part)
+            remap[old.part_id] = part.part_id
+            return TreeNode(name=node.name, part_id=part.part_id)
+        return TreeNode(name=node.name, children=[copy_node(c) for c in node.children])
+
+    for child in tree.children:
+        if child.part_id is not None and child.part_id in merged_ids:
+            continue
+        new_tree.children.append(copy_node(child))
+
+    if sheets:
+        bodies = _sew([p.shape for p in sheets], parts)
+        solids = sum(1 for b in bodies if b.ShapeType() == TopAbs_ShapeEnum.TopAbs_SOLID)
+        color = _common_color(sheets)
+        for i, body in enumerate(bodies, 1):
+            kind = "ソリッド" if body.ShapeType() == TopAbs_ShapeEnum.TopAbs_SOLID else "サーフェス"
+            same_kind = solids if kind == "ソリッド" else len(bodies) - solids
+            add(f"{kind} {i}" if same_kind > 1 else kind, body, color)
+    if curves:
+        builder = BRep_Builder()
+        compound = TopoDS_Compound()
+        builder.MakeCompound(compound)
+        for p in curves:
+            builder.Add(compound, p.shape)
+        add(f"曲線（{len(curves)} 本）", compound, _common_color(curves))
+    return new_parts, new_tree
+
+
+def _common_color(parts: list[Part]):
+    colors = {p.color for p in parts}
+    return colors.pop() if len(colors) == 1 else None
+
+
+def _sew(shapes: list[TopoDS_Shape], all_parts: list[Part]) -> list[TopoDS_Shape]:
+    """Sew faces into bodies: closed shells become solids, the rest stay shells."""
+    cap = max(_diagonal(all_parts) * SEW_MAX_REL, SEW_TOLERANCES[0])
+    tolerances = [t for t in SEW_TOLERANCES if t <= cap] or [SEW_TOLERANCES[0]]
+    bodies: list[TopoDS_Shape] = []
+    for tol in tolerances:
+        sewing = BRepBuilderAPI_Sewing(tol)
+        for shape in shapes:
+            sewing.Add(shape)
+        sewing.Perform()
+        sewn = sewing.SewedShape()
+        bodies = _top_level(sewn)
+        if all(
+            b.ShapeType() == TopAbs_ShapeEnum.TopAbs_SHELL and BRep_Tool.IsClosed_s(b)
+            for b in bodies
+        ):
+            break  # everything closed — a wider tolerance can only do harm
+    return [_close(b) for b in bodies]
+
+
+def _top_level(shape: TopoDS_Shape) -> list[TopoDS_Shape]:
+    if shape.ShapeType() != TopAbs_ShapeEnum.TopAbs_COMPOUND:
+        return [shape]
+    out = []
+    it = TopoDS_Iterator(shape)
+    while it.More():
+        out.append(it.Value())
+        it.Next()
+    return out
+
+
+def _close(body: TopoDS_Shape) -> TopoDS_Shape:
+    if body.ShapeType() != TopAbs_ShapeEnum.TopAbs_SHELL or not BRep_Tool.IsClosed_s(body):
+        return body
+    try:
+        solid = BRepBuilderAPI_MakeSolid(TopoDS.Shell_s(body)).Solid()
+        fix = ShapeFix_Solid()  # orients the shell outward (a sewn shell may face in)
+        fix.Init(solid)
+        fix.Perform()
+        return fix.Solid()
+    except Exception:
+        return body
+
+
+def _diagonal(parts: list[Part]) -> float:
     box = Bnd_Box()
     for p in parts:
         BRepBndLib.Add_s(p.shape, box)
     if box.IsVoid():
-        return 0.1
+        return 0.0
     xmin, ymin, zmin, xmax, ymax, zmax = box.Get()
-    diag = math.dist((xmin, ymin, zmin), (xmax, ymax, zmax))
+    return math.dist((xmin, ymin, zmin), (xmax, ymax, zmax))
+
+
+# ---------------------------------------------------------------- meshing
+
+
+def combined_deflection(parts: list[Part], relative: float = 1e-3) -> float:
+    diag = _diagonal(parts)
+    if diag == 0.0:
+        return 0.1
     return max(diag * relative, 1e-6)
 
 
@@ -302,6 +472,9 @@ def tessellate_part(part: Part, lin_deflection: float, ang_deflection: float = 0
     for ei in range(1, edge_map.Extent() + 1):
         edge = TopoDS.Edge_s(edge_map.FindKey(ei))
         pl = _edge_polyline(edge, ancestors)
+        if pl is None and _face_count(edge, ancestors) == 0:
+            # a free curve (no face to borrow a polyline from): sample it directly
+            pl = _curve_polyline(edge, lin_deflection, ang_deflection)
         if pl is None or len(pl) < 2:
             continue
         # polyline (n pts) -> line segment pairs (2*(n-1) pts)
@@ -335,6 +508,30 @@ def tessellate_part(part: Part, lin_deflection: float, ang_deflection: float = 0
         edge_map=edge_map,
         vertex_map=vertex_map,
     )
+
+
+def _face_count(edge, ancestors: TopTools_IndexedDataMapOfShapeListOfShape) -> int:
+    # MapShapesAndAncestors also lists edges that bound no face, with an empty list
+    return ancestors.FindFromKey(edge).Size() if ancestors.Contains(edge) else 0
+
+
+def _curve_polyline(edge, lin_deflection: float, ang_deflection: float) -> np.ndarray | None:
+    """Polyline for an edge that bounds no face (a loose curve in the file)."""
+    if BRep_Tool.Degenerated_s(edge):
+        return None
+    try:
+        curve = BRepAdaptor_Curve(edge)  # applies the edge's location
+        disc = GCPnts_TangentialDeflection(curve, ang_deflection, lin_deflection)
+    except Exception:
+        return None
+    n = disc.NbPoints()
+    if n < 2:
+        return None
+    out = np.empty((n, 3), dtype=np.float32)
+    for i in range(1, n + 1):
+        p = disc.Value(i)
+        out[i - 1] = (p.X(), p.Y(), p.Z())
+    return out
 
 
 def _edge_polyline(edge, ancestors: TopTools_IndexedDataMapOfShapeListOfShape) -> np.ndarray | None:
@@ -372,6 +569,7 @@ def load_brep(data: bytes, filename: str) -> tuple[list[PartMesh], TreeNode, flo
     with tempfile.TemporaryDirectory() as tmpdir:
         doc = _read_document(data, filename, tmpdir)
     parts, tree = extract_parts(doc)
+    parts, tree = merge_loose_shapes(parts, tree)
     defl = combined_deflection(parts)
     meshes = [tessellate_part(p, defl) for p in parts]
     return meshes, tree, defl

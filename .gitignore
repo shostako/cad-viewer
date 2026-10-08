@@ -11,6 +11,7 @@ frontend/dist/
 # local data
 testdata/*.stl
 testdata/*.step
+testdata/*.igs
 testdata/*.stp
 testdata/*.3mf
 testdata/*.dxf
