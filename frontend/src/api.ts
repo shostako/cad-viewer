@@ -150,3 +150,53 @@ export async function putSidecar(modelId: string, body: unknown): Promise<void> 
     body: JSON.stringify(body),
   })
 }
+
+// ---- volume / area / weight (GET /properties) --------------------------------
+
+/** why a part has no volume */
+export type PropsReason = 'open' | 'no_faces' | 'degenerate' | 'winding' | 'failed'
+export type Vec3 = [number, number, number]
+
+/** lengths in mm (mm² / mm³), unrounded */
+export interface PartProperties {
+  id: number
+  name: string
+  closed: boolean
+  volume: number | null
+  area: number | null
+  centerOfMass: Vec3 | null
+  reason: PropsReason | null
+}
+
+export interface ModelProperties {
+  source: 'brep' | 'mesh'
+  units: 'mm'
+  parts: PartProperties[]
+  total: {
+    volume: number | null
+    area: number | null
+    centerOfMass: Vec3 | null
+    closedParts: number
+    openParts: number
+  }
+}
+
+// test-only: hold the NEXT properties request in flight (one-shot, self-clearing)
+let _stallNextPropertiesMs = 0
+export function __stallNextProperties(ms: number): void {
+  _stallNextPropertiesMs = ms
+}
+
+export async function fetchProperties(modelId: string): Promise<ModelProperties> {
+  if (_stallNextPropertiesMs > 0) {
+    const ms = _stallNextPropertiesMs
+    _stallNextPropertiesMs = 0
+    await new Promise((r) => setTimeout(r, ms))
+  }
+  const res = await fetch(`/api/models/${modelId}/properties`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(detail.detail ?? `properties failed: ${res.status}`)
+  }
+  return res.json()
+}

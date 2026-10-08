@@ -358,6 +358,10 @@ export class Viewer {
     this.modelGroup.add(group)
   }
 
+  isPartVisible(partId: number): boolean {
+    return this.partGroups.get(partId)?.visible ?? false
+  }
+
   setPartVisible(partId: number, visible: boolean): void {
     const g = this.partGroups.get(partId)
     if (g) g.visible = visible

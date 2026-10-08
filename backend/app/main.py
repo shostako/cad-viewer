@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import cache, measure
+from . import cache, measure, properties
 from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
@@ -215,38 +215,54 @@ def get_thickness(model_id: str, method: str = "ray") -> Response:
         blob = entry.extra.get(cache_key)
         if blob is not None:
             return Response(content=blob, media_type="application/octet-stream")
-        import struct as _struct
-
         import numpy as np
 
-        from .meshpack import pack_buffers
+        from .meshpack import pack_buffers, unpack_parts
         from .thickness import vertex_thickness, vertex_thickness_ball
 
         compute = vertex_thickness_ball if method == "ball" else vertex_thickness
 
         # decode the entry's own mesh blob (works for mesh & brep alike)
-        raw = entry.mesh_blob
-        (hlen,) = _struct.unpack_from("<I", raw, 0)
-        header = json.loads(raw[4 : 4 + hlen])
-        base = 4 + hlen
-
-        def buf(name: str, dtype):
-            d = header["buffers"][name]
-            return np.frombuffer(raw, dtype=dtype, count=d["count"], offset=base + d["offset"])
-
         buffers = {}
-        for p in header["parts"]:
-            pid = p["id"]
-            positions = buf(f"p{pid}:positions", np.float32).reshape(-1, 3)
-            normals = buf(f"p{pid}:normals", np.float32).reshape(-1, 3)
-            indices = buf(f"p{pid}:indices", np.uint32).reshape(-1, 3)
-            t = compute(positions, normals, indices)
+        for part in unpack_parts(entry.mesh_blob)[1]:
+            t = compute(part["positions"], part["normals"], part["indices"])
             # inf -> 0 sentinel (frontend treats <=0 as "no data")
             t[~np.isfinite(t)] = 0.0
-            buffers[f"p{pid}:thickness"] = (t, 1)
+            buffers[f"p{part['id']}:thickness"] = (t, 1)
         blob = pack_buffers(buffers)
         entry.extra[cache_key] = blob
     return Response(content=blob, media_type="application/octet-stream")
+
+
+@app.get("/api/models/{model_id}/properties")
+def get_properties(model_id: str) -> dict:
+    """Volume, surface area and centre of mass per part, plus the closed parts' total.
+
+    mm / mm² / mm³, unrounded. B-rep parts are integrated exactly on the
+    B-rep; mesh formats on their triangles. A part that is not closed gets no
+    volume (see properties.py for why the check is strict).
+    """
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "properties require a 3D model (mesh or B-rep)")
+    cached = entry.extra.get("properties")
+    if cached is not None:
+        return cached
+    # Computed without entry.lock on purpose: a long integration must not hold
+    # up measure requests. Two concurrent requests just compute the same pure
+    # result twice. The B-rep re-parse after a cache hit locks by itself.
+    if entry.fmt == "brep":
+        try:
+            meshes = _brep_meshes(entry)
+        except BrepLoadError as e:
+            raise HTTPException(422, str(e)) from e
+        result = properties.brep_properties(meshes)
+    else:
+        result = properties.mesh_properties(entry.mesh_blob)
+    entry.extra["properties"] = result
+    return result
 
 
 def _sidecar_path(model_id: str) -> Path:
