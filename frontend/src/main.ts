@@ -18,7 +18,7 @@ import { toModelData } from './model'
 import { Picker } from './picking'
 import { SectionTool, type Axis } from './section'
 import { renderTree } from './tree'
-import { Viewer } from './viewer'
+import { Viewer, type RotateMode, type ViewPreset } from './viewer'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
@@ -36,6 +36,9 @@ app.innerHTML = `
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
     <div id="hud-info">STEP / IGES / STL / 3MF をドロップ、またはメニューから選択</div>
+    <div id="hud-keys">
+      左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール・＋／−: 拡大縮小
+    </div>
   </div>
   <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
 `
@@ -97,6 +100,124 @@ gui
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
   })
 gui.add(actions, 'clearMeasure').name('計測クリア')
+
+// ---- display & view navigation
+// Preferences survive a reload. Storage can be unavailable (private window,
+// blocked site data) — fall back to defaults silently.
+const VIEW_PREFS_KEY = 'cad-viewer:view'
+const viewPrefs = {
+  grid: true,
+  autoRotate: false,
+  speed: 30,
+  rotateMode: 'turntable' as RotateMode,
+}
+try {
+  const saved = JSON.parse(localStorage.getItem(VIEW_PREFS_KEY) ?? '{}')
+  if (typeof saved.grid === 'boolean') viewPrefs.grid = saved.grid
+  if (typeof saved.speed === 'number') viewPrefs.speed = saved.speed
+  if (saved.rotateMode === 'turntable' || saved.rotateMode === 'free') viewPrefs.rotateMode = saved.rotateMode
+} catch {
+  /* defaults */
+}
+function saveViewPrefs(): void {
+  try {
+    // auto-rotate is deliberately not remembered: a model that starts spinning
+    // on open is a surprise, not a preference
+    const { grid, speed, rotateMode } = viewPrefs
+    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode }))
+  } catch {
+    /* best-effort */
+  }
+}
+viewer.gridVisible = viewPrefs.grid
+viewer.autoRotateSpeed = viewPrefs.speed
+viewer.setRotateMode(viewPrefs.rotateMode)
+
+const viewFolder = gui.addFolder('表示')
+viewFolder
+  .add(viewPrefs, 'grid')
+  .name('グリッド')
+  .onChange((v: boolean) => {
+    viewer.gridVisible = v
+    saveViewPrefs()
+  })
+viewFolder
+  .add(viewPrefs, 'autoRotate')
+  .name('自動回転')
+  .onChange((v: boolean) => (viewer.autoRotate = v))
+viewFolder
+  .add(viewPrefs, 'speed', 5, 120, 1)
+  .name('回転速度 (°/秒)')
+  .onChange((v: number) => {
+    viewer.autoRotateSpeed = v
+    saveViewPrefs()
+  })
+viewFolder
+  .add(viewPrefs, 'rotateMode', { ターンテーブル: 'turntable', 自由回転: 'free' })
+  .name('回転方式')
+  .onChange((v: RotateMode) => {
+    viewer.setRotateMode(v)
+    saveViewPrefs()
+  })
+const presetFolder = viewFolder.addFolder('視点')
+const presetActions: Record<string, () => void> = {}
+const presetNames: [ViewPreset, string][] = [
+  ['front', '正面'],
+  ['back', '背面'],
+  ['right', '右'],
+  ['left', '左'],
+  ['top', '上'],
+  ['bottom', '下'],
+  ['iso', '等角'],
+]
+for (const [preset, label] of presetNames) {
+  presetActions[preset] = () => viewer.setView(preset)
+  presetFolder.add(presetActions, preset).name(label)
+}
+
+// keyboard navigation (3D only). Arrow keys move the CAMERA toward that side,
+// so the face on that side comes into view; Shift slides instead of turning.
+const KEY_TURN = (5 * Math.PI) / 180 // per keydown; key repeat makes it continuous
+const KEY_PAN = 0.05 // fraction of the view height
+const KEY_ZOOM = 0.9
+function isTextEntry(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false
+  if (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)
+    return true
+  // checkboxes / buttons keep focus after a click — arrows must still navigate
+  return el instanceof HTMLInputElement && !['checkbox', 'radio', 'button', 'range'].includes(el.type)
+}
+// capture phase: lil-gui stops keydown propagation inside its panel, so after
+// clicking a view button the arrows would never reach a bubbling listener
+window.addEventListener('keydown', onNavigationKey, { capture: true })
+function onNavigationKey(e: KeyboardEvent): void {
+  if (is2D || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return
+  const shift = e.shiftKey
+  switch (e.key) {
+    case 'ArrowLeft':
+      shift ? viewer.pan(-KEY_PAN, 0) : viewer.rotateView(-KEY_TURN, 0)
+      break
+    case 'ArrowRight':
+      shift ? viewer.pan(KEY_PAN, 0) : viewer.rotateView(KEY_TURN, 0)
+      break
+    case 'ArrowUp':
+      shift ? viewer.pan(0, KEY_PAN) : viewer.rotateView(0, KEY_TURN)
+      break
+    case 'ArrowDown':
+      shift ? viewer.pan(0, -KEY_PAN) : viewer.rotateView(0, -KEY_TURN)
+      break
+    case '+':
+    case '=': // US layout: the + key without Shift
+      viewer.zoom(KEY_ZOOM)
+      break
+    case '-':
+      viewer.zoom(1 / KEY_ZOOM)
+      break
+    default:
+      return
+  }
+  e.preventDefault()
+}
 
 const sectionFolder = gui.addFolder('断面')
 sectionFolder.close()
@@ -425,6 +546,13 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
   }
 }
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
+testHooks.__cadView = () => ({
+  position: viewer.camera.position.toArray(),
+  up: viewer.camera.up.toArray(),
+  target: viewer.target.toArray(),
+  rotateMode: viewer.rotateMode,
+  gridVisible: viewer.gridVisible,
+})
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   const rect = viewer.renderer.domElement.getBoundingClientRect()
