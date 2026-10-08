@@ -157,8 +157,11 @@ with nav_session(boxes=("runner",)) as n:
     turned = math.degrees(math.acos(min(1, dot(a, direction()))))
     assert turned > 3, ("auto-rotate stalled", turned)
     ctl("自動回転").locator("input").click()
-    page.keyboard.press("f")
-    settle()
+    # back to a known view: how far auto-rotate turned depends on the machine's
+    # timing, and C8-C11 aim at points that other parts hide from some
+    # directions (after about 1.25 s of spinning, C11's plate point lies behind
+    # the cavity block and the pick finds the block's edge)
+    setup("自由回転")
 
     # C8. a section: the clipped side is never the centre
     page.locator(".lil-gui .lil-title", has_text="断面").click()
@@ -216,7 +219,8 @@ with nav_session(boxes=("runner",)) as n:
     settle()
     cur1 = tuple(round(c) for c in project(SURFACE))
     cur2 = tuple(round(c) for c in project((10, 5, 15)))  # plate top, near the front left corner
-    assert pick(cur2)["kind"] == "face"
+    hit2 = pick(cur2)
+    assert hit2 and hit2["kind"] == "face", ("C11 cur2 must be on a face", cur2, hit2, view())
     P1 = pick(cur1)["point"]
     # the camera state at each press, after the viewer has handled it (bubble
     # phase on window): the presses of the second double-click must still see
