@@ -5,6 +5,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
+import { draftColors, draftColorsFlat, windingSign } from './draft'
 import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
 
@@ -89,6 +90,8 @@ export class Viewer {
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
+  /** per-triangle copies of mesh-format parts while the draft colouring is on */
+  private flatCopies = new Map<number, THREE.Mesh>()
   private raycaster = new THREE.Raycaster()
   /** running double-click pivot slide (camera and target both move) */
   private viewAnim: {
@@ -218,53 +221,171 @@ export class Viewer {
     return box.isEmpty() ? new THREE.Box3().setFromObject(this.modelGroup) : box
   }
 
+  /** whether any part has triangles (a curves-only model or an empty scene has none) */
+  hasFaces(): boolean {
+    for (const mesh of this.partMeshes.values()) if (mesh.geometry.index?.count) return true
+    return false
+  }
+
+  /**
+   * Colour a part mesh per vertex. The colour buffer is reused when it fits, so
+   * dragging a slider refills it instead of allocating; the material switches
+   * to vertex colours (a shader rebuild) only when it was not using them yet.
+   * clippingPlanes stay on the material through that rebuild.
+   */
+  private applyVertexColors(mesh: THREE.Mesh, fill: (out: Float32Array) => void): void {
+    const geo = mesh.geometry
+    const count = geo.getAttribute('position').count
+    let attr = geo.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (!attr || attr.count !== count || attr.itemSize !== 3) {
+      attr = new THREE.BufferAttribute(new Float32Array(count * 3), 3)
+      geo.setAttribute('color', attr)
+    }
+    fill(attr.array as Float32Array)
+    attr.needsUpdate = true
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    // once, before the colour turns white: XCAF or default colour to restore
+    if (!mesh.userData.baseColor) mesh.userData.baseColor = mat.color.clone()
+    if (!mat.vertexColors) {
+      mat.vertexColors = true
+      mat.needsUpdate = true
+    }
+    mat.color.set(0xffffff) // vertex colour x material colour: white passes it through
+  }
+
   /** Thickness heatmap: red below threshold, grading to base blue when thick. */
   setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
       if (!mesh) continue
+      this.removeFlatCopy(partId) // the heatmap colours the part mesh itself
       // contract: one thickness value per display vertex
       if (t.length !== mesh.geometry.getAttribute('position').count) {
         console.warn(`thickness length mismatch for part ${partId} — skipped`)
         continue
       }
-      const n = t.length
-      const colors = new Float32Array(n * 3)
-      for (let i = 0; i < n; i++) {
-        const v = t[i]
-        let r = 0.55
-        let g = 0.62
-        let b = 0.75 // no-data: neutral gray-blue
-        if (v > 0) {
-          const u = Math.min(v / (2 * threshold), 1)
-          if (u < 0.5) {
-            // thin: red -> yellow
-            const k = u / 0.5
-            r = 1
-            g = 0.15 + 0.75 * k
-            b = 0.08
-          } else {
-            // ok: yellow -> steel blue
-            const k = (u - 0.5) / 0.5
-            r = 1 - 0.65 * k
-            g = 0.9 - 0.35 * k
-            b = 0.08 + 0.72 * k
+      this.applyVertexColors(mesh, (colors) => {
+        for (let i = 0; i < t.length; i++) {
+          const v = t[i]
+          let r = 0.55
+          let g = 0.62
+          let b = 0.75 // no-data: neutral gray-blue
+          if (v > 0) {
+            const u = Math.min(v / (2 * threshold), 1)
+            if (u < 0.5) {
+              // thin: red -> yellow
+              const k = u / 0.5
+              r = 1
+              g = 0.15 + 0.75 * k
+              b = 0.08
+            } else {
+              // ok: yellow -> steel blue
+              const k = (u - 0.5) / 0.5
+              r = 1 - 0.65 * k
+              g = 0.9 - 0.35 * k
+              b = 0.08 + 0.72 * k
+            }
           }
+          colors[i * 3] = r
+          colors[i * 3 + 1] = g
+          colors[i * 3 + 2] = b
         }
-        colors[i * 3] = r
-        colors[i * 3 + 1] = g
-        colors[i * 3 + 2] = b
-      }
-      mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-      const mat = mesh.material as THREE.MeshStandardMaterial
-      if (!mesh.userData.baseColor) mesh.userData.baseColor = mat.color.clone()
-      mat.vertexColors = true
-      mat.color.set(0xffffff)
-      mat.needsUpdate = true
+      })
     }
   }
 
-  clearThicknessColors(): void {
+  /**
+   * Draft-angle colouring (draft.ts) on every part with faces. Hidden parts are
+   * coloured too, so they are right when shown again; colours live on the
+   * geometry, which the section's stencil meshes share but do not draw.
+   * Mesh-format parts are coloured on their flat copy (see flatCopy).
+   */
+  setDraftColors(dir: readonly [number, number, number], requiredDeg: number): void {
+    for (const [partId, mesh] of this.partMeshes) {
+      if (!mesh.geometry.index?.count) continue // loose curves: nothing to colour
+      if (mesh.userData.meshFormat) {
+        const copy = this.flatCopy(partId, mesh)
+        const positions = copy.geometry.getAttribute('position').array
+        const sign = copy.userData.windingSign as 1 | -1
+        this.applyVertexColors(copy, (out) => draftColorsFlat(positions, sign, dir, requiredDeg, out))
+      } else {
+        const normals = mesh.geometry.getAttribute('normal').array
+        this.applyVertexColors(mesh, (out) => draftColors(normals, dir, requiredDeg, out))
+      }
+    }
+  }
+
+  /**
+   * A non-indexed copy of a mesh-format part (STL, 3MF, ...), one vertex triple
+   * per triangle, drawn with flat shading and classified triangle by triangle
+   * (draftColorsFlat), with the part's winding sign (windingSign).
+   *
+   * The display normals of those parts are averaged across edges shallower
+   * than 30° (backend smooth_shade), so a large planar wall shares its corner
+   * normals with the fillet next to it. Classified per vertex, the colour of
+   * that corner then blends across the whole wall triangle: the top of an
+   * under-drafted wall would read as enough. The triangles are the true shape
+   * of a mesh file, so they are classified one by one and drawn flat. The copy
+   * keeps no normals (flat shading takes the face from the screen-space
+   * derivatives, facing the viewer either way), which saves a third of its
+   * memory on a large STL.
+   *
+   * The part mesh stays in place for picking (its BVH and faceIndex) and the
+   * section's stencil; it is only hidden while the copy is shown. The copy sits
+   * in the part's group, so tree visibility and clipping (setClippingPlanes
+   * walks the model group) apply to it too, and clearModel disposes it with
+   * the group.
+   */
+  private flatCopy(partId: number, mesh: THREE.Mesh): THREE.Mesh {
+    const have = this.flatCopies.get(partId)
+    if (have) return have
+    const pos = mesh.geometry.getAttribute('position').array
+    const idx = mesh.geometry.index!.array
+    const nTri = Math.floor(idx.length / 3)
+    const P = new Float32Array(nTri * 9)
+    for (let t = 0; t < nTri; t++) {
+      for (let v = 0; v < 3; v++) {
+        const a = idx[t * 3 + v] * 3
+        P[t * 9 + v * 3] = pos[a]
+        P[t * 9 + v * 3 + 1] = pos[a + 1]
+        P[t * 9 + v * 3 + 2] = pos[a + 2]
+      }
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3))
+    const src = mesh.material as THREE.MeshStandardMaterial
+    const mat = src.clone()
+    // three switches to flat shading by itself for a geometry without normals
+    // (WebGLPrograms); said here so the copy does not depend on that
+    mat.flatShading = true
+    mat.needsUpdate = true
+    // the same plane objects as the part (clone() copies them), so a section
+    // moved before the next setClippingPlanes still clips both alike
+    mat.clippingPlanes = src.clippingPlanes
+    const copy = new THREE.Mesh(geo, mat)
+    copy.userData.windingSign = windingSign(P)
+    copy.renderOrder = mesh.renderOrder
+    mesh.parent!.add(copy)
+    mesh.visible = false
+    this.flatCopies.set(partId, copy)
+    return copy
+  }
+
+  /** Drop the flat copy of a part (if any) and show the part mesh again. */
+  private removeFlatCopy(partId: number): void {
+    const copy = this.flatCopies.get(partId)
+    if (!copy) return
+    copy.parent?.remove(copy)
+    copy.geometry.dispose()
+    ;(copy.material as THREE.Material).dispose()
+    this.flatCopies.delete(partId)
+    const mesh = this.partMeshes.get(partId)
+    if (mesh) mesh.visible = true
+  }
+
+  /** Back to the part colours (thickness heatmap or draft colouring off). */
+  clearVertexColors(): void {
+    for (const partId of [...this.flatCopies.keys()]) this.removeFlatCopy(partId)
     for (const mesh of this.partMeshes.values()) {
       const mat = mesh.material as THREE.MeshStandardMaterial
       if (mat.vertexColors) {
@@ -337,6 +458,8 @@ export class Viewer {
       polygonOffsetUnits: 1,
     })
     const mesh = new THREE.Mesh(geo, mat)
+    // mesh formats (STL, 3MF, ...) carry no B-rep faces: their triangles are the shape
+    mesh.userData.meshFormat = part.faceRanges.length === 0
     group.add(mesh)
     this.partMeshes.set(part.id, mesh)
 
@@ -379,6 +502,7 @@ export class Viewer {
     }
     this.partGroups.clear()
     this.partMeshes.clear()
+    this.flatCopies.clear() // disposed with their groups above
     this.lineMaterials = []
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     this.viewAnim = null

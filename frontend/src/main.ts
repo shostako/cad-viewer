@@ -13,7 +13,9 @@ import {
   __stallNextSidecar,
   __stallNextProperties,
   type ModelMeta,
+  type ModelProperties,
 } from './api'
+import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
@@ -48,6 +50,7 @@ app.innerHTML = `
   </div>
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
+    <div id="draft-legend" class="hidden"></div>
     <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
     <div id="hud-keys"></div>
   </div>
@@ -57,10 +60,13 @@ app.innerHTML = `
 const viewport = document.querySelector<HTMLDivElement>('#viewport')!
 const dropzone = document.querySelector<HTMLDivElement>('#dropzone')!
 const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
+const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
 
+const hud = document.querySelector<HTMLDivElement>('#hud')!
+const cornerBr = document.querySelector<HTMLDivElement>('#corner-br')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
@@ -294,8 +300,14 @@ const KEY_PAN = 0.05 // fraction of the view height
 const KEY_ZOOM = 0.9
 function isTextEntry(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
-  if (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)
-    return true
+  // A lil-gui dropdown keeps focus after a pick, and also when its popup is
+  // closed without a change (Escape, the same option again). Chrome then makes
+  // the arrows step through the options: the view keys would silently change
+  // a setting (型開き方向, モード, ...). The arrows navigate instead, and
+  // preventDefault below keeps the closed select as it is. An open popup gets
+  // its keys before the page does.
+  if (el instanceof HTMLSelectElement) return !el.closest('.lil-gui')
+  if (el.isContentEditable || el instanceof HTMLTextAreaElement) return true
   // sliders use the arrows themselves — leave those alone
   if (el.getAttribute('role') === 'slider') return true
   // checkboxes / buttons keep focus after a click — arrows must still navigate
@@ -363,13 +375,68 @@ sectionFolder
   .name('キャップ（切り口を塞ぐ）')
   .onChange(() => sectionTool.update())
 
+// ---- per-vertex colouring: thickness heatmap and draft angle
+// Both paint the same vertex colours, so only one is on at a time. The status
+// line (#hud-info) shows the model summary; the heatmap writes its own line,
+// which goes back to the summary when the heatmap goes away.
+
+/** the status line of the loaded model (name, parts, tris, size) */
+let modelSummary = ''
+/** the last 肉厚 line updateThickness wrote; put back to modelSummary when the heatmap goes away */
+let thicknessHud = ''
+function setThicknessHud(text: string): void {
+  thicknessHud = text
+  hudInfo.textContent = text
+}
+function dropThicknessHud(): void {
+  // only if nothing else (a measure result, an error) replaced it meanwhile
+  if (thicknessHud && hudInfo.textContent === thicknessHud) hudInfo.textContent = modelSummary
+  thicknessHud = ''
+}
+/**
+ * Which feature's colours are on the meshes. Turning one feature off (or
+ * changing its parameters while it is off) must not wipe the other's colours.
+ */
+type ColorOwner = 'none' | 'thickness' | 'draft'
+let colorOwner: ColorOwner = 'none'
+function releaseColors(owner: ColorOwner): void {
+  if (colorOwner === owner) {
+    viewer.clearVertexColors()
+    colorOwner = 'none'
+  }
+}
+
+// Draft direction and angle survive a reload; the on/off box does not (a model
+// that opens already coloured would look like a broken file).
+const DRAFT_PREFS_KEY = 'cad-viewer:draft'
+const draftState = { enabled: false, dir: '+Z' as PullDir, required: 1 }
+try {
+  const saved = JSON.parse(localStorage.getItem(DRAFT_PREFS_KEY) ?? '{}') ?? {}
+  if ((Object.keys(PULL_DIRS) as string[]).includes(saved.dir)) draftState.dir = saved.dir
+  const r = saved.required
+  if (typeof r === 'number' && Number.isFinite(r) && r >= 0 && r <= DRAFT_MAX_DEG) draftState.required = r
+} catch {
+  /* defaults */
+}
+/** /properties of the current model (the legend's note on open parts); null until it answers */
+let modelProps: ModelProperties | null = null
+function saveDraftPrefs(): void {
+  try {
+    const { dir, required } = draftState
+    localStorage.setItem(DRAFT_PREFS_KEY, JSON.stringify({ dir, required }))
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as 'ray' | 'ball' }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
-    viewer.clearThicknessColors()
+    releaseColors('thickness')
+    dropThicknessHud()
     return
   }
   // Capture the request context: a slow fetch can resolve after the user has
@@ -381,8 +448,7 @@ async function updateThickness(): Promise<void> {
   try {
     let data = thicknessCache.get(requestedMethod)
     if (!data) {
-      hudInfo.textContent =
-        requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
+      setThicknessHud(requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...')
       data = await fetchThickness(requestedId, requestedMethod)
       if (
         requestedGen !== loadGen ||
@@ -394,11 +460,15 @@ async function updateThickness(): Promise<void> {
       thicknessCache.set(requestedMethod, data)
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
-    hudInfo.textContent = `肉厚ヒートマップ表示中（${
-      requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'
-    }、赤=閾値未満）`
+    colorOwner = 'thickness'
+    setThicknessHud(
+      `肉厚ヒートマップ表示中（${requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'}、赤=閾値未満）`,
+    )
   } catch (e) {
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
+    // the user moved on (抜き勾配 took over, toggled off, other 方式): a late error is noise
+    if (!thicknessState.enabled || requestedMethod !== thicknessState.method) return
+    thicknessHud = ''
     thicknessState.enabled = false
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
   }
@@ -408,8 +478,15 @@ thicknessFolder.close()
 thicknessFolder
   .add(thicknessState, 'enabled')
   .name('ヒートマップ')
-  .listen() // reset programmatically on errors / model switch
-  .onChange(() => void updateThickness())
+  .listen() // reset programmatically on errors / model switch / 抜き勾配 taking over
+  .onChange((on: boolean) => {
+    // one vertex-colour feature at a time: the heatmap takes over from the draft
+    if (on && draftState.enabled) {
+      draftState.enabled = false
+      updateDraft()
+    }
+    void updateThickness()
+  })
 thicknessFolder
   .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
   .name('方式')
@@ -418,6 +495,61 @@ thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.1)
   .name('閾値 (mm)')
   .onChange(() => void updateThickness())
+
+// ---- draft angle (抜き勾配)
+function updateDraft(): void {
+  // nothing to colour (empty, drawing, load in progress, curves only): the box
+  // snaps back. lil-gui's setValue redraws the box after onChange returns.
+  if (draftState.enabled && (is2D || !viewer.hasFaces())) draftState.enabled = false
+  if (!draftState.enabled) {
+    releaseColors('draft')
+    draftLegend.classList.add('hidden')
+    return
+  }
+  viewer.setDraftColors(PULL_DIRS[draftState.dir], draftState.required)
+  colorOwner = 'draft'
+  renderLegend()
+  draftLegend.classList.remove('hidden')
+}
+function renderLegend(): void {
+  // Parts with faces but no volume (open, mixed winding, ...): only closed
+  // bodies are turned outward on load, so their front side is the file's.
+  // Counted once /properties has answered; until then (or if it fails) no note.
+  const unoriented = modelProps?.parts.filter((p) => p.volume === null && p.reason !== 'no_faces').length ?? 0
+  renderDraftLegend(draftLegend, draftState.dir, draftState.required, unoriented)
+}
+const draftFolder = gui.addFolder('抜き勾配')
+draftFolder.close()
+draftFolder
+  .add(draftState, 'enabled')
+  .name('色分け')
+  .listen() // reset programmatically on model switch / heatmap taking over
+  .onChange((on: boolean) => {
+    if (on && thicknessState.enabled) {
+      // The draft takes over. An in-flight thickness fetch sees enabled=false
+      // and is dropped. Clearing first keeps the meshes plain if the box snaps
+      // back below (nothing to colour); otherwise updateDraft repaints them.
+      thicknessState.enabled = false
+      releaseColors('thickness')
+      dropThicknessHud()
+    }
+    updateDraft()
+  })
+draftFolder
+  .add(draftState, 'dir', PULL_DIR_OPTIONS)
+  .name('型開き方向')
+  .onChange(() => {
+    // the arrows on the still-focused select move the view (isTextEntry)
+    saveDraftPrefs()
+    updateDraft()
+  })
+draftFolder
+  .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
+  .name('必要な勾配 (°)')
+  .onChange(() => {
+    saveDraftPrefs()
+    updateDraft()
+  })
 
 // ---- volume / area / weight
 // Resin and specific gravity survive a reload, like the view preferences.
@@ -443,24 +575,94 @@ function savePropsPrefs(): void {
   }
 }
 
-// keep the bottom-right stack below the GUI column (fixed, z 1001, grows as folders open)
-function fitCornerStack(): void {
-  const guiBottom = gui.domElement.getBoundingClientRect().bottom
-  const measure = measurePanel.classList.contains('hidden') ? 0 : measurePanel.getBoundingClientRect().height + 8
-  propsPanel.fitHeight(window.innerHeight - 12 - (guiBottom + 8) - measure)
+// The right-hand column: the GUI at the top (fixed, z 1001, grows as folders
+// open) and the bottom-right stack under it (measure list, volume / weight).
+// The stack keeps a usable minimum; when the column is too short for both, the
+// GUI gives way and scrolls inside (lil-gui scrolls its children once the root
+// has a max-height). Nothing in the stack ever sits under the GUI.
+const COLUMN_MARGIN = 12 // #corner-br's distance from the bottom
+const COLUMN_GAP = 8
+const MEASURE_MIN_PX = 120 // the measure list's title and about three rows
+const GUI_MIN_PX = 240 // below this the GUI stops giving way
+const HUD_MIN_PX = 200 // below this the HUD stops wrapping and may meet the stack
+function layoutCorner(): void {
+  const h = window.innerHeight
+  const measureShown = !measurePanel.classList.contains('hidden')
+  // natural height: content and padding (scrollHeight) plus the border
+  const measureNatural = measurePanel.scrollHeight + measurePanel.offsetHeight - measurePanel.clientHeight
+  const measureMin = measureShown ? Math.min(measureNatural, MEASURE_MIN_PX) : 0
+  const propsMin = propsPanel.minHeight()
+  const stackMin = measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
+  const guiMax = Math.max(h - COLUMN_MARGIN - COLUMN_GAP - stackMin, GUI_MIN_PX)
+  // never taller than the window (GUI_MIN_PX can exceed a tiny one)
+  gui.domElement.style.maxHeight = stackMin ? `${Math.min(guiMax, h)}px` : ''
+  const room = h - COLUMN_MARGIN - (gui.domElement.getBoundingClientRect().bottom + COLUMN_GAP)
+  const propsShare = propsMin ? propsMin + COLUMN_GAP : 0
+  measurePanel.style.maxHeight = `${Math.max(Math.min(0.4 * h, room - propsShare), measureMin)}px`
+  const measureUsed = measureShown ? measurePanel.getBoundingClientRect().height + COLUMN_GAP : 0
+  propsPanel.fitHeight(room - measureUsed)
+  // the HUD (bottom left) wraps its lines rather than run under the right-hand
+  // column on a narrow window (half a screen): the column starts at the GUI or
+  // at the stack, whichever reaches further left (the stack is as wide as its
+  // widest panel)
+  const hudLeft = hud.getBoundingClientRect().left
+  const columnLeft = Math.min(gui.domElement.getBoundingClientRect().left, cornerBr.getBoundingClientRect().left)
+  hud.style.maxWidth = `${Math.max(columnLeft - COLUMN_GAP - hudLeft, HUD_MIN_PX)}px`
 }
-const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id), fitCornerStack)
+// From a ResizeObserver, lay out on the next frame: changing an observed
+// element's size inside its own callback reports a "ResizeObserver loop" error.
+// The layout settles in a frame or two (the second pass sets the same sizes).
+let layoutQueued = false
+function queueLayoutCorner(): void {
+  if (layoutQueued) return
+  layoutQueued = true
+  requestAnimationFrame(() => {
+    layoutQueued = false
+    layoutCorner()
+  })
+}
+const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id), layoutCorner)
 // Watch the GUI and the measure list only, never the props panel itself:
-// fitHeight resizes the panel's table, and watching that would loop
-// ("ResizeObserver loop" errors).
-new ResizeObserver(fitCornerStack).observe(gui.domElement)
-new ResizeObserver(fitCornerStack).observe(measurePanel)
-window.addEventListener('resize', fitCornerStack)
+// fitHeight resizes the panel's table, and the panel reports its own changes.
+// The list (ul) too: once the panel is capped, new entries only grow the list.
+new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
+new ResizeObserver(queueLayoutCorner).observe(measurePanel)
+new ResizeObserver(queueLayoutCorner).observe(measureList)
+window.addEventListener('resize', layoutCorner)
+// When the GUI has had to give way (it scrolls), bring a folder the user just
+// opened into view once lil-gui's opening animation (300 ms) ends. A timer
+// backs up the transitionend: with no transition (nothing to animate, reduced
+// motion) the event never comes, and the listener must not stay behind.
+const REVEAL_FALLBACK_MS = 450
+gui.onOpenClose((changed) => {
+  if (changed === gui || changed._closed) return
+  const kids = changed.domElement.querySelector<HTMLElement>(':scope > .lil-children')
+  const scroller = gui.domElement.querySelector<HTMLElement>(':scope > .lil-children')
+  if (!kids || !scroller) return
+  let done = false
+  const reveal = (): void => {
+    if (done) return
+    done = true
+    kids.removeEventListener('transitionend', onEnd)
+    clearTimeout(timer)
+    if (changed._closed) return
+    const box = changed.domElement.getBoundingClientRect()
+    const view = scroller.getBoundingClientRect()
+    // scroll by the part hidden below, but never past the folder's title
+    const by = Math.min(box.bottom - view.bottom, box.top - view.top)
+    if (by > 0) scroller.scrollTop += by
+  }
+  const onEnd = (e: TransitionEvent): void => {
+    if (e.target === kids) reveal()
+  }
+  kids.addEventListener('transitionend', onEnd)
+  const timer = setTimeout(reveal, REVEAL_FALLBACK_MS)
+})
 
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, sectionFolder, thicknessFolder, propsFolder]
+const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -505,6 +707,8 @@ async function updateProperties(modelId: string): Promise<void> {
     const p = await fetchProperties(modelId)
     if (req !== propsRequest || modelId !== currentModelId) return // superseded
     propsPanel.setData(p)
+    modelProps = p
+    if (draftState.enabled) renderLegend() // the note on open parts may be due now
   } catch (e) {
     if (req !== propsRequest || modelId !== currentModelId) return
     propsPanel.showError(e instanceof Error ? e.message : String(e))
@@ -718,7 +922,13 @@ async function loadFile(file: File): Promise<void> {
       measureTool.clearAll()
       thicknessCache.clear()
       thicknessState.enabled = false
-      viewer.clearThicknessColors()
+      draftState.enabled = false // direction and angle stay
+      viewer.clearVertexColors()
+      colorOwner = 'none'
+      draftLegend.classList.add('hidden')
+      thicknessHud = ''
+      modelSummary = ''
+      modelProps = null
       propsPanel.hide()
       // Clear the stale 3D scene for BOTH branches: while the new model's
       // fetch is in flight (or if it fails), the old geometry must not stay
@@ -734,6 +944,10 @@ async function loadFile(file: File): Promise<void> {
       treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {
+        const d = meta.bbox2d
+          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
+          : '?'
+        modelSummary = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
         sectionTool.enabled = false
@@ -742,14 +956,17 @@ async function loadFile(file: File): Promise<void> {
         show2D(true)
         setContentShown(true, file.name)
         showEmpty(false)
-        const d = meta.bbox2d
-          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
-          : '?'
-        hudInfo.textContent = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+        hudInfo.textContent = modelSummary
         return
       }
 
       show2D(false)
+      // known from the upload already: the heatmap / draft can restore it at any
+      // point of the load
+      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
+      modelSummary =
+        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
+        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
       const pack = await fetchMesh(meta.id)
       if (gen !== loadGen) return
       const model = toModelData(pack)
@@ -777,10 +994,7 @@ async function loadFile(file: File): Promise<void> {
         treePanel.classList.add('hidden')
       }
 
-      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
-      hudInfo.textContent =
-        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
-        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
+      hudInfo.textContent = modelSummary
     } finally {
       // release only our own claim: a newer load may have taken ownership
       if (restoringOwner === gen) restoringOwner = 0

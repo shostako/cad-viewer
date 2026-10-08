@@ -15,7 +15,7 @@ BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
 STEP = str(TESTDATA / "mini_mold.step")
 STL = str(TESTDATA / "ribbed_plate.stl")
 DXF = str(TESTDATA / "plate_drawing.dxf")
-FOLDERS_3D = ["表示", "断面", "肉厚", "体積・重量"]
+FOLDERS_3D = ["表示", "断面", "肉厚", "抜き勾配", "体積・重量"]
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
