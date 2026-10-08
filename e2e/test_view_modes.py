@@ -84,23 +84,37 @@ with sync_playwright() as p:
     check_3d()
 
     # 2. a drawing: 3D-only controls go away, the key help changes
-    ctl_mode = mode_select()
-    ctl_mode.select_option("注記")
+    def selected_mode():
+        return mode_select().evaluate("s => s.options[s.selectedIndex].text")
+
+    # section and thickness switched on in 3D must not survive a drawing
+    page.locator(".lil-gui .lil-title", has_text=re.compile("^断面$")).click()
+    page.locator(".lil-gui .lil-controller").filter(
+        has=page.locator(".lil-name", has_text=re.compile("^有効"))
+    ).first.locator("input").click()
+    page.locator(".lil-gui .lil-title", has_text=re.compile("^肉厚$")).click()
+    page.locator(".lil-gui .lil-controller").filter(
+        has=page.locator(".lil-name", has_text=re.compile("^ヒートマップ"))
+    ).first.locator("input").click()
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('ヒートマップ表示中')", timeout=60000)
+
+    mode_select().select_option("注記")
     load(DXF, wait_text="2D図面")
     check_2d()
-    assert ctl_mode.input_value() != "注記" and page.evaluate(
-        "(() => { const s = [...document.querySelectorAll('.lil-gui select')][0]; return s.options[s.selectedIndex].text })()"
-    ) == "なし", "注記 must fall back to なし on a drawing"
+    assert selected_mode() == "なし", ("注記 must fall back to なし on a drawing", selected_mode())
     # 計測 still works on drawings
-    ctl_mode.select_option("計測")
-    assert page.evaluate(
-        "(() => { const s = [...document.querySelectorAll('.lil-gui select')][0]; return s.options[s.selectedIndex].text })()"
-    ) == "計測"
-    ctl_mode.select_option("なし")
+    mode_select().select_option("計測")
+    assert selected_mode() == "計測"
+    mode_select().select_option("なし")
 
-    # 3. back to 3D (mesh and B-rep): everything is back
+    # 3. back to 3D (mesh and B-rep): everything is back, section and heatmap off
     load(STL)
     check_3d()
+    for name in ("有効", "ヒートマップ"):
+        box = page.locator(".lil-gui .lil-controller").filter(
+            has=page.locator(".lil-name", has_text=re.compile("^" + name))
+        ).first.locator("input")
+        assert not box.is_checked(), (name, "still on after a drawing")
     load(DXF, wait_text="2D図面")
     check_2d()
     load(STEP)
@@ -127,9 +141,11 @@ with sync_playwright() as p:
     load(STEP)
     assert not visible("#empty-hint")
     page.route("**/mesh.bin", lambda route: route.abort())
-    page.set_input_files("#file-input", STL)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
-    page.unroute("**/mesh.bin")
+    try:
+        page.set_input_files("#file-input", STL)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
+    finally:
+        page.unroute("**/mesh.bin")
     assert visible("#empty-hint"), "the old model is gone and nothing replaced it: the card must come back"
     load(STEP)
     assert not visible("#empty-hint")
@@ -140,9 +156,11 @@ with sync_playwright() as p:
     load(DXF, wait_text="2D図面")
     assert page.locator("#viewport2d svg").count() == 1
     page.route("**/drawing.svg", lambda route: route.abort())
-    page.set_input_files("#file-input", DXF)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
-    page.unroute("**/drawing.svg")
+    try:
+        page.set_input_files("#file-input", DXF)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
+    finally:
+        page.unroute("**/drawing.svg")
     assert visible("#empty-hint"), "nothing is shown any more: the card must come back"
     assert page.locator("#viewport2d svg").count() == 0, "the old drawing is still in the 2D viewer"
     assert not visible("#viewport2d")
