@@ -100,6 +100,7 @@ export class Viewer {
   } | null = null
   private pivotMarker: CSS2DObject | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
+  private container: HTMLElement
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -174,21 +175,10 @@ export class Viewer {
     this.scene.add(this.modelGroup)
     this.scene.add(this.overlay)
 
-    const resize = () => {
-      const w = container.clientWidth
-      const h = container.clientHeight
-      // hidden (2D drawing shown): keep the last size, so the aspect never
-      // becomes NaN for the next 3D load
-      if (w === 0 || h === 0) return
-      this.camera.aspect = w / h
-      this.camera.updateProjectionMatrix()
-      this.renderer.setSize(w, h)
-      this.labelRenderer.setSize(w, h)
-      for (const m of this.lineMaterials) m.resolution.set(w, h)
-      this.trackball.handleResize()
-    }
-    new ResizeObserver(resize).observe(container)
-    resize()
+    this.container = container
+    new ResizeObserver(() => this.fitToContainer()).observe(container)
+    this.fitToContainer()
+    this.watchPixelRatio()
 
     let last = performance.now()
     this.renderer.setAnimationLoop((now: number) => {
@@ -606,6 +596,45 @@ export class Viewer {
     this.pivotMarker = null
   }
 
+  /**
+   * Size the renderers to the container, at the current devicePixelRatio.
+   * setSize alone keeps the ratio the renderer was made with, but the ratio
+   * changes with browser zoom and when the window moves to a monitor with
+   * another scale: the canvas would stay blurry and an export too small.
+   */
+  private fitToContainer(): void {
+    const w = this.container.clientWidth
+    const h = this.container.clientHeight
+    // hidden (2D drawing shown): keep the last size, so the aspect never
+    // becomes NaN for the next 3D load
+    if (w === 0 || h === 0) return
+    const dpr = window.devicePixelRatio || 1
+    if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr)
+    this.camera.aspect = w / h
+    this.camera.updateProjectionMatrix()
+    this.renderer.setSize(w, h)
+    this.labelRenderer.setSize(w, h)
+    for (const m of this.lineMaterials) m.resolution.set(w, h)
+    this.trackball.handleResize()
+  }
+
+  /**
+   * A move to a monitor with another scale changes devicePixelRatio without
+   * resizing the container, so the ResizeObserver does not fire. A media
+   * query on the current resolution does; it is re-armed for the new value.
+   */
+  private watchPixelRatio(): void {
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+    mq.addEventListener(
+      'change',
+      () => {
+        this.fitToContainer()
+        this.watchPixelRatio()
+      },
+      { once: true },
+    )
+  }
+
   // ---- PNG export -----------------------------------------------------------
 
   /**
@@ -621,6 +650,10 @@ export class Viewer {
   snapshot(background: ExportBackground): HTMLCanvasElement {
     const src = this.renderer.domElement
     if (this.renderer.getContext().isContextLost()) throw new Error('WebGL の描画が失われている（再読み込みしてほしい）')
+    // the image is at the screen's current scale even if no resize or media
+    // query event has reached us yet (resizing clears the buffer: the render
+    // below draws it again)
+    if (this.renderer.getPixelRatio() !== (window.devicePixelRatio || 1)) this.fitToContainer()
     const out = document.createElement('canvas')
     out.width = src.width
     out.height = src.height

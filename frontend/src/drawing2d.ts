@@ -6,7 +6,7 @@
  * and dxf coords (exact measurement values).
  */
 
-import { flipNearWhite, type ExportBackground } from './snapshot'
+import { toWhitePage, type ExportBackground } from './snapshot'
 
 export interface SnapPoint {
   dxf: [number, number]
@@ -146,7 +146,7 @@ export class Drawing2D {
   /**
    * The drawing as on screen (current viewBox = current pan and zoom, with the
    * measurement overlay) rasterised at device-pixel resolution. 'white' gives
-   * a white page with near-white lines turned black.
+   * a white page with the drawing colours made to read on it (whitenDrawing).
    */
   async snapshot(background: ExportBackground): Promise<HTMLCanvasElement> {
     const svg = this.svg
@@ -273,28 +273,34 @@ export class Drawing2D {
     }
     for (const t of Array.from(this.overlayG.querySelectorAll('text.dimtext2d'))) {
       t.setAttribute('font-size', String(13 * u))
+      // the dark outline in screen px too: in raw svg units (a viewBox about
+      // 1e6 wide) it is ~0.003 px, and the pale value is lost on a white page
+      t.setAttribute('stroke-width', String(3 * u))
     }
   }
 }
 
 /**
  * White page for a drawing: the ezdxf background rect (a direct child of the
- * <svg>) turns white, and near-white drawing colours (ACI 7, drawn white on
- * the dark page) turn black, in <style> rules and in stroke / fill / style
- * attributes. The measurement overlay keeps its colours. Non-hex colours
- * (`white`, `rgb()`) are not changed: ezdxf writes hex.
+ * <svg>) turns white, and the drawing colours go through toWhitePage (its
+ * page colour -> white, so WIPEOUT masks vanish as on screen; near-white ->
+ * black; light colours darkened), in <style> rules and in stroke / fill /
+ * style attributes. The measurement overlay keeps its colours. Non-hex
+ * colours (`white`, `rgb()`) are not changed: ezdxf writes hex.
  */
 function whitenDrawing(svg: SVGSVGElement): void {
   const overlay = svg.querySelector('g.overlay2d')
+  const bg = svg.querySelector(':scope > rect')
+  const page = bg?.getAttribute('fill') ?? null
   for (const st of Array.from(svg.querySelectorAll('style'))) {
-    st.textContent = flipNearWhite(st.textContent ?? '')
+    st.textContent = toWhitePage(st.textContent ?? '', page)
   }
   for (const el of Array.from(svg.querySelectorAll('[stroke],[fill],[style]'))) {
     if (overlay?.contains(el)) continue
     for (const attr of ['stroke', 'fill', 'style']) {
       const v = el.getAttribute(attr)
-      if (v) el.setAttribute(attr, flipNearWhite(v))
+      if (v) el.setAttribute(attr, toWhitePage(v, page))
     }
   }
-  svg.querySelector(':scope > rect')?.setAttribute('fill', '#ffffff')
+  bg?.setAttribute('fill', '#ffffff')
 }

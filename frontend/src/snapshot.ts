@@ -51,17 +51,50 @@ export function canvasToPng(c: HTMLCanvasElement): Promise<Blob> {
   )
 }
 
+/** '#rgb' / '#rrggbb' (any case) -> 'rrggbb' lower case; anything else -> null */
+function hex6(colour: string): string | null {
+  const m = colour.trim().match(/^#([0-9a-f]{6}|[0-9a-f]{3})$/i)
+  if (!m) return null
+  const h = m[1].toLowerCase()
+  return h.length === 3 ? [...h].map((c) => c + c).join('') : h
+}
+
+const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4)
+const toSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055)
+
 /**
- * Turn near-white hex colours (every channel >= 0xE0) into black: drawings
- * use white for "the default colour" (ACI 7), which vanishes on a white page.
- * The minimum channel, not the luminance, decides, so the yellow #ffd060 stays.
- * 8-digit hex (#rrggbbaa) is left alone: \b fails inside it.
+ * Brightest a drawing colour may be on a white page: relative luminance 0.18
+ * is a 4.5:1 contrast against white ((1 + 0.05) / (0.18 + 0.05)), the WCAG
+ * level for normal-size text, as drawings carry small text.
  */
-export function flipNearWhite(css: string): string {
-  return css.replace(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi, (match, hex: string) => {
-    const full = hex.length === 3 ? [...hex].map((c) => c + c).join('') : hex
+export const MAX_LUMINANCE_ON_WHITE = 0.18
+
+/**
+ * Drawing colours for a white page, in CSS text (a <style> rule or a
+ * stroke / fill / style attribute):
+ * - `page`, the drawing's own page colour (ezdxf #212830), becomes white:
+ *   ezdxf fills WIPEOUT masks with it, unseen on screen, dark boxes on white;
+ * - near-white (every channel >= 0xE0) becomes black: drawings use white for
+ *   "the default colour" (ACI 7), drawn black on a white page as in CAD;
+ * - other light colours (yellow, cyan, green ...: under 4.5:1 against white,
+ *   about 1.07:1 for yellow) are darkened to that contrast with their hue
+ *   kept, by scaling the linear RGB: #ffff00 -> #797900, #00ffff -> #008383.
+ * Darker colours stay. 8-digit hex (#rrggbbaa) is left alone: \b fails inside it.
+ */
+export function toWhitePage(css: string, page: string | null = null): string {
+  const pageHex = page ? hex6(page) : null
+  return css.replace(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi, (match) => {
+    const full = hex6(match)
+    if (!full) return match
+    if (full === pageHex) return '#ffffff'
     const ch = [0, 2, 4].map((i) => parseInt(full.slice(i, i + 2), 16))
-    return Math.min(...ch) >= 0xe0 ? '#000000' : match
+    if (Math.min(...ch) >= 0xe0) return '#000000'
+    const lin = ch.map((c) => toLinear(c / 255))
+    const lum = 0.2126 * lin[0] + 0.7152 * lin[1] + 0.0722 * lin[2]
+    if (lum <= MAX_LUMINANCE_ON_WHITE) return match
+    const k = MAX_LUMINANCE_ON_WHITE / lum
+    // floor: rounding up could leave the colour just over the limit
+    return '#' + lin.map((c) => Math.floor(toSrgb(c * k) * 255).toString(16).padStart(2, '0')).join('')
   })
 }
 
@@ -138,7 +171,14 @@ export function paintLabels(
       ctx.stroke()
     }
 
-    const text = el.textContent ?? ''
+    let text = el.textContent ?? ''
+    // canvas draws every space it is given; the page collapses runs of white
+    // space (and drops them at the ends) unless white-space preserves them.
+    // Raw text would be wider than the box and lose its end to the ellipsis.
+    const collapse =
+      style.getPropertyValue('white-space-collapse') ||
+      (style.whiteSpace === 'normal' || style.whiteSpace === 'nowrap' ? 'collapse' : 'preserve')
+    if (collapse === 'collapse') text = text.replace(/[ \t\n\r\f]+/g, ' ').trim()
     if (text) {
       const bl = px(style.borderLeftWidth)
       const br = px(style.borderRightWidth)
