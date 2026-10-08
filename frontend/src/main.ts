@@ -14,6 +14,7 @@ import {
   __stallNextProperties,
   type ModelMeta,
 } from './api'
+import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData } from './model'
@@ -48,6 +49,7 @@ app.innerHTML = `
   </div>
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
+    <div id="draft-legend" class="hidden"></div>
     <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
     <div id="hud-keys"></div>
   </div>
@@ -57,6 +59,7 @@ app.innerHTML = `
 const viewport = document.querySelector<HTMLDivElement>('#viewport')!
 const dropzone = document.querySelector<HTMLDivElement>('#dropzone')!
 const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
+const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
@@ -363,13 +366,66 @@ sectionFolder
   .name('キャップ（切り口を塞ぐ）')
   .onChange(() => sectionTool.update())
 
+// ---- per-vertex colouring: thickness heatmap and draft angle
+// Both paint the same vertex colours, so only one is on at a time. The status
+// line (#hud-info) shows the model summary; the heatmap writes its own line,
+// which goes back to the summary when the heatmap goes away.
+
+/** the status line of the loaded model (name, parts, tris, size) */
+let modelSummary = ''
+/** the last 肉厚 line updateThickness wrote; put back to modelSummary when the heatmap goes away */
+let thicknessHud = ''
+function setThicknessHud(text: string): void {
+  thicknessHud = text
+  hudInfo.textContent = text
+}
+function dropThicknessHud(): void {
+  // only if nothing else (a measure result, an error) replaced it meanwhile
+  if (thicknessHud && hudInfo.textContent === thicknessHud) hudInfo.textContent = modelSummary
+  thicknessHud = ''
+}
+/**
+ * Which feature's colours are on the meshes. Turning one feature off (or
+ * changing its parameters while it is off) must not wipe the other's colours.
+ */
+type ColorOwner = 'none' | 'thickness' | 'draft'
+let colorOwner: ColorOwner = 'none'
+function releaseColors(owner: ColorOwner): void {
+  if (colorOwner === owner) {
+    viewer.clearVertexColors()
+    colorOwner = 'none'
+  }
+}
+
+// Draft direction and angle survive a reload; the on/off box does not (a model
+// that opens already coloured would look like a broken file).
+const DRAFT_PREFS_KEY = 'cad-viewer:draft'
+const draftState = { enabled: false, dir: '+Z' as PullDir, required: 1 }
+try {
+  const saved = JSON.parse(localStorage.getItem(DRAFT_PREFS_KEY) ?? '{}') ?? {}
+  if ((Object.keys(PULL_DIRS) as string[]).includes(saved.dir)) draftState.dir = saved.dir
+  const r = saved.required
+  if (typeof r === 'number' && Number.isFinite(r) && r >= 0 && r <= DRAFT_MAX_DEG) draftState.required = r
+} catch {
+  /* defaults */
+}
+function saveDraftPrefs(): void {
+  try {
+    const { dir, required } = draftState
+    localStorage.setItem(DRAFT_PREFS_KEY, JSON.stringify({ dir, required }))
+  } catch {
+    /* best-effort */
+  }
+}
+
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as 'ray' | 'ball' }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
-    viewer.clearThicknessColors()
+    releaseColors('thickness')
+    dropThicknessHud()
     return
   }
   // Capture the request context: a slow fetch can resolve after the user has
@@ -381,8 +437,7 @@ async function updateThickness(): Promise<void> {
   try {
     let data = thicknessCache.get(requestedMethod)
     if (!data) {
-      hudInfo.textContent =
-        requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...'
+      setThicknessHud(requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...')
       data = await fetchThickness(requestedId, requestedMethod)
       if (
         requestedGen !== loadGen ||
@@ -394,11 +449,15 @@ async function updateThickness(): Promise<void> {
       thicknessCache.set(requestedMethod, data)
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
-    hudInfo.textContent = `肉厚ヒートマップ表示中（${
-      requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'
-    }、赤=閾値未満）`
+    colorOwner = 'thickness'
+    setThicknessHud(
+      `肉厚ヒートマップ表示中（${requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'}、赤=閾値未満）`,
+    )
   } catch (e) {
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
+    // the user moved on (抜き勾配 took over, toggled off, other 方式): a late error is noise
+    if (!thicknessState.enabled || requestedMethod !== thicknessState.method) return
+    thicknessHud = ''
     thicknessState.enabled = false
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
   }
@@ -408,8 +467,15 @@ thicknessFolder.close()
 thicknessFolder
   .add(thicknessState, 'enabled')
   .name('ヒートマップ')
-  .listen() // reset programmatically on errors / model switch
-  .onChange(() => void updateThickness())
+  .listen() // reset programmatically on errors / model switch / 抜き勾配 taking over
+  .onChange((on: boolean) => {
+    // one vertex-colour feature at a time: the heatmap takes over from the draft
+    if (on && draftState.enabled) {
+      draftState.enabled = false
+      updateDraft()
+    }
+    void updateThickness()
+  })
 thicknessFolder
   .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
   .name('方式')
@@ -418,6 +484,57 @@ thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.1)
   .name('閾値 (mm)')
   .onChange(() => void updateThickness())
+
+// ---- draft angle (抜き勾配)
+function updateDraft(): void {
+  // nothing to colour (empty, drawing, load in progress, curves only): the box
+  // snaps back. lil-gui's setValue redraws the box after onChange returns.
+  if (draftState.enabled && (is2D || !viewer.hasFaces())) draftState.enabled = false
+  if (!draftState.enabled) {
+    releaseColors('draft')
+    draftLegend.classList.add('hidden')
+    return
+  }
+  viewer.setDraftColors(PULL_DIRS[draftState.dir], draftState.required)
+  colorOwner = 'draft'
+  renderDraftLegend(draftLegend, draftState.dir, draftState.required)
+  draftLegend.classList.remove('hidden')
+}
+const draftFolder = gui.addFolder('抜き勾配')
+draftFolder.close()
+draftFolder
+  .add(draftState, 'enabled')
+  .name('色分け')
+  .listen() // reset programmatically on model switch / heatmap taking over
+  .onChange((on: boolean) => {
+    if (on && thicknessState.enabled) {
+      // The draft takes over. An in-flight thickness fetch sees enabled=false
+      // and is dropped. Clearing first keeps the meshes plain if the box snaps
+      // back below (nothing to colour); otherwise updateDraft repaints them.
+      thicknessState.enabled = false
+      releaseColors('thickness')
+      dropThicknessHud()
+    }
+    updateDraft()
+  })
+const dirCtl = draftFolder
+  .add(draftState, 'dir', PULL_DIR_OPTIONS)
+  .name('型開き方向')
+  .onChange(() => {
+    // A select keeps focus after a mouse pick, and Chrome then makes the arrow
+    // keys pick the next option: the view keys would silently change the pull
+    // direction.
+    dirCtl.domElement.querySelector('select')?.blur()
+    saveDraftPrefs()
+    updateDraft()
+  })
+draftFolder
+  .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
+  .name('必要な勾配 (°)')
+  .onChange(() => {
+    saveDraftPrefs()
+    updateDraft()
+  })
 
 // ---- volume / area / weight
 // Resin and specific gravity survive a reload, like the view preferences.
@@ -460,7 +577,7 @@ window.addEventListener('resize', fitCornerStack)
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, sectionFolder, thicknessFolder, propsFolder]
+const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -718,7 +835,12 @@ async function loadFile(file: File): Promise<void> {
       measureTool.clearAll()
       thicknessCache.clear()
       thicknessState.enabled = false
-      viewer.clearThicknessColors()
+      draftState.enabled = false // direction and angle stay
+      viewer.clearVertexColors()
+      colorOwner = 'none'
+      draftLegend.classList.add('hidden')
+      thicknessHud = ''
+      modelSummary = ''
       propsPanel.hide()
       // Clear the stale 3D scene for BOTH branches: while the new model's
       // fetch is in flight (or if it fails), the old geometry must not stay
@@ -734,6 +856,10 @@ async function loadFile(file: File): Promise<void> {
       treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {
+        const d = meta.bbox2d
+          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
+          : '?'
+        modelSummary = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
         sectionTool.enabled = false
@@ -742,14 +868,17 @@ async function loadFile(file: File): Promise<void> {
         show2D(true)
         setContentShown(true, file.name)
         showEmpty(false)
-        const d = meta.bbox2d
-          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
-          : '?'
-        hudInfo.textContent = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+        hudInfo.textContent = modelSummary
         return
       }
 
       show2D(false)
+      // known from the upload already: the heatmap / draft can restore it at any
+      // point of the load
+      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
+      modelSummary =
+        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
+        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
       const pack = await fetchMesh(meta.id)
       if (gen !== loadGen) return
       const model = toModelData(pack)
@@ -777,10 +906,7 @@ async function loadFile(file: File): Promise<void> {
         treePanel.classList.add('hidden')
       }
 
-      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
-      hudInfo.textContent =
-        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
-        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
+      hudInfo.textContent = modelSummary
     } finally {
       // release only our own claim: a newer load may have taken ownership
       if (restoringOwner === gen) restoringOwner = 0

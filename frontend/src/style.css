@@ -61,6 +61,35 @@ body,
   margin-bottom: 2px;
 }
 
+/* draft-angle legend (抜き勾配), shown while the colouring is on */
+#draft-legend {
+  margin: 2px 0 4px;
+  font-size: 12px;
+}
+
+#draft-legend.hidden {
+  display: none;
+}
+
+.draft-title {
+  color: #9aa6b4;
+  margin-bottom: 2px;
+}
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.draft-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  flex: none;
+}
+
 #hud-keys {
   margin-top: 4px;
   font-size: 11px;

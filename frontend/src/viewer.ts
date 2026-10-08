@@ -5,6 +5,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
+import { draftColors } from './draft'
 import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
 
@@ -218,6 +219,38 @@ export class Viewer {
     return box.isEmpty() ? new THREE.Box3().setFromObject(this.modelGroup) : box
   }
 
+  /** whether any part has triangles (a curves-only model or an empty scene has none) */
+  hasFaces(): boolean {
+    for (const mesh of this.partMeshes.values()) if (mesh.geometry.index?.count) return true
+    return false
+  }
+
+  /**
+   * Colour a part mesh per vertex. The colour buffer is reused when it fits, so
+   * dragging a slider refills it instead of allocating; the material switches
+   * to vertex colours (a shader rebuild) only when it was not using them yet.
+   * clippingPlanes stay on the material through that rebuild.
+   */
+  private applyVertexColors(mesh: THREE.Mesh, fill: (out: Float32Array) => void): void {
+    const geo = mesh.geometry
+    const count = geo.getAttribute('position').count
+    let attr = geo.getAttribute('color') as THREE.BufferAttribute | undefined
+    if (!attr || attr.count !== count || attr.itemSize !== 3) {
+      attr = new THREE.BufferAttribute(new Float32Array(count * 3), 3)
+      geo.setAttribute('color', attr)
+    }
+    fill(attr.array as Float32Array)
+    attr.needsUpdate = true
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    // once, before the colour turns white: XCAF or default colour to restore
+    if (!mesh.userData.baseColor) mesh.userData.baseColor = mat.color.clone()
+    if (!mat.vertexColors) {
+      mat.vertexColors = true
+      mat.needsUpdate = true
+    }
+    mat.color.set(0xffffff) // vertex colour x material colour: white passes it through
+  }
+
   /** Thickness heatmap: red below threshold, grading to base blue when thick. */
   setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
     for (const [partId, t] of thickness) {
@@ -228,43 +261,51 @@ export class Viewer {
         console.warn(`thickness length mismatch for part ${partId} — skipped`)
         continue
       }
-      const n = t.length
-      const colors = new Float32Array(n * 3)
-      for (let i = 0; i < n; i++) {
-        const v = t[i]
-        let r = 0.55
-        let g = 0.62
-        let b = 0.75 // no-data: neutral gray-blue
-        if (v > 0) {
-          const u = Math.min(v / (2 * threshold), 1)
-          if (u < 0.5) {
-            // thin: red -> yellow
-            const k = u / 0.5
-            r = 1
-            g = 0.15 + 0.75 * k
-            b = 0.08
-          } else {
-            // ok: yellow -> steel blue
-            const k = (u - 0.5) / 0.5
-            r = 1 - 0.65 * k
-            g = 0.9 - 0.35 * k
-            b = 0.08 + 0.72 * k
+      this.applyVertexColors(mesh, (colors) => {
+        for (let i = 0; i < t.length; i++) {
+          const v = t[i]
+          let r = 0.55
+          let g = 0.62
+          let b = 0.75 // no-data: neutral gray-blue
+          if (v > 0) {
+            const u = Math.min(v / (2 * threshold), 1)
+            if (u < 0.5) {
+              // thin: red -> yellow
+              const k = u / 0.5
+              r = 1
+              g = 0.15 + 0.75 * k
+              b = 0.08
+            } else {
+              // ok: yellow -> steel blue
+              const k = (u - 0.5) / 0.5
+              r = 1 - 0.65 * k
+              g = 0.9 - 0.35 * k
+              b = 0.08 + 0.72 * k
+            }
           }
+          colors[i * 3] = r
+          colors[i * 3 + 1] = g
+          colors[i * 3 + 2] = b
         }
-        colors[i * 3] = r
-        colors[i * 3 + 1] = g
-        colors[i * 3 + 2] = b
-      }
-      mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-      const mat = mesh.material as THREE.MeshStandardMaterial
-      if (!mesh.userData.baseColor) mesh.userData.baseColor = mat.color.clone()
-      mat.vertexColors = true
-      mat.color.set(0xffffff)
-      mat.needsUpdate = true
+      })
     }
   }
 
-  clearThicknessColors(): void {
+  /**
+   * Draft-angle colouring (draft.ts) on every part with faces. Hidden parts are
+   * coloured too, so they are right when shown again; colours live on the
+   * geometry, which the section's stencil meshes share but do not draw.
+   */
+  setDraftColors(dir: readonly [number, number, number], requiredDeg: number): void {
+    for (const mesh of this.partMeshes.values()) {
+      if (!mesh.geometry.index?.count) continue // loose curves: nothing to colour
+      const normals = mesh.geometry.getAttribute('normal').array
+      this.applyVertexColors(mesh, (out) => draftColors(normals, dir, requiredDeg, out))
+    }
+  }
+
+  /** Back to the part colours (thickness heatmap or draft colouring off). */
+  clearVertexColors(): void {
     for (const mesh of this.partMeshes.values()) {
       const mat = mesh.material as THREE.MeshStandardMaterial
       if (mat.vertexColors) {
