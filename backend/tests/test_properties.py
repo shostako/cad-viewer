@@ -429,3 +429,55 @@ def test_total_area_counts_open_parts_too():
     assert t["closedParts"] == 1 and t["openParts"] == 2
     t = properties._model("brep", [open_])["total"]
     assert t["volume"] is None and t["area"] == approx(2000), t
+
+
+# ---- nesting decides cavities, not triangle orientation (review of 40c3fd6)
+
+
+def test_mesh_hollow_turned_inside_out_as_a_whole():
+    """outer shell facing in, cavity facing out: still 6000 - 64 (an
+    orientation-based rule counted 6000 + 64)"""
+    pos, idx = _boxes_mesh(((10, 20, 30), (0, 0, 0), True), ((4, 4, 4), (0, 0, 0), False))
+    r = properties.mesh_part_properties(pos, idx)
+    assert r["closed"] and r["volume"] == approx(5936), r
+
+
+def test_mesh_inverted_box_inside_inverted_box_is_a_cavity():
+    pos, idx = _boxes_mesh(((10, 20, 30), (0, 0, 0), True), ((4, 4, 4), (0, 0, 0), True))
+    r = properties.mesh_part_properties(pos, idx)
+    assert r["volume"] == approx(5936), r
+
+
+def test_mesh_island_inside_a_cavity_is_material():
+    """6000 box, an 8x8x8 cavity, a 2x2x2 island inside the cavity: 6000 - 512 + 8"""
+    pos, idx = _boxes_mesh(
+        ((10, 20, 30), (0, 0, 0), False), ((8, 8, 8), (0, 0, 0), True), ((2, 2, 2), (0, 0, 0), False)
+    )
+    r = properties.mesh_part_properties(pos, idx)
+    assert r["closed"] and r["volume"] == approx(5496), r
+
+
+def _hollow_solid(inner_reversed):
+    """10x20x30 box at (1,2,3) with a 4x4x4 box cavity at (4,8,13), made by hand
+    from two shells (the inner one reversed in a proper solid)"""
+    from OCP.TopoDS import TopoDS_Solid
+
+    outer = TopoDS.Shell_s(TopExp_Explorer(box(), TopAbs_SHELL).Current())
+    inner = TopoDS.Shell_s(TopExp_Explorer(box(4.0, 4.0, 4.0, at=(4.0, 8.0, 13.0)), TopAbs_SHELL).Current())
+    b = BRep_Builder()
+    solid = TopoDS_Solid()
+    b.MakeSolid(solid)
+    b.Add(solid, outer)
+    b.Add(solid, inner.Reversed() if inner_reversed else inner)
+    return solid
+
+
+def test_brep_hollow_solid_by_hand():
+    r = properties.brep_part_properties(_hollow_solid(inner_reversed=True))
+    assert r["closed"] and r["volume"] == approx(6000 - 64), r
+
+
+def test_brep_cavity_shell_facing_out_has_no_volume():
+    """inner shell oriented like the outer one: OCCT would add the cavity (6064)"""
+    r = properties.brep_part_properties(_hollow_solid(inner_reversed=False))
+    assert r["volume"] is None and r["reason"] == properties.WINDING, r

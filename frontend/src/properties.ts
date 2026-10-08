@@ -93,8 +93,12 @@ export function buildView(d: ModelProperties, isVisible: (id: number) => boolean
       },
       notes,
     }
-    const k = visible.length - withVolume.length
+    // parts whose computation failed have no area either: say so separately,
+    // or the "面積は含める" note would be wrong for them
+    const failed = visible.filter((p) => p.reason === 'failed').length
+    const k = visible.length - withVolume.length - failed
     if (k > 0) notes.push(`体積なしの ${k} 部品は体積・重量の合計に含めない（面積は含める）`)
+    if (failed > 0) notes.push(`計算できなかった ${failed} 部品は合計に含めない`)
   }
   if (d.source === 'mesh') notes.push('メッシュの三角形から計算（単位は mm とみなす）')
   return view

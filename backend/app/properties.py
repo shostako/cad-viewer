@@ -104,6 +104,17 @@ def _mixed_orientation(shell: TopoDS_Shape) -> bool:
     return bool(sas.CheckOrientedShells(shell, True))
 
 
+def _cavity_facing_out(shells: list[TopoDS_Shape]) -> bool:
+    """a hollow solid whose inner shell is oriented like the outer one: OCCT
+    then adds the cavity's volume instead of subtracting it. In a proper solid
+    every shell but the outer (the largest) integrates with the opposite sign."""
+    if len(shells) < 2:
+        return False
+    signed = [_volume(s)[0] for s in shells]
+    outer = max(range(len(signed)), key=lambda k: abs(signed[k]))
+    return any(k != outer and v * signed[outer] > 0 for k, v in enumerate(signed))
+
+
 def _part(closed: bool, volume, area, com, reason) -> dict[str, Any]:
     return {"closed": closed, "volume": volume, "area": area, "centerOfMass": com, "reason": reason}
 
@@ -125,7 +136,7 @@ def brep_part_properties(shape: TopoDS_Shape) -> dict[str, Any]:
             # IsClosed on the solid itself is unreliable (False for a plain
             # cylinder); check every shell instead
             if shells and all(BRep_Tool.IsClosed_s(s) for s in shells):
-                if any(_mixed_orientation(s) for s in shells):
+                if any(_mixed_orientation(s) for s in shells) or _cavity_facing_out(shells):
                     mixed = True
                 else:
                     bodies.append(_volume(solid))
@@ -180,18 +191,21 @@ def mesh_part_properties(positions: np.ndarray, indices: np.ndarray) -> dict[str
 
 def _mesh_bodies(m: trimesh.Trimesh) -> tuple[float, list[float]]:
     """volume and centre of mass of a closed, consistently wound mesh, body by
-    body. An inward-facing body inside an outward one is a cavity (subtracted);
-    any other inward-facing body is a body turned inside out (added with its
-    absolute volume). Summing the signed volumes of the whole mesh would
-    subtract a separate inverted body (6000 + inverted 1000 read 5000)."""
+    body, decided by nesting rather than by which way the triangles face: a
+    body inside an odd number of other bodies is a cavity (subtracted), one
+    inside an even number (none, or an island inside a cavity) is material
+    (added). Orientation-based rules break on an STL turned inside out as a
+    whole: its outer shell faces inward and its cavity outward. Summing the
+    signed volumes of the whole mesh would in turn subtract a separate body
+    that is inside out (6000 + inverted 1000 read 5000)."""
     bodies = m.split(only_watertight=False) if m.body_count > 1 else [m]
-    signed = [(b, float(b.volume)) for b in bodies]
-    outward = [b for b, v in signed if v > 0]
+    if len(bodies) == 1:
+        return abs(float(m.volume)), [float(x) for x in m.center_mass]
     total = 0.0
     moment = np.zeros(3)
-    for b, v in signed:
-        cavity = v < 0 and any(_inside(b, o) for o in outward)
-        w = -abs(v) if cavity else abs(v)
+    for i, b in enumerate(bodies):
+        depth = sum(1 for k, o in enumerate(bodies) if k != i and _inside(b, o))
+        w = abs(float(b.volume)) * (-1 if depth % 2 else 1)
         total += w
         moment += w * np.asarray(b.center_mass, dtype=np.float64)
     if total <= 0:
@@ -200,11 +214,18 @@ def _mesh_bodies(m: trimesh.Trimesh) -> tuple[float, list[float]]:
 
 
 def _inside(inner: trimesh.Trimesh, outer: trimesh.Trimesh) -> bool:
+    """inner lies within outer's enclosed region. A majority over inner's
+    centre of mass and a few of its vertices (pulled a hair toward that centre)
+    so that one vertex touching outer's surface cannot flip the answer."""
     lo, hi = outer.bounds
     ilo, ihi = inner.bounds
     if (ilo < lo).any() or (ihi > hi).any():
         return False
-    return bool(outer.contains(inner.vertices[:1])[0])
+    c = np.asarray(inner.center_mass, dtype=np.float64)
+    verts = inner.vertices[:: max(1, len(inner.vertices) // 4)][:4]
+    probes = np.vstack([c, verts + (c - verts) * 1e-6])
+    hits = outer.contains(probes)
+    return int(np.count_nonzero(hits)) * 2 > len(probes)
 
 
 def _model(source: str, parts: list[dict[str, Any]]) -> dict[str, Any]:

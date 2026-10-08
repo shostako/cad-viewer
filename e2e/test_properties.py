@@ -340,6 +340,26 @@ try:
         assert total()["volume"].startswith("115.257 cm³") and total()["area"] == "234.58 cm²", total()
         assert page.inner_text("#props-note") == "体積なしの 1 部品は体積・重量の合計に含めない（面積は含める）"
 
+        page.close()
+
+        # 11b. a part whose computation failed has no area either: it gets its
+        #      own note (not 面積は含める) and stays out of every total
+        page = new_page()
+
+        def one_failed(route):
+            resp = route.fetch()
+            body = resp.json()
+            pin = next(q for q in body["parts"] if q["name"] == "core_pin")
+            pin.update(volume=None, area=None, closed=False, reason="failed", centerOfMass=None)
+            route.fulfill(response=resp, json=body)
+
+        page.route("**/api/models/*/properties", one_failed)
+        load(STEP)
+        wait_values()
+        check_total(v_closed, A["plate"] + A["core_pin"] + A["cavity_block"], 1.19)
+        assert total()["area"] == "227.29 cm²", total()
+        assert page.inner_text("#props-note") == "計算できなかった 1 部品は合計に含めない", page.inner_text("#props-note")
+
         page.evaluate(f"localStorage.removeItem('{PREFS}')")
         page.screenshot(path="/tmp/cad_viewer_properties.png")
         if errors:
