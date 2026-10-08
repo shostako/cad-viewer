@@ -28,6 +28,12 @@ app.innerHTML = `
   <div id="viewport"></div>
   <div id="viewport2d" class="hidden"></div>
   <div id="dropzone" class="hidden">ここにドロップして読み込み</div>
+  <div id="empty-hint">
+    <div id="empty-title">CAD ファイルを開く</div>
+    <button id="empty-open" type="button">ファイルを選ぶ</button>
+    <div id="empty-drop">または、この画面にファイルをドロップ</div>
+    <div id="empty-formats">STEP / IGES / STL / 3MF / OBJ / PLY / DXF / DWG</div>
+  </div>
   <div id="tree-panel" class="hidden">
     <div id="tree-title">部品ツリー</div>
     <div id="tree-body"></div>
@@ -41,11 +47,8 @@ app.innerHTML = `
   </div>
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
-    <div id="hud-info">STEP / IGES / STL / 3MF をドロップ、またはメニューから選択</div>
-    <div id="hud-keys">
-      左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール（カーソルの位置へ）・＋／−: 拡大縮小<br />
-      ダブルクリック: そこを回転の中心に　F・Home: 全体表示
-    </div>
+    <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
+    <div id="hud-keys"></div>
   </div>
   <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
 `
@@ -61,6 +64,9 @@ const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
 const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
+const hudKeys = document.querySelector<HTMLDivElement>('#hud-keys')!
+const emptyHint = document.querySelector<HTMLDivElement>('#empty-hint')!
+document.querySelector('#empty-open')!.addEventListener('click', () => fileInput.click())
 const propsEl = document.querySelector<HTMLDivElement>('#props-panel')!
 
 const viewer = new Viewer(viewport)
@@ -71,13 +77,49 @@ const drawing2d = new Drawing2D(viewport2d, (msg) => {
   hudInfo.textContent = msg
 })
 
+// how to move around, per view (HUD bottom left)
+const KEYS_3D = [
+  '左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール（カーソルの位置へ）・＋／−: 拡大縮小',
+  'ダブルクリック: そこを回転の中心に　F・Home: 全体表示',
+]
+const KEYS_2D = [
+  'ドラッグ: 移動　ホイール（カーソルの位置へ）: 拡大縮小　F・Home: 全体表示',
+  '計測モード: 端点・中心・四分円点にスナップして 2 点間の距離',
+]
+function setKeys(lines: string[]): void {
+  hudKeys.replaceChildren()
+  lines.forEach((line, i) => {
+    if (i) hudKeys.appendChild(document.createElement('br'))
+    hudKeys.appendChild(document.createTextNode(line))
+  })
+}
+setKeys(KEYS_3D)
+
 let is2D = false
+/**
+ * Switch between the 3D view and a 2D drawing. In 2D the 3D-only controls are
+ * hidden (view, section, thickness, volume) and 注記 is disabled: the drawing
+ * viewer only measures.
+ */
 function show2D(on: boolean): void {
   is2D = on
   viewport2d.classList.toggle('hidden', !on)
   viewport.classList.toggle('hidden', on)
   treePanel.classList.toggle('hidden', on || !treeBody.hasChildNodes())
+  for (const f of folders3D) f.show(!on)
+  const note = [...modeSelect.options].find((o) => o.text === '注記')
+  if (note) note.disabled = on
+  if (on && state.mode === '注記') modeCtl.setValue('なし')
+  setKeys(on ? KEYS_2D : KEYS_3D)
 }
+
+/** the "open / drop a file" card in the middle of an empty screen */
+function showEmpty(on: boolean): void {
+  emptyHint.classList.toggle('hidden', !on)
+}
+// whether a model or drawing is on screen: a failed load after the old one was
+// torn down leaves an empty screen, which gets the card back
+let contentShown = false
 
 let currentModelId: string | null = null
 // Sidecar-save suppression during model teardown/restore. Generation-tagged
@@ -99,7 +141,7 @@ const actions = {
 }
 gui.add(actions, 'open').name('ファイルを開く')
 gui.add(actions, 'fit').name('全体表示')
-gui
+const modeCtl = gui
   .add(state, 'mode', ['なし', '計測', '注記'])
   .name('モード')
   .onChange((mode: string) => {
@@ -108,6 +150,7 @@ gui
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
   })
+const modeSelect = modeCtl.domElement.querySelector('select')!
 gui.add(actions, 'clearMeasure').name('計測クリア')
 
 // ---- display & view navigation
@@ -356,6 +399,8 @@ window.addEventListener('resize', fitCornerStack)
 
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
+/** folders that only make sense for a 3D model (hidden on 2D drawings) */
+const folders3D = [viewFolder, sectionFolder, thicknessFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -620,6 +665,10 @@ async function loadFile(file: File): Promise<void> {
       // visible and pickable — clicks on it would be saved under the NEW
       // model's sidecar with the old model's coordinates.
       viewer.clearModel()
+      // the old drawing goes too: if the new load fails below, the screen must
+      // be really empty (not the old drawing, still interactive, under the card)
+      drawing2d.clear()
+      contentShown = false
       picker.setModel([])
       treeBody.replaceChildren()
       treePanel.classList.add('hidden')
@@ -631,6 +680,8 @@ async function loadFile(file: File): Promise<void> {
         sectionTool.update()
         drawing2d.load(svg, meta.snapPoints ?? [])
         show2D(true)
+        contentShown = true
+        showEmpty(false)
         const d = meta.bbox2d
           ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
           : '?'
@@ -643,6 +694,8 @@ async function loadFile(file: File): Promise<void> {
       if (gen !== loadGen) return
       const model = toModelData(pack)
       viewer.setModel(model)
+      contentShown = true
+      showEmpty(false)
       picker.setModel(model.parts)
       measureTool.setModel(meta.id, meta.format === 'brep')
       sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
@@ -674,6 +727,10 @@ async function loadFile(file: File): Promise<void> {
     }
   } catch (e) {
     hudInfo.textContent = `エラー: ${e instanceof Error ? e.message : e}`
+    if (gen === loadGen && !contentShown) {
+      show2D(false) // back to the plain empty screen, as at start-up
+      showEmpty(true)
+    }
   }
 }
 

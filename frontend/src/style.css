@@ -380,3 +380,57 @@ body,
   color: #7f8b99;
   margin-top: 4px;
 }
+
+/* card in the middle of an empty screen: open a file, or drop one */
+#empty-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 28px 40px;
+  color: #cfd8e3;
+  background: rgba(20, 24, 30, 0.75);
+  border: 2px dashed #3a4250;
+  border-radius: 12px;
+  text-align: center;
+  pointer-events: none; /* a drop anywhere works; only the button takes clicks */
+}
+
+#empty-hint.hidden {
+  display: none;
+}
+
+#empty-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #8fb4d8;
+}
+
+#empty-open {
+  pointer-events: auto;
+  font: inherit;
+  font-size: 14px;
+  color: #1d2126;
+  background: #8fb4d8;
+  border: none;
+  border-radius: 6px;
+  padding: 6px 18px;
+  cursor: pointer;
+}
+
+#empty-open:hover {
+  background: #a8c6e4;
+}
+
+#empty-drop {
+  font-size: 13px;
+}
+
+#empty-formats {
+  font-size: 11px;
+  color: #7f8b99;
+}
