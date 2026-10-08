@@ -11,8 +11,8 @@ backend/.venv/bin/python testdata/make_dxf.py            # plate_drawing.dxf
 backend/.venv/bin/python testdata/make_iges_loose.py     # loose_faces_box.igs
 
 # サーバ起動
-cd backend && .venv/bin/uvicorn app.main:app --reload --port 8008 &
-cd frontend && npm run dev -- --port 5183 --strictPort &
+(cd backend && .venv/bin/uvicorn app.main:app --reload --port 8008) &
+(cd frontend && npm run dev -- --host 127.0.0.1 --port 5183 --strictPort) &
 
 # 実行（システム Python の playwright を使う。各スクリプトは独立している）
 for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done

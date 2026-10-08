@@ -11,26 +11,28 @@ Claude Code（手元の CLI でも claude.ai/code のクラウドでも）がこ
 ## コマンド
 
 ```bash
+# リポのルートで実行する。cd はサブシェルの中だけで効く（続けて流してもずれない）
+
 # セットアップ（backend の依存は requirements.lock から入れる）
-cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock
-cd frontend && npm ci
+(cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock)
+(cd frontend && npm ci)
 
 # テストデータの生成（生成物は git に入れない。OCP を使うので backend の venv で）
 for g in make_testdata make_step_assembly make_dxf make_iges_loose; do backend/.venv/bin/python testdata/$g.py; done
 
-# 開発（2 プロセス）
-cd backend && .venv/bin/uvicorn app.main:app --reload --port 8008
-cd frontend && npm run dev          # :5173、/api は 8008 にプロキシ
+# 開発（2 プロセス。それぞれ別の端末で）
+(cd backend && .venv/bin/uvicorn app.main:app --reload --port 8008)
+(cd frontend && npm run dev)        # :5173、/api は 8008 にプロキシ
 
 # backend のテスト
-cd backend && .venv/bin/pytest -q -p no:cacheprovider
-cd backend && .venv/bin/pytest tests/test_measure.py -k test_name   # 1 本だけ
+(cd backend && .venv/bin/pytest -q -p no:cacheprovider)
+(cd backend && .venv/bin/pytest tests/test_measure.py -k test_name)   # 1 本だけ
 
 # frontend の型チェックとビルド
-cd frontend && npm run build
+(cd frontend && npm run build)
 
 # E2E（Playwright。各スクリプトは独立して動く。終了コード 0 で合格）
-cd frontend && npm run dev -- --port 5183 --strictPort &
+(cd frontend && npm run dev -- --host 127.0.0.1 --port 5183 --strictPort) &
 python3 e2e/test_stl_view.py        # 接続先は CAD_VIEWER_URL で変えられる（既定 http://127.0.0.1:5183）
 for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
 ```
