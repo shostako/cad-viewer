@@ -52,8 +52,8 @@ export class Viewer {
   private gridHelper: THREE.GridHelper | null = null
   private _gridVisible = true
   private _rotateMode: RotateMode = 'turntable'
-  /** a mouse drag is in progress — auto-rotate pauses so it doesn't fight the user */
-  private dragging = false
+  /** pointers held down on the canvas — auto-rotate pauses so it doesn't fight the user */
+  private heldPointers = new Set<number>()
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
@@ -86,10 +86,21 @@ export class Viewer {
     this.trackball.zoomSpeed = 1.2
     this.trackball.panSpeed = 0.8
     this.trackball.enabled = false
-    for (const c of [this.controls, this.trackball]) {
-      c.addEventListener('start', () => (this.dragging = true))
-      c.addEventListener('end', () => (this.dragging = false))
+    // Track held pointers ourselves rather than the controls' start/end:
+    // TrackballControls (three r185) handles pointercancel without an 'end',
+    // so a touch/pen gesture cancelled by the OS would leave auto-rotate
+    // paused for good. Release events are taken on window so a pointer let go
+    // outside the canvas still counts.
+    const canvas = this.renderer.domElement
+    canvas.addEventListener('pointerdown', (e) => {
+      this.heldPointers.add(e.pointerId)
+    })
+    const release = (e: PointerEvent) => {
+      this.heldPointers.delete(e.pointerId)
     }
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', release)
+    canvas.addEventListener('lostpointercapture', release)
 
     // CAD-ish lighting: hemisphere + key + fill
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2))
@@ -121,7 +132,7 @@ export class Viewer {
       // clamp: a background tab resumes with a huge gap, which would jump the spin
       const dt = Math.min((now - last) / 1000, 0.1)
       last = now
-      if (this.autoRotate && !this.dragging && dt > 0) {
+      if (this.autoRotate && this.heldPointers.size === 0 && dt > 0) {
         this.rotateView((this.autoRotateSpeed * Math.PI / 180) * dt, 0)
       }
       this.activeControls().update()

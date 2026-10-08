@@ -237,7 +237,34 @@ with sync_playwright() as p:
     assert close(a, offset_dir(), 1e-3), "auto-rotate off must stop the spin"
 
     page.screenshot(path="/tmp/cad_viewer_view_controls.png")
-    page.evaluate("localStorage.removeItem('cad-viewer:view')")
+
+    # ---- 6. a touch cancelled by the OS must not leave auto-rotate paused -----
+    # (TrackballControls ends a cancelled pointer without its 'end' event)
+    tctx = browser.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
+    tpage = tctx.new_page()
+    tpage.on("pageerror", lambda e: errors.append(str(e)))
+    tpage.goto(BASE_URL)
+    tpage.wait_for_load_state("networkidle")
+    tpage.set_input_files("#file-input", STEP)
+    tpage.wait_for_function(
+        "document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000
+    )
+    page = tpage  # helpers above read the module-level `page`
+    ctl("回転方式").locator("select").select_option(label="自由回転")
+    ctl("自動回転").locator("input").click()
+    cdp = tctx.new_cdp_session(tpage)
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchStart", "touchPoints": [{"x": 640, "y": 700}]})
+    tpage.wait_for_timeout(300)
+    a = offset_dir()
+    tpage.wait_for_timeout(300)
+    assert close(a, offset_dir(), 1e-3), "a held touch must pause auto-rotate"
+    cdp.send("Input.dispatchTouchEvent", {"type": "touchCancel", "touchPoints": []})
+    tpage.wait_for_timeout(300)
+    b = offset_dir()
+    tpage.wait_for_timeout(500)
+    assert not close(b, offset_dir(), 1e-3), "auto-rotate must resume after a cancelled touch"
+    tpage.evaluate("localStorage.removeItem('cad-viewer:view')")
+    tctx.close()
     if errors:
         print("PAGE ERRORS:", errors)
     assert not errors
