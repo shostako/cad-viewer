@@ -365,6 +365,8 @@ def _sew(shapes: list[TopoDS_Shape]) -> list[TopoDS_Shape]:
     still open goes on to the next, wider step. Otherwise one open face (or a
     real gap) anywhere would drag every body up to the widest tolerance and
     weld neighbouring sheets onto shells that had already closed cleanly.
+    A settled shell is never sewn again, so faces that only reach it at a
+    wider step end up as a separate surface rather than reopening it.
     Raises if sewing yields nothing (the caller then opens the file unsewn).
     """
     # cap from the faces being sewn only: a long construction line or an
@@ -419,12 +421,14 @@ def _close(body: TopoDS_Shape) -> TopoDS_Shape:
         fix.Perform()
         result = fix.Solid()
         volume = _volume(result)
+        if abs(volume) < 1e-12:
+            _log.info("closed shell has no volume; keeping it as a surface")
+            return body  # degenerate: not worth calling a solid
         if volume < 0:  # still inside-out: flip so volume / normals come out right
             result = result.Reversed()
-        elif volume == 0:
-            return body  # degenerate: not worth calling a solid
         return result
     except Exception:
+        _log.warning("closed shell could not be made a solid; keeping it as a surface", exc_info=True)
         return body
 
 
