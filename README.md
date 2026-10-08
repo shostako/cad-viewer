@@ -16,6 +16,8 @@
 
 **Windows デスクトップの `cad-viewer.vbs` をダブルクリック** → backend が起動し、
 既定ブラウザで開く（コンソール窓は出ない）。既に起動済みならブラウザを開くだけ（冪等）。
+git pull などで frontend のソースが `dist` より新しければビルドし直し、start.sh が立てた
+backend より backend のコードが新しければ backend を立て直す。
 
 内部では frontend を同梱した backend を **1プロセス(:8008)** で立てている（Vite dev
 サーバは不要）。WSL から直接なら:

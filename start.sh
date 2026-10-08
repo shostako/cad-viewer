@@ -26,23 +26,68 @@ if [ ! -x "${VENV}/bin/uvicorn" ]; then
   exit 1
 fi
 
-# 1. frontend/dist が無ければビルド（node_modules が前提）
-if [ ! -f "${ROOT}/frontend/dist/index.html" ]; then
-  if [ ! -d "${ROOT}/frontend/node_modules" ]; then
-    log "frontend の依存が無い → npm install"
-    ( cd "${ROOT}/frontend" && npm install )
+FRONT="${ROOT}/frontend"
+PIDFILE=/tmp/cadviewer.pid
+
+# 1. frontend/dist が無いか、dist より新しいソース・設定があればビルドする
+#    （存在だけで判定すると、git pull 後も古い画面のまま起動してしまう）
+frontend_stale() {
+  [ -f "${FRONT}/dist/index.html" ] || return 0
+  [ -n "$(find "${FRONT}/src" "${FRONT}/index.html" "${FRONT}/package.json" \
+      "${FRONT}/package-lock.json" "${FRONT}/vite.config.ts" "${FRONT}/tsconfig.json" \
+      -newer "${FRONT}/dist/index.html" -print -quit 2>/dev/null)" ]
+}
+# 依存は node_modules が無いか、package-lock.json が前回の install より新しければ入れ直す
+deps_stale() {
+  [ -f "${FRONT}/node_modules/.package-lock.json" ] || return 0
+  [ "${FRONT}/package-lock.json" -nt "${FRONT}/node_modules/.package-lock.json" ]
+}
+if frontend_stale; then
+  if deps_stale; then
+    log "frontend の依存が無いか古い → npm install"
+    ( cd "${FRONT}" && npm install )
   fi
-  log "frontend 未ビルド → npm run build"
-  ( cd "${ROOT}/frontend" && npm run build )
+  log "frontend のビルドが無いか古い → npm run build"
+  ( cd "${FRONT}" && npm run build )
 fi
 
-# 2. backend が既に応答するなら起動不要（冪等）
+# 2. backend
+# start.sh が立てた backend で、立てた後に backend のコードか依存が変わっていれば、
+# 古いコードのまま動いているので立て直す。手で立てた backend（--reload 等）には触らない。
+backend_stale() {
+  [ -f "${PIDFILE}" ] || return 1
+  local pid
+  pid="$(cat "${PIDFILE}")"
+  # pid の再利用に備え、その pid が自分の uvicorn であることを確かめる
+  tr '\0' ' ' < "/proc/${pid}/cmdline" 2>/dev/null \
+    | grep -qF "${VENV}/bin/uvicorn app.main:app" || return 1
+  # __pycache__ は import で pidfile より後に書かれるので、*.py だけを見る
+  [ -n "$(find "${ROOT}/backend/app" -name '*.py' -newer "${PIDFILE}" -print -quit 2>/dev/null)" ] \
+    || [ "${ROOT}/backend/requirements.lock" -nt "${PIDFILE}" ]
+}
+if alive && backend_stale; then
+  old_pid="$(cat "${PIDFILE}")"
+  log "backend のコードが起動後に更新されている → 再起動"
+  kill "${old_pid}"
+  for _ in $(seq 1 20); do
+    kill -0 "${old_pid}" 2>/dev/null || break
+    sleep 0.5
+  done
+  if kill -0 "${old_pid}" 2>/dev/null; then
+    log "ERROR: 古い backend (pid ${old_pid}) が止まらない"
+    exit 1
+  fi
+fi
+
 if alive; then
   log "backend は既に起動済み"
 else
   log "backend 起動中..."
-  ( cd "${ROOT}/backend" && nohup "${VENV}/bin/uvicorn" app.main:app --port "${PORT}" \
-      > /tmp/cadviewer.log 2>&1 & )
+  # cd を & の外に出す。`cd && nohup ... &` だと & が列全体にかかり、$! が
+  # uvicorn でなく中継のサブシェルの pid になる
+  ( cd "${ROOT}/backend" || exit 1
+    nohup "${VENV}/bin/uvicorn" app.main:app --port "${PORT}" > /tmp/cadviewer.log 2>&1 &
+    echo $! > "${PIDFILE}" )
   # health 待ち（最大 15 秒）
   for _ in $(seq 1 30); do
     alive && break
