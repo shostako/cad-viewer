@@ -5,7 +5,7 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
-import { draftColors } from './draft'
+import { draftColors, draftColorsFlat, windingSign } from './draft'
 import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
 
@@ -303,27 +303,38 @@ export class Viewer {
   setDraftColors(dir: readonly [number, number, number], requiredDeg: number): void {
     for (const [partId, mesh] of this.partMeshes) {
       if (!mesh.geometry.index?.count) continue // loose curves: nothing to colour
-      const target = mesh.userData.meshFormat ? this.flatCopy(partId, mesh) : mesh
-      const normals = target.geometry.getAttribute('normal').array
-      this.applyVertexColors(target, (out) => draftColors(normals, dir, requiredDeg, out))
+      if (mesh.userData.meshFormat) {
+        const copy = this.flatCopy(partId, mesh)
+        const positions = copy.geometry.getAttribute('position').array
+        const sign = copy.userData.windingSign as 1 | -1
+        this.applyVertexColors(copy, (out) => draftColorsFlat(positions, sign, dir, requiredDeg, out))
+      } else {
+        const normals = mesh.geometry.getAttribute('normal').array
+        this.applyVertexColors(mesh, (out) => draftColors(normals, dir, requiredDeg, out))
+      }
     }
   }
 
   /**
-   * A non-indexed copy of a mesh-format part (STL, 3MF, ...) with one vertex
-   * triple per triangle and the triangle's own normal (from its winding).
+   * A non-indexed copy of a mesh-format part (STL, 3MF, ...), one vertex triple
+   * per triangle, drawn with flat shading and classified triangle by triangle
+   * (draftColorsFlat), with the part's winding sign (windingSign).
    *
    * The display normals of those parts are averaged across edges shallower
    * than 30° (backend smooth_shade), so a large planar wall shares its corner
    * normals with the fillet next to it. Classified per vertex, the colour of
    * that corner then blends across the whole wall triangle: the top of an
    * under-drafted wall would read as enough. The triangles are the true shape
-   * of a mesh file, so they are classified one by one and drawn flat.
+   * of a mesh file, so they are classified one by one and drawn flat. The copy
+   * keeps no normals (flat shading takes the face from the screen-space
+   * derivatives, facing the viewer either way), which saves a third of its
+   * memory on a large STL.
    *
    * The part mesh stays in place for picking (its BVH and faceIndex) and the
    * section's stencil; it is only hidden while the copy is shown. The copy sits
    * in the part's group, so tree visibility and clipping (setClippingPlanes
-   * walks the model group) apply to it too.
+   * walks the model group) apply to it too, and clearModel disposes it with
+   * the group.
    */
   private flatCopy(partId: number, mesh: THREE.Mesh): THREE.Mesh {
     const have = this.flatCopies.get(partId)
@@ -332,48 +343,25 @@ export class Viewer {
     const idx = mesh.geometry.index!.array
     const nTri = Math.floor(idx.length / 3)
     const P = new Float32Array(nTri * 9)
-    const N = new Float32Array(nTri * 9)
     for (let t = 0; t < nTri; t++) {
-      const a = idx[t * 3] * 3
-      const b = idx[t * 3 + 1] * 3
-      const c = idx[t * 3 + 2] * 3
-      for (let k = 0; k < 3; k++) {
-        P[t * 9 + k] = pos[a + k]
-        P[t * 9 + 3 + k] = pos[b + k]
-        P[t * 9 + 6 + k] = pos[c + k]
-      }
-      // (b - a) x (c - a): counter-clockwise winding = front = outward
-      const ux = pos[b] - pos[a]
-      const uy = pos[b + 1] - pos[a + 1]
-      const uz = pos[b + 2] - pos[a + 2]
-      const vx = pos[c] - pos[a]
-      const vy = pos[c + 1] - pos[a + 1]
-      const vz = pos[c + 2] - pos[a + 2]
-      let nx = uy * vz - uz * vy
-      let ny = uz * vx - ux * vz
-      let nz = ux * vy - uy * vx
-      const len = Math.sqrt(nx * nx + ny * ny + nz * nz)
-      // a degenerate triangle keeps a zero normal: draftColors takes it as a wall
-      if (len > 0) {
-        nx /= len
-        ny /= len
-        nz /= len
-      }
       for (let v = 0; v < 3; v++) {
-        N[t * 9 + v * 3] = nx
-        N[t * 9 + v * 3 + 1] = ny
-        N[t * 9 + v * 3 + 2] = nz
+        const a = idx[t * 3 + v] * 3
+        P[t * 9 + v * 3] = pos[a]
+        P[t * 9 + v * 3 + 1] = pos[a + 1]
+        P[t * 9 + v * 3 + 2] = pos[a + 2]
       }
     }
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(P, 3))
-    geo.setAttribute('normal', new THREE.BufferAttribute(N, 3))
     const src = mesh.material as THREE.MeshStandardMaterial
     const mat = src.clone()
+    mat.flatShading = true
+    mat.needsUpdate = true
     // the same plane objects as the part (clone() copies them), so a section
     // moved before the next setClippingPlanes still clips both alike
     mat.clippingPlanes = src.clippingPlanes
     const copy = new THREE.Mesh(geo, mat)
+    copy.userData.windingSign = windingSign(P)
     copy.renderOrder = mesh.renderOrder
     mesh.parent!.add(copy)
     mesh.visible = false

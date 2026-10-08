@@ -15,7 +15,8 @@ curved faces), section, direction, 0 deg, off, bottom view, free rotation +
 keyboard (a dropdown that keeps focus), hidden part; (b) frustum: all six pull
 directions and the 2 deg boundary; a filleted STL whose under-drafted wall
 must stay red up to the fillet (mesh formats are classified per triangle);
-an open STL gets the legend's note on face orientation; (c) mutual exclusion
+an open STL gets the legend's note on face orientation, a closed STL wound
+inside out is coloured as if wound outward (and gets no note); (c) mutual exclusion
 with the thickness heatmap, including held and aborted thickness requests, a
 方式 switch and a measure result on the status line; (d) hidden on a drawing,
 reset on reload, ticking while the mesh is still loading; (e) remembered
@@ -67,9 +68,11 @@ SIX = {
 }
 
 
-def frustum_stl(path, bottom=True):
+def frustum_stl(path, bottom=True, inside_out=False):
     """ASCII STL of the frustum: quads as nav_common.box_stl, normals from the winding.
-    bottom=False leaves the base out: an open surface (no volume)"""
+    bottom=False leaves the base out: an open surface (no volume).
+    inside_out=True writes every triangle the other way round (normals too): a
+    closed solid whose file says front on the inside, as some exporters write"""
     a, b = F_HALF, F_TOPHALF
     v = [(-a, -a, 0.0), (a, -a, 0.0), (a, a, 0.0), (-a, a, 0.0), (-b, -b, F_H), (b, -b, F_H), (b, b, F_H), (-b, b, F_H)]
     quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6), (1, 2, 6, 5), (3, 0, 4, 7)]
@@ -78,6 +81,8 @@ def frustum_stl(path, bottom=True):
     lines = ["solid frustum"]
     for q in quads:
         for tri in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
+            if inside_out:
+                tri = tri[::-1]
             p = [v[i] for i in tri]
             n = norm(cross(sub(p[1], p[0]), sub(p[2], p[0])))
             lines.append(f"facet normal {n[0]!r} {n[1]!r} {n[2]!r}\n outer loop")
@@ -168,6 +173,8 @@ try:
     fillet_stl(FILLET)
     OPEN = os.path.join(tmp, "draft_open.stl")
     frustum_stl(OPEN, bottom=False)
+    INSIDE_OUT = os.path.join(tmp, "draft_inside_out.stl")
+    frustum_stl(INSIDE_OUT, inside_out=True)
 
     with nav_session() as nav:
         page = nav.page
@@ -535,6 +542,31 @@ try:
         assert "1 個" in legend(), legend()
         on_face(FTOP)
         expect({"FTOP": FTOP}, {"FTOP": "ok"}, "b6 top of the open frustum")
+        toggle("色分け", False)
+
+        # b7. the same closed frustum wound inside out: the colours are those of
+        # b2 (the solid's outside is its outside, whatever the file's winding),
+        # and no note (it is closed: /properties gives it a volume)
+        nav.load(INSIDE_OUT)
+        click_button("等角")
+        page.keyboard.press("f")
+        settle()
+        for p in F_PTS.values():
+            on_face(p)
+        toggle("色分け", True)
+        for label in ("+Z", "−Z", "+X", "−Y"):
+            set_dir(label)
+            expect(F_PTS, SIX[label], f"b7 inside-out {label} 1.0")
+        # /properties has answered with a volume (the open frustum before had none)
+        page.wait_for_function(
+            "(() => { const t = document.querySelector('#props-total');"
+            " return t && !t.classList.contains('hidden')"
+            " && document.querySelector('#props-total-volume').textContent.includes('cm') })()",
+            timeout=30000,
+        )
+        settle()
+        assert "緑と青が逆" not in legend(), ("b7 closed part noted as unoriented", legend())
+        set_dir("+Z")
         toggle("色分け", False)
 
         # ================= (c) thickness heatmap: one at a time ===================

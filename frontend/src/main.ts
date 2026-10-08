@@ -594,7 +594,8 @@ function layoutCorner(): void {
   const propsMin = propsPanel.minHeight()
   const stackMin = measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
   const guiMax = Math.max(h - COLUMN_MARGIN - COLUMN_GAP - stackMin, GUI_MIN_PX)
-  gui.domElement.style.maxHeight = stackMin && guiMax < h ? `${guiMax}px` : ''
+  // never taller than the window (GUI_MIN_PX can exceed a tiny one)
+  gui.domElement.style.maxHeight = stackMin ? `${Math.min(guiMax, h)}px` : ''
   const room = h - COLUMN_MARGIN - (gui.domElement.getBoundingClientRect().bottom + COLUMN_GAP)
   const propsShare = propsMin ? propsMin + COLUMN_GAP : 0
   measurePanel.style.maxHeight = `${Math.max(Math.min(0.4 * h, room - propsShare), measureMin)}px`
@@ -629,15 +630,21 @@ new ResizeObserver(queueLayoutCorner).observe(measurePanel)
 new ResizeObserver(queueLayoutCorner).observe(measureList)
 window.addEventListener('resize', layoutCorner)
 // When the GUI has had to give way (it scrolls), bring a folder the user just
-// opened into view once lil-gui's opening animation ends.
+// opened into view once lil-gui's opening animation (300 ms) ends. A timer
+// backs up the transitionend: with no transition (nothing to animate, reduced
+// motion) the event never comes, and the listener must not stay behind.
+const REVEAL_FALLBACK_MS = 450
 gui.onOpenClose((changed) => {
   if (changed === gui || changed._closed) return
   const kids = changed.domElement.querySelector<HTMLElement>(':scope > .lil-children')
   const scroller = gui.domElement.querySelector<HTMLElement>(':scope > .lil-children')
   if (!kids || !scroller) return
-  const reveal = (e: TransitionEvent): void => {
-    if (e.target !== kids) return
-    kids.removeEventListener('transitionend', reveal)
+  let done = false
+  const reveal = (): void => {
+    if (done) return
+    done = true
+    kids.removeEventListener('transitionend', onEnd)
+    clearTimeout(timer)
     if (changed._closed) return
     const box = changed.domElement.getBoundingClientRect()
     const view = scroller.getBoundingClientRect()
@@ -645,7 +652,11 @@ gui.onOpenClose((changed) => {
     const by = Math.min(box.bottom - view.bottom, box.top - view.top)
     if (by > 0) scroller.scrollTop += by
   }
-  kids.addEventListener('transitionend', reveal)
+  const onEnd = (e: TransitionEvent): void => {
+    if (e.target === kids) reveal()
+  }
+  kids.addEventListener('transitionend', onEnd)
+  const timer = setTimeout(reveal, REVEAL_FALLBACK_MS)
 })
 
 const propsFolder = gui.addFolder('体積・重量')

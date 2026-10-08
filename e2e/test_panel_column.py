@@ -243,6 +243,36 @@ with sync_playwright() as p:
     assert vis["titleTop"] >= vis["top"] - 0.5, ("scrolled past the folder's title", vis)
     check_column("5 after reveal")
 
+    # 5a. no opening animation (a style that turns transitions off, as reduced
+    # motion would): no transitionend comes, and the folder still comes into view
+    page.add_style_tag(content=".lil-gui .lil-children { transition: none !important }")
+    set_folder("抜き勾配", False)
+    page.evaluate(
+        """() => { const f = [...document.querySelectorAll('.lil-gui .lil-gui')].find(g =>
+             g.querySelector(':scope > .lil-title').textContent === '抜き勾配');
+           const c = document.querySelector('.lil-gui.lil-root > .lil-children');
+           c.scrollTop = 0;
+           c.scrollTop += f.querySelector(':scope > .lil-title').getBoundingClientRect().bottom - c.getBoundingClientRect().bottom }"""
+    )
+    settle(100)
+    t = page.evaluate(
+        """() => { const f = [...document.querySelectorAll('.lil-gui .lil-gui')].find(g =>
+             g.querySelector(':scope > .lil-title').textContent === '抜き勾配');
+           const r = f.querySelector(':scope > .lil-title').getBoundingClientRect();
+           return [r.left + r.width / 2, r.top + r.height / 2] }"""
+    )
+    page.mouse.click(*t)
+    settle(800)
+    vis2 = page.evaluate(
+        """() => { const f = [...document.querySelectorAll('.lil-gui .lil-gui')].find(g =>
+             g.querySelector(':scope > .lil-title').textContent === '抜き勾配');
+           const s = document.querySelector('.lil-gui.lil-root > .lil-children').getBoundingClientRect();
+           const ctl = [...f.querySelectorAll(':scope > .lil-children .lil-controller')];
+           return { lastBottom: ctl[ctl.length - 1].getBoundingClientRect().bottom, bottom: s.bottom } }"""
+    )
+    print("5a reveal without animation", vis2)
+    assert vis2["lastBottom"] <= vis2["bottom"] + 0.5, ("5a no transition: not brought into view", vis2)
+
     # 5b. half a screen (767x639), every folder open
     page.set_viewport_size(HALF)
     settle()

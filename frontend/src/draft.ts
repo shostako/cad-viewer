@@ -82,11 +82,7 @@ export function draftColors(
   out: Float32Array,
 ): void {
   const t = Math.sin((requiredDeg * Math.PI) / 180)
-  const rgb: Record<DraftClass, THREE.Color> = {
-    ok: new THREE.Color(DRAFT_COLORS.ok),
-    short: new THREE.Color(DRAFT_COLORS.short),
-    opposite: new THREE.Color(DRAFT_COLORS.opposite),
-  }
+  const rgb = classColours()
   const n = Math.min(normals.length, out.length) / 3
   for (let i = 0; i < n; i++) {
     const x = normals[i * 3]
@@ -104,13 +100,106 @@ export function draftColors(
 }
 
 /**
+ * Like draftColors, for a triangle list without an index (Viewer.flatCopy):
+ * each triangle is classified by its own normal, (b - a) x (c - a) from its
+ * winding, times `sign` (-1 for a part wound inside out, see windingSign), and
+ * its three vertices get that colour. No normal array is kept for it.
+ */
+export function draftColorsFlat(
+  positions: ArrayLike<number>,
+  sign: 1 | -1,
+  dir: readonly [number, number, number],
+  requiredDeg: number,
+  out: Float32Array,
+): void {
+  const t = Math.sin((requiredDeg * Math.PI) / 180)
+  const rgb = classColours()
+  const nTri = Math.floor(Math.min(positions.length, out.length) / 9)
+  for (let k = 0; k < nTri; k++) {
+    const o = k * 9
+    const ux = positions[o + 3] - positions[o]
+    const uy = positions[o + 4] - positions[o + 1]
+    const uz = positions[o + 5] - positions[o + 2]
+    const vx = positions[o + 6] - positions[o]
+    const vy = positions[o + 7] - positions[o + 1]
+    const vz = positions[o + 8] - positions[o + 2]
+    const x = uy * vz - uz * vy
+    const y = uz * vx - ux * vz
+    const z = ux * vy - uy * vx
+    const len = Math.sqrt(x * x + y * y + z * z)
+    // a degenerate triangle has no direction: a wall, as in draftColors
+    const s = len > 0 ? (sign * (x * dir[0] + y * dir[1] + z * dir[2])) / len : 0
+    const c = rgb[draftClass(s, t)]
+    for (let v = 0; v < 3; v++) {
+      out[o + v * 3] = c.r
+      out[o + v * 3 + 1] = c.g
+      out[o + v * 3 + 2] = c.b
+    }
+  }
+}
+
+/**
+ * +1 when a triangle list (no index, 9 floats per triangle) is wound outward,
+ * -1 when it is wound inside out. Mesh files (STL and the like) are loaded as
+ * written, and some exporters write every triangle the other way round; the
+ * part's volume then comes out the same (the backend takes its size), but the
+ * winding says front where the back is, which swaps green and blue.
+ *
+ * The sign of the volume the triangles enclose (divergence theorem: the sum of
+ * a·(b×c)/6) tells which: positive for outward winding. It is taken about the
+ * bounding-box centre, so a mesh with a small gap, whose sum then depends on
+ * the origin, still gets the sign of most of its surface. A part with no
+ * volume (a flat sheet) counts as +1: the file decides, as the legend's note
+ * says for open parts.
+ */
+export function windingSign(positions: ArrayLike<number>): 1 | -1 {
+  const n = Math.floor(positions.length / 3)
+  if (n === 0) return 1
+  const lo = [Infinity, Infinity, Infinity]
+  const hi = [-Infinity, -Infinity, -Infinity]
+  for (let i = 0; i < n; i++) {
+    for (let k = 0; k < 3; k++) {
+      const v = positions[i * 3 + k]
+      if (v < lo[k]) lo[k] = v
+      if (v > hi[k]) hi[k] = v
+    }
+  }
+  const cx = (lo[0] + hi[0]) / 2
+  const cy = (lo[1] + hi[1]) / 2
+  const cz = (lo[2] + hi[2]) / 2
+  let six = 0 // six times the signed volume
+  for (let o = 0; o + 9 <= positions.length; o += 9) {
+    const ax = positions[o] - cx
+    const ay = positions[o + 1] - cy
+    const az = positions[o + 2] - cz
+    const bx = positions[o + 3] - cx
+    const by = positions[o + 4] - cy
+    const bz = positions[o + 5] - cz
+    const qx = positions[o + 6] - cx
+    const qy = positions[o + 7] - cy
+    const qz = positions[o + 8] - cz
+    six += ax * (by * qz - bz * qy) + ay * (bz * qx - bx * qz) + az * (bx * qy - by * qx)
+  }
+  return six < 0 ? -1 : 1
+}
+
+function classColours(): Record<DraftClass, THREE.Color> {
+  return {
+    ok: new THREE.Color(DRAFT_COLORS.ok),
+    short: new THREE.Color(DRAFT_COLORS.short),
+    opposite: new THREE.Color(DRAFT_COLORS.opposite),
+  }
+}
+
+/**
  * Legend: title with the direction and angle, one row per class (ok, short,
  * opposite), then a note when some parts have faces but no volume.
  *
  * unorientedParts: parts whose face orientation the backend could not confirm
  * (open surfaces, unsewn faces, mixed winding; /properties gives them no
- * volume). Only closed bodies are turned outward on load, so on these parts
- * the file decides which side is the front: green and blue can be swapped.
+ * volume). Closed bodies are turned outward (B-rep on load, mesh formats by
+ * windingSign); on these parts the file decides which side is the front:
+ * green and blue can be swapped.
  * Red (|n·d| below the required sine) does not depend on the sign.
  */
 export function renderDraftLegend(
