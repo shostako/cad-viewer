@@ -16,6 +16,9 @@ Claude Code（手元の CLI でも claude.ai/code のクラウドでも）がこ
 # セットアップ（backend の依存は requirements.lock から入れる）
 (cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock)
 (cd frontend && npm ci)
+# E2E 用（CI と同じく backend の venv に入れる。chromium のシステム依存も入れる）
+backend/.venv/bin/pip install playwright==1.58.0
+backend/.venv/bin/python -m playwright install --with-deps chromium
 
 # テストデータの生成（生成物は git に入れない。OCP を使うので backend の venv で）
 for g in make_testdata make_step_assembly make_dxf make_iges_loose; do backend/.venv/bin/python testdata/$g.py; done
@@ -32,9 +35,17 @@ for g in make_testdata make_step_assembly make_dxf make_iges_loose; do backend/.
 (cd frontend && npm run build)
 
 # E2E（Playwright。各スクリプトは独立して動く。終了コード 0 で合格）
-(cd frontend && npm run dev -- --host 127.0.0.1 --port 5183 --strictPort) &
-python3 e2e/test_stl_view.py        # 接続先は CAD_VIEWER_URL で変えられる（既定 http://127.0.0.1:5183）
-for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
+# backend と Vite の両方が要る。exec で立てるので、ジョブの pid がサーバー本体になる
+# （npx 経由だと npx だけが止まり、Vite が残って次の --strictPort が衝突する）
+(cd backend && exec .venv/bin/uvicorn app.main:app --port 8008) > /tmp/uvicorn.log 2>&1 &
+(cd frontend && exec node_modules/.bin/vite --host 127.0.0.1 --port 5183 --strictPort) > /tmp/vite.log 2>&1 &
+up() { curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:8008/api/health >/dev/null && curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null; }
+for _ in $(seq 1 90); do up && break; sleep 1; done; up || echo "servers did not come up"
+backend/.venv/bin/python e2e/test_stl_view.py    # 接続先は CAD_VIEWER_URL で変えられる（既定 http://127.0.0.1:5183）
+for t in e2e/test_*.py; do backend/.venv/bin/python "$t" || echo "FAILED: $t"; done
+kill %1 %2    # 止める
+# E2E は backend/.sidecars/ に書く。回し終えたら消してよい
+rm -rf backend/.sidecars
 ```
 
 CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。
@@ -112,6 +123,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - **three-mesh-bvh は `computeBoundsTree({ indirect: true })` が必須**（picking.ts）。indirect でないと三角形が並べ替えられ、`hit.faceIndex` → faceRanges の対応が崩れる。E2E のピックのテストがこれを固定している
 - **読み込みの結果（部品や面の番号）を変えたら `backend/app/cache.py` の `CACHE_VERSION` を上げる。** 上げないと、古いキャッシュのメッシュと計測時の読み直しで番号が食い違い、計測が別の面に当たる
 - **lil-gui は自分のパネルの中の keydown を外へ流さない。** キー操作は `main.ts` で window の捕捉段階（capture）で受けている。bubbling に戻すと、視点ボタンを押した直後に矢印キーが効かなくなる
+- pytest の `test_drawing.py` の DWG の案内のテストは、ODA File Converter が入っている環境（手元）では skip される。1 本の skip は正常。ODA の無いクラウドと CI では走る
 - **テストは本番のデータ置き場に書かない。** pytest は `backend/tests/conftest.py` がセッション単位で `.sidecars` と `.cache` を一時ディレクトリに差し替えている。E2E は実際のサーバーを使うので `backend/.sidecars/` に書く（消せば元に戻る）
 - ヘッドレス Chromium（SwiftShader）の写真で、操作パネルの近くや右下に白い四角が出るのは WebGL の合成の副作用で、実ブラウザでは出ない。絵文字が豆腐になるのもヘッドレスだけ。どちらもバグではない
 - シェルで `cd dir && nohup cmd &` と書くと `&` が列全体にかかり、`$!` が cmd でなく中継のサブシェルの pid になる。`(cd dir || exit; nohup cmd & echo $!)` と分ける

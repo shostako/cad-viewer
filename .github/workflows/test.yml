@@ -14,7 +14,8 @@ permissions:
 
 concurrency:
   group: test-${{ github.ref }}
-  cancel-in-progress: true
+  # cancel superseded PR runs only: every master commit keeps its own result
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   ci:
@@ -75,17 +76,34 @@ jobs:
             echo "::error title=E2E servers::uvicorn :8008 or Vite :5183 did not come up"
             exit 1
           fi
-          failed=0
+          total=0
+          passed=0
           for t in e2e/test_*.py; do
+            total=$((total + 1))
             echo "::group::$t"
-            if ! timeout 300 backend/.venv/bin/python "$t"; then
+            if timeout 300 backend/.venv/bin/python "$t"; then
+              passed=$((passed + 1))
+            else
               echo "::error title=E2E failed::$t"
-              failed=1
             fi
             echo "::endgroup::"
           done
-          exit "$failed"
+          echo "E2E: ${passed} / ${total} passed"
+          [ "$total" -gt 0 ] && [ "$passed" -eq "$total" ]
 
       - name: Server logs
         if: failure()
         run: tail -n 100 /tmp/uvicorn.log /tmp/vite.log || true
+
+      # the E2E scripts save screenshots under /tmp/cad_viewer_*.png as they go;
+      # the last ones written show how far a failing script got
+      - name: Upload screenshots and logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            /tmp/cad_viewer_*.png
+            /tmp/uvicorn.log
+            /tmp/vite.log
+          if-no-files-found: ignore
