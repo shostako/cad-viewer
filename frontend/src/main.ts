@@ -18,7 +18,7 @@ import { toModelData } from './model'
 import { Picker } from './picking'
 import { SectionTool, type Axis } from './section'
 import { renderTree } from './tree'
-import { Viewer, type RotateMode, type ViewPreset } from './viewer'
+import { DRAG_PX, Viewer, type RotateMode, type ViewPreset } from './viewer'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
@@ -37,7 +37,8 @@ app.innerHTML = `
     <div id="hud-title">cad-viewer</div>
     <div id="hud-info">STEP / IGES / STL / 3MF をドロップ、またはメニューから選択</div>
     <div id="hud-keys">
-      左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール・＋／−: 拡大縮小
+      左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール（カーソルの位置へ）・＋／−: 拡大縮小<br />
+      ダブルクリック: そこを回転の中心に　F・Home: 全体表示
     </div>
   </div>
   <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
@@ -82,6 +83,7 @@ const gui = new GUI({ title: '操作' })
 const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
 const actions = {
   open: () => fileInput.click(),
+  // 3D keeps the view direction and fits the visible parts; 2D fits the whole drawing
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
   clearMeasure: () => {
     measureTool.clearAll()
@@ -193,7 +195,13 @@ function isTextEntry(el: EventTarget | null): boolean {
 // clicking a view button the arrows would never reach a bubbling listener
 window.addEventListener('keydown', onNavigationKey, { capture: true })
 function onNavigationKey(e: KeyboardEvent): void {
-  if (is2D || isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return
+  if (isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return
+  if (e.key === 'f' || e.key === 'F' || e.key === 'Home') {
+    actions.fit() // 2D too: fits the drawing
+    e.preventDefault() // Home would scroll
+    return
+  }
+  if (is2D) return
   const shift = e.shiftKey
   switch (e.key) {
     case 'ArrowLeft':
@@ -384,21 +392,66 @@ measureTool.onChange(() => {
   }
 })
 
+/** client (page) pixel -> normalized device coords of the 3D canvas */
+function toNdc(clientX: number, clientY: number): THREE.Vector2 {
+  const rect = viewer.renderer.domElement.getBoundingClientRect()
+  return new THREE.Vector2(
+    ((clientX - rect.left) / rect.width) * 2 - 1,
+    -((clientY - rect.top) / rect.height) * 2 + 1,
+  )
+}
+
+// Wheel zooms toward what is under the cursor, in both rotate modes. Captured on
+// the container so neither OrbitControls nor TrackballControls sees it: their own
+// wheel zoom goes toward the orbit target, and OrbitControls' zoomToCursor steps by
+// the target distance, so it walks through a nearer surface.
+const WHEEL_STEP = 0.9 // scale per 100 px of wheel delta (one Chrome notch), same as the + key
+function wheelScale(e: WheelEvent): number {
+  // line mode (Firefox): one notch is 3 lines, so 100/3 per line matches Chrome's 100 px notch
+  let d = e.deltaY * (e.deltaMode === 1 ? 100 / 3 : e.deltaMode === 2 ? 100 : 1)
+  if (e.ctrlKey) d *= 10 // a trackpad pinch arrives as ctrl+wheel with small deltas
+  d = THREE.MathUtils.clamp(d, -300, 300) // one event never jumps more than ~3 notches
+  return Math.pow(WHEEL_STEP, -d / 100)
+}
+viewport.addEventListener(
+  'wheel',
+  (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const scale = wheelScale(e)
+    if (scale === 1) return
+    // zoomAt picks after finishing a running pivot slide, in the pose it zooms from
+    viewer.zoomAt(toNdc(e.clientX, e.clientY), scale, (ndc) => picker.surfacePoint(ndc))
+  },
+  { capture: true, passive: false },
+)
+
 // click-to-pick (suppress when the user is orbiting)
 let downAt: [number, number] | null = null
+// Furthest the pointer got from where it was pressed, for the last two
+// left-button presses: a double-click only counts when both were clicks. The
+// furthest point, not the release point, so a drag that comes back to where it
+// started (the view has turned) is not taken for a click.
+let travel = 0
+let clickTravels: [number, number] = [Infinity, Infinity]
+// Only the primary pointer counts: a second finger (pinch) would otherwise
+// overwrite where the first one went down.
 viewport.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary) return
   downAt = [e.clientX, e.clientY]
+  travel = 0
+})
+viewport.addEventListener('pointermove', (e) => {
+  if (e.isPrimary && downAt) travel = Math.max(travel, Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]))
 })
 viewport.addEventListener('pointerup', (e) => {
-  if (state.mode === 'なし' || !downAt) return
+  if (!e.isPrimary || !downAt) return
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1])
   downAt = null
-  if (moved > 5 || measureTool.busy) return
-  const rect = viewer.renderer.domElement.getBoundingClientRect()
-  const ndc = new THREE.Vector2(
-    ((e.clientX - rect.left) / rect.width) * 2 - 1,
-    -((e.clientY - rect.top) / rect.height) * 2 + 1,
-  )
+  if (e.button === 0) clickTravels = [clickTravels[1], Math.max(travel, moved)]
+  if (state.mode === 'なし') return
+  if (moved > DRAG_PX || measureTool.busy) return
+  const ndc = toNdc(e.clientX, e.clientY)
   const pick = picker.pick(ndc)
   if (!pick) return
 
@@ -419,6 +472,16 @@ viewport.addEventListener('pointerup', (e) => {
     .catch((err) => {
       hudInfo.textContent = `計測エラー: ${err instanceof Error ? err.message : err}`
     })
+})
+
+// Double-click (mode なし only: in 計測/注記 both clicks are picks) makes that
+// surface point the rotation centre.
+viewport.addEventListener('dblclick', (e) => {
+  if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > DRAG_PX) return
+  const ndc = toNdc(e.clientX, e.clientY)
+  viewer.camera.updateMatrixWorld()
+  const p = picker.surfacePoint(ndc)
+  if (p) viewer.orbitAround(p)
 })
 
 function fmtBBox(meta: ModelMeta): string {
@@ -540,6 +603,7 @@ window.addEventListener('drop', (e) => {
 // E2E test hooks
 const testHooks = window as unknown as Record<string, unknown>
 testHooks.__cadProject = (x: number, y: number, z: number) => {
+  viewer.camera.updateMatrixWorld() // correct straight after an event, before the next frame
   const v = new THREE.Vector3(x, y, z).project(viewer.camera)
   const rect = viewer.renderer.domElement.getBoundingClientRect()
   return {
@@ -554,15 +618,13 @@ testHooks.__cadView = () => ({
   target: viewer.target.toArray(),
   rotateMode: viewer.rotateMode,
   gridVisible: viewer.gridVisible,
+  near: viewer.camera.near,
+  far: viewer.camera.far,
 })
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 testHooks.__cadPick = (clientX: number, clientY: number) => {
-  const rect = viewer.renderer.domElement.getBoundingClientRect()
-  const ndc = new THREE.Vector2(
-    ((clientX - rect.left) / rect.width) * 2 - 1,
-    -((clientY - rect.top) / rect.height) * 2 + 1,
-  )
-  const r = picker.pick(ndc)
+  viewer.camera.updateMatrixWorld()
+  const r = picker.pick(toNdc(clientX, clientY))
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
 

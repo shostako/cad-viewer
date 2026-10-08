@@ -236,3 +236,24 @@ body,
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+
+/* rotation-centre marker after a double-click: fades out, never takes clicks.
+   Animate opacity only: CSS2DRenderer owns `transform`. */
+.pivot-marker {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffd060;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: pivot-fade 1s ease-out forwards;
+}
+@keyframes pivot-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}

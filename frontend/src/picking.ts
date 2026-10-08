@@ -60,23 +60,33 @@ export class Picker {
     this.parts.clear()
   }
 
-  /** Pick at normalized device coords; returns null when nothing is hit. */
-  pick(ndc: THREE.Vector2): PickResult | null {
+  /**
+   * First hit the user can see: a visible part, not on the clipped-away side
+   * of a section. The raycaster tests the raw geometry; with the section tool
+   * active the nearest hits may lie on the clipped side, so clicks in a
+   * sectioned view never select (measure/annotate/zoom to) what is hidden.
+   */
+  private firstVisibleHit(ndc: THREE.Vector2): THREE.Intersection | null {
     this.raycaster.setFromCamera(ndc, this.viewer.camera)
     const visible = this.meshes.filter((m) => m.parent?.visible)
     const hits = this.raycaster.intersectObjects(visible, false)
-    if (hits.length === 0) return null
-
-    // The raycaster tests the raw geometry; with the section tool active the
-    // nearest hits may lie on the clipped-away side of the plane. Take the
-    // first hit that is NOT clipped, so clicks in a sectioned view never
-    // select (and measure/annotate) geometry the user cannot see.
     const hit = hits.find((h) => {
       const planes = (h.object as THREE.Mesh).material as THREE.Material
       const clip = (planes as THREE.Material & { clippingPlanes?: THREE.Plane[] }).clippingPlanes
       if (!clip || clip.length === 0) return true
       return clip.every((p) => p.distanceToPoint(h.point) >= 0)
     })
+    return hit ?? null
+  }
+
+  /** Surface point under the cursor, without snapping: the wheel's zoom point and the rotation centre. */
+  surfacePoint(ndc: THREE.Vector2): THREE.Vector3 | null {
+    return this.firstVisibleHit(ndc)?.point.clone() ?? null
+  }
+
+  /** Pick at normalized device coords; returns null when nothing is hit. */
+  pick(ndc: THREE.Vector2): PickResult | null {
+    const hit = this.firstVisibleHit(ndc)
     if (!hit) return null
     const partId = hit.object.userData.partId as number
     const part = this.parts.get(partId)
