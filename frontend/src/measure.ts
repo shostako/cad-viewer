@@ -269,7 +269,10 @@ export class MeasureTool {
   private makeMarker(at: THREE.Vector3): THREE.Object3D {
     // screen-constant size via onBeforeRender scaling
     const geo = new THREE.SphereGeometry(1, 12, 12)
-    const mat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, depthTest: false })
+    // transparent at full opacity only so it draws in three's transparent
+    // pass, after the see-through faces of 半透明 and the translucent section
+    // cap: drawn in the opaque pass, those would blend over it
+    const mat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, depthTest: false, transparent: true })
     const m = new THREE.Mesh(geo, mat)
     m.renderOrder = 999
     m.position.copy(at)
@@ -285,7 +288,8 @@ export class MeasureTool {
 
   private makeDimLine(a: THREE.Vector3, b: THREE.Vector3): THREE.Object3D {
     const geo = new THREE.BufferGeometry().setFromPoints([a, b])
-    const mat = new THREE.LineBasicMaterial({ color: DIM_COLOR, depthTest: false })
+    // transparent at full opacity for the same reason as the markers
+    const mat = new THREE.LineBasicMaterial({ color: DIM_COLOR, depthTest: false, transparent: true })
     const line = new THREE.Line(geo, mat)
     line.renderOrder = 998
     return line

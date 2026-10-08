@@ -52,6 +52,24 @@ const GRID_COLORS: [number, number] = [0x3a4250, 0x2a3038]
 const GRID_COLORS_ON_WHITE: [number, number] = [0xc0c6ce, 0xdde1e6]
 
 /**
+ * How the model is drawn (表示スタイル); see setDisplayStyle.
+ * - shaded-edges: faces and the B-rep edge lines (the default)
+ * - shaded: faces only
+ * - wireframe: edge lines only (the triangles for parts without edge lines, e.g. STL)
+ * - xray: see-through faces with the edge lines, to look inside a mold assembly
+ */
+export const DISPLAY_STYLES = ['shaded-edges', 'shaded', 'wireframe', 'xray'] as const
+export type DisplayStyle = (typeof DISPLAY_STYLES)[number]
+/** face opacity in 半透明: a pin behind two walls of a block still shows */
+const XRAY_OPACITY = 0.3
+/**
+ * Least WCAG relative luminance of an edge line in the see-through styles:
+ * 3.5:1 against the background #1d2126 (luminance 0.015). The dark EDGE_COLOR
+ * is almost the background, so with the faces gone or see-through it vanishes.
+ */
+const SEE_THROUGH_EDGE_MIN_LUMINANCE = 0.18
+
+/**
  * How mouse drags and arrow keys rotate the view.
  * - turntable: world Z stays up on screen (CAD default; can't roll over the top)
  * - free: tumble in any direction, including over the top (trackball)
@@ -99,6 +117,10 @@ export class Viewer {
   private partMeshes = new Map<number, THREE.Mesh>()
   /** per-triangle copies of mesh-format parts while the draft colouring is on */
   private flatCopies = new Map<number, THREE.Mesh>()
+  private _displayStyle: DisplayStyle = 'shaded-edges'
+  private styleListeners: (() => void)[] = []
+  /** face parts that have edge lines: the lines, and their colour in the see-through styles */
+  private partEdges = new Map<number, { lines: LineSegments2; material: LineMaterial; seeThroughColor: THREE.Color }>()
   private raycaster = new THREE.Raycaster()
   /** running double-click pivot slide (camera and target both move) */
   private viewAnim: {
@@ -483,6 +505,10 @@ export class Viewer {
       polygonOffset: true,
       polygonOffsetFactor: 1,
       polygonOffsetUnits: 1,
+      // 半透明 makes this transparent and double-sided: three would then draw
+      // it in two passes (back faces, then front) and flag needsUpdate twice
+      // every frame. With depth writes off one pass looks the same.
+      forceSinglePass: true,
     })
     const mesh = new THREE.Mesh(geo, mat)
     // mesh formats (STL, 3MF, ...) carry no B-rep faces: their triangles are the shape
@@ -501,11 +527,82 @@ export class Viewer {
       this.renderer.getSize(size)
       edgeMat.resolution.copy(size)
       this.lineMaterials.push(edgeMat)
-      group.add(new LineSegments2(edgeGeo, edgeMat))
+      const lines = new LineSegments2(edgeGeo, edgeMat)
+      group.add(lines)
+      // loose curves keep their own colour and stay drawn in every style: the
+      // lines are all there is of them
+      if (!curveOnly) this.partEdges.set(part.id, { lines, material: edgeMat, seeThroughColor: edgeColorOnDark(color) })
     }
 
     this.partGroups.set(part.id, group)
     this.modelGroup.add(group)
+    // a reload, a new file or a 2D -> 3D switch comes up in the chosen style
+    this.applyStyle(part.id)
+  }
+
+  // ---- display style ----------------------------------------------------------
+
+  get displayStyle(): DisplayStyle {
+    return this._displayStyle
+  }
+
+  /** faces are not opaque: the dark edge colour and an opaque section cap would hide things */
+  get seeThrough(): boolean {
+    return this._displayStyle === 'wireframe' || this._displayStyle === 'xray'
+  }
+
+  /**
+   * Switch how the model is drawn. Only material flags, uniforms and
+   * visibility change: no geometry is built, and nothing is added per frame.
+   */
+  setDisplayStyle(style: DisplayStyle): void {
+    if (style === this._displayStyle) return
+    this._displayStyle = style
+    for (const id of this.partMeshes.keys()) this.applyStyle(id)
+    for (const fn of this.styleListeners) fn()
+  }
+
+  /** called after every style switch (the section tool restyles its cap) */
+  onDisplayStyleChange(fn: () => void): void {
+    this.styleListeners.push(fn)
+  }
+
+  /**
+   * The style's flags on one part. Owns visible / wireframe / transparent /
+   * opacity / depthWrite of the face material and the edge lines' visibility
+   * and colour; the thickness heatmap owns color / vertexColors, so the two
+   * never undo each other.
+   */
+  private applyStyle(partId: number): void {
+    const mesh = this.partMeshes.get(partId)
+    if (!mesh) return
+    const mat = mesh.material as THREE.MeshStandardMaterial
+    const edges = this.partEdges.get(partId)
+    const s = this._displayStyle
+    const hasFaces = (mesh.geometry.index?.count ?? 0) > 0
+    // Hidden faces stay pickable: the raycaster and the picker ignore
+    // Object3D.visible (the picker filters on the part group, the tree's
+    // switch). The section's stencil meshes are siblings, so caps still work.
+    mesh.visible = !(s === 'wireframe' && edges)
+    // no edge lines (STL): the triangles are the wireframe. three builds their
+    // line index once per geometry and caches it; no geometry is made here.
+    mat.wireframe = s === 'wireframe' && !edges && hasFaces
+    const xray = s === 'xray'
+    if (mat.transparent !== xray) {
+      mat.transparent = xray
+      // transparent picks the shader variant (the OPAQUE define): three only
+      // re-derives the program on a version bump
+      mat.needsUpdate = true
+    }
+    mat.opacity = xray ? XRAY_OPACITY : 1
+    // no depth writes: the inner walls of the same solid show, whatever the
+    // order of its triangles
+    mat.depthWrite = !xray
+    if (edges) {
+      edges.lines.visible = s !== 'shaded'
+      if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)
+      else edges.material.color.set(EDGE_COLOR)
+    }
   }
 
   isPartVisible(partId: number): boolean {
@@ -530,6 +627,7 @@ export class Viewer {
     this.partGroups.clear()
     this.partMeshes.clear()
     this.flatCopies.clear() // disposed with their groups above
+    this.partEdges.clear()
     this.lineMaterials = []
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     this.viewAnim = null
@@ -869,13 +967,19 @@ export class Viewer {
   private applyWhiteBackground(): () => void {
     const grid = this.gridHelper
     const light = grid?.visible && this.gridSpec ? this.makeGrid(GRID_COLORS_ON_WHITE) : null
+    // the see-through styles draw edges light (the part colour) for the dark
+    // screen; on a white page they would wash out, so they print dark like
+    // the shaded style. Listed before anything is touched.
+    const lifted = this.seeThrough ? [...this.partEdges.values()] : []
     const bg = this.scene.background
     this.scene.background = WHITE
     if (grid && light) {
       grid.visible = false
       this.scene.add(light)
     }
+    for (const e of lifted) e.material.color.set(EDGE_COLOR)
     return () => {
+      for (const e of lifted) e.material.color.copy(e.seeThroughColor)
       this.scene.background = bg // the same Color object as before
       if (grid && light) {
         this.scene.remove(light)
@@ -1063,6 +1167,20 @@ export class Viewer {
       if (src instanceof THREE.Vector2 && dst instanceof THREE.Vector2) dst.copy(src)
     }
   }
+}
+
+/**
+ * The part colour, mixed toward white just enough to reach the luminance
+ * floor on the dark background. Colours are linear (three's working space),
+ * where relative luminance is a weighted sum, so the mix is linear too:
+ * L + t(1 - L). Colours already above the floor are kept as they are. (A floor
+ * on HSL lightness would leave a saturated dark blue at luminance 0.07, 1.9:1.)
+ */
+function edgeColorOnDark(c: THREE.Color): THREE.Color {
+  const l = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b
+  if (l >= SEE_THROUGH_EDGE_MIN_LUMINANCE) return c.clone()
+  const t = (SEE_THROUGH_EDGE_MIN_LUMINANCE - l) / (1 - l)
+  return c.clone().lerp(WHITE, t)
 }
 
 /**
