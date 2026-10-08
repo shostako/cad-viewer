@@ -134,6 +134,23 @@ with sync_playwright() as p:
     load(STEP)
     assert not visible("#empty-hint")
 
+    # 6. the same with a drawing on screen: the old drawing must not stay
+    #    visible (and clickable) under the card, and the 3D-only folders stay
+    #    hidden only while a drawing is shown
+    load(DXF, wait_text="2D図面")
+    assert page.locator("#viewport2d svg").count() == 1
+    page.route("**/drawing.svg", lambda route: route.abort())
+    page.set_input_files("#file-input", DXF)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
+    page.unroute("**/drawing.svg")
+    assert visible("#empty-hint"), "nothing is shown any more: the card must come back"
+    assert page.locator("#viewport2d svg").count() == 0, "the old drawing is still in the 2D viewer"
+    assert not visible("#viewport2d")
+    check_keys_3d = keys()
+    assert "回転" in check_keys_3d, check_keys_3d  # the empty screen is the 3D one again
+    load(DXF, wait_text="2D図面")
+    check_2d()
+
     page.screenshot(path="/tmp/cad_viewer_view_modes.png")
     # the 422 of the broken file and the aborted mesh request
     errors = [e for e in errors if "Failed to load resource" not in e]

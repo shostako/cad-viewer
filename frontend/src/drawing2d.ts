@@ -54,6 +54,15 @@ export class Drawing2D {
     this.pendingSnap = null
   }
 
+  /** drop the drawing (the next load starts from an empty viewer) */
+  clear(): void {
+    this.container.replaceChildren()
+    this.svg = null
+    this.overlayG = null
+    this.snaps = []
+    this.pendingSnap = null
+  }
+
   clearMeasurements(): void {
     if (this.overlayG) this.overlayG.innerHTML = ''
     this.pendingSnap = null

@@ -665,6 +665,9 @@ async function loadFile(file: File): Promise<void> {
       // visible and pickable — clicks on it would be saved under the NEW
       // model's sidecar with the old model's coordinates.
       viewer.clearModel()
+      // the old drawing goes too: if the new load fails below, the screen must
+      // be really empty (not the old drawing, still interactive, under the card)
+      drawing2d.clear()
       contentShown = false
       picker.setModel([])
       treeBody.replaceChildren()
@@ -724,7 +727,10 @@ async function loadFile(file: File): Promise<void> {
     }
   } catch (e) {
     hudInfo.textContent = `エラー: ${e instanceof Error ? e.message : e}`
-    if (gen === loadGen && !contentShown) showEmpty(true)
+    if (gen === loadGen && !contentShown) {
+      show2D(false) // back to the plain empty screen, as at start-up
+      showEmpty(true)
+    }
   }
 }
 
