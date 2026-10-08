@@ -23,4 +23,5 @@ for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
 注意:
 - ヘッドレスChromium(SwiftShader)ではlil-gui付近に白矩形のWebGL合成アーティファクトが出る（実ブラウザでは出ない）
 - 計測・注記・サイドカー系のテストはサイドカーに書き込むため、`backend/.sidecars/` を消せばクリーンに戻る
-- テストは `window.__cadProject` / `__cadPick` / `__cadView` フック（main.ts）でワールド座標からクリック位置を決定論的に導出し、カメラの状態を読む
+- テストは `window.__cadProject` / `__cadPick` / `__cadView` フック（main.ts）でワールド座標からクリック位置を決定論的に導出し、カメラの状態を読む（`__cadView` は near / far も返す）
+- `test_navigation.py`（全体表示・ホイールの拡大縮小・ダブルクリックの回転の中心）は、検査用の箱の STL を一時ディレクトリに書いて使い、最後に消す

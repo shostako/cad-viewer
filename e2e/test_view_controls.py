@@ -74,14 +74,25 @@ with sync_playwright() as p:
     def floor_ink():
         """count non-background pixels in a patch of bare floor.
 
-        In the default (fit) view the floor behind the model shows at the upper
-        left, below the tree panel and clear of the model, the GUI and the
-        measurement list.
+        The patch is computed at run time beside the model: from the left edge
+        to just left of the model's projected box, between the tree panel and
+        the HUD. The fit fills most of the canvas, so a fixed patch would
+        overlap the model; and close up the floor's 50 mm grid lines are too
+        far apart to cross a narrow patch, so step back first (from a fresh
+        fit, so every call sees the same view).
         """
+        page.keyboard.press("f")
+        for _ in range(3):
+            page.keyboard.press("-")
+        xs = [project([x, y, z])["x"] for x in (0, 100) for y in (0, 60) for z in (0, 40)]
+        tree = page.locator("#tree-panel").bounding_box()
+        hud = page.locator("#hud").bounding_box()
+        x0, x1 = 8, int(min(xs)) - 8
+        y0, y1 = int(tree["y"] + tree["height"]) + 8, int(hud["y"]) - 8
+        assert x1 - x0 >= 60 and y1 - y0 >= 200, ("floor patch too small", x0, x1, y0, y1)
         png = page.screenshot()
         img = Image.open(io.BytesIO(png)).convert("RGB")
-        w, h = img.size
-        box = img.crop((int(w * 0.02), int(h * 0.22), int(w * 0.27), int(h * 0.34)))
+        box = img.crop((x0, y0, x1, y1))
         return sum(1 for px in box.getdata() if max(abs(a - b) for a, b in zip(px, BG)) > 6)
 
     page.goto(BASE_URL)

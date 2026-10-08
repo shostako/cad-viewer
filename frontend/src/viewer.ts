@@ -18,6 +18,20 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1)
  * margin, so a key turn right after them doesn't snap.
  */
 const POLE_MARGIN = 1e-3
+/** share of the limiting viewport dimension a fit fills; the rest is margin */
+const FIT_FILL = 0.88
+/** direction (target -> camera) a freshly loaded model is seen from */
+const LOAD_VIEW_DIR = new THREE.Vector3(1, -1, 0.7).normalize()
+/** near = framed radius / NEAR_DIV, far = radius * FAR_MUL: the same 1e5 depth range as before, relative to the model */
+const NEAR_DIV = 500
+const FAR_MUL = 200
+/** the wheel stops this many near-plane distances short of the point it zooms to */
+const MIN_ZOOM_NEARS = 4
+/** zooming out stops at this share of the far plane (camera to target) */
+const MAX_ZOOM_FAR = 0.25
+/** double-click pivot: slide duration, and how long the marker stays */
+const PIVOT_MS = 250
+const PIVOT_MARKER_MS = 1000
 
 /**
  * How mouse drags and arrow keys rotate the view.
@@ -63,6 +77,17 @@ export class Viewer {
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
+  private raycaster = new THREE.Raycaster()
+  /** running double-click pivot slide (camera and target both move) */
+  private viewAnim: {
+    from: THREE.Vector3
+    to: THREE.Vector3
+    fromTarget: THREE.Vector3
+    toTarget: THREE.Vector3
+    start: number
+  } | null = null
+  private pivotMarker: CSS2DObject | null = null
+  private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -100,6 +125,9 @@ export class Viewer {
     const canvas = this.renderer.domElement
     canvas.addEventListener('pointerdown', (e) => {
       this.heldPointers.add(e.pointerId)
+      // a drag that starts mid-pivot orbits the new centre. The controls only
+      // record screen coordinates on pointerdown, so finishing after them is safe.
+      this.finishViewAnim()
     })
     const release = (e: PointerEvent) => {
       this.heldPointers.delete(e.pointerId)
@@ -125,6 +153,9 @@ export class Viewer {
     const resize = () => {
       const w = container.clientWidth
       const h = container.clientHeight
+      // hidden (2D drawing shown): keep the last size, so the aspect never
+      // becomes NaN for the next 3D load
+      if (w === 0 || h === 0) return
       this.camera.aspect = w / h
       this.camera.updateProjectionMatrix()
       this.renderer.setSize(w, h)
@@ -140,7 +171,8 @@ export class Viewer {
       // clamp: a background tab resumes with a huge gap, which would jump the spin
       const dt = Math.min((now - last) / 1000, 0.1)
       last = now
-      if (this.autoRotate && this.heldPointers.size === 0 && dt > 0) {
+      if (this.viewAnim) this.stepViewAnim(now)
+      else if (this.autoRotate && this.heldPointers.size === 0 && dt > 0) {
         this.rotateView((this.autoRotateSpeed * Math.PI / 180) * dt, 0)
       }
       this.activeControls().update()
@@ -263,7 +295,8 @@ export class Viewer {
   setModel(model: ModelData): void {
     this.clearModel()
     for (const part of model.parts) this.addPart(part)
-    this.fitToView()
+    this.buildGrid(this.modelBBox())
+    this.resetView()
   }
 
   private addPart(part: PartData): void {
@@ -330,6 +363,8 @@ export class Viewer {
     this.partMeshes.clear()
     this.lineMaterials = []
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
+    this.viewAnim = null
+    this.removePivotMarker()
     if (this.gridHelper) {
       this.scene.remove(this.gridHelper)
       this.gridHelper.dispose()
@@ -337,28 +372,103 @@ export class Viewer {
     }
   }
 
+  /** Zoom to fit the visible bodies, keeping the current view direction and roll. */
   fitToView(): void {
     const box = this.modelBBox()
+    if (box.isEmpty()) return
+    this.finishViewAnim()
+    this.stopInertia()
+    const forward = this.target.clone().sub(this.camera.position)
+    if (forward.lengthSq() < 1e-20) forward.copy(LOAD_VIEW_DIR).negate()
+    this.frameBox(box, forward.normalize())
+  }
+
+  /** View for a freshly loaded model: default oblique direction, Z up. */
+  private resetView(): void {
+    this.viewAnim = null
+    this.stopInertia()
+    this.camera.up.copy(WORLD_UP)
+    const box = this.modelBBox()
+    if (!box.isEmpty()) this.frameBox(box, LOAD_VIEW_DIR.clone().negate())
+  }
+
+  /**
+   * Place the camera on `forward` so the box's 8 corners fill FIT_FILL of the
+   * limiting viewport dimension, with equal margins on both axes.
+   *
+   * With camera C = centre + a*right + b*up + e*forward (e < 0: behind the
+   * centre), a corner at (x, y, z) in the same axes is inside the shrunken
+   * right plane when x - a <= kH*(z - e), i.e. a - kH*e >= x - kH*z. Making
+   * both planes of a pair touch the box gives e for that axis; the axis that
+   * needs the camera further back limits. The lateral offsets are then
+   * re-centred, because perspective draws the near end larger.
+   */
+  private frameBox(input: THREE.Box3, forward: THREE.Vector3): void {
+    const box = input.clone()
+    let r = box.getSize(new THREE.Vector3()).length() / 2
+    if (r < 1e-9) {
+      box.expandByScalar(0.5) // a point: frame it as a 1-unit cube
+      r = box.getSize(new THREE.Vector3()).length() / 2
+    }
+    const center = box.getCenter(new THREE.Vector3())
+    const right = forward.clone().cross(this.camera.up)
+    if (right.lengthSq() < 1e-24) {
+      // looking along up: any vector square to forward will do
+      right.set(1, 0, 0).cross(forward)
+      if (right.lengthSq() < 1e-12) right.set(0, 1, 0).cross(forward)
+    }
+    right.normalize()
+    const up = right.clone().cross(forward).normalize()
+
+    const xs: number[] = []
+    const ys: number[] = []
+    const zs: number[] = []
+    const q = new THREE.Vector3()
+    for (let i = 0; i < 8; i++) {
+      q.set(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z)
+      q.sub(center)
+      xs.push(q.dot(right))
+      ys.push(q.dot(up))
+      zs.push(q.dot(forward))
+    }
+    const kV = FIT_FILL * Math.tan((this.camera.fov * Math.PI) / 360)
+    const kH = kV * this.camera.aspect
+    let mR = -Infinity
+    let mL = -Infinity
+    let mT = -Infinity
+    let mB = -Infinity
+    for (let k = 0; k < 8; k++) {
+      mR = Math.max(mR, xs[k] - kH * zs[k])
+      mL = Math.max(mL, -xs[k] - kH * zs[k])
+      mT = Math.max(mT, ys[k] - kV * zs[k])
+      mB = Math.max(mB, -ys[k] - kV * zs[k])
+    }
+    const near = r / NEAR_DIV
+    let e = Math.min(-(mR + mL) / (2 * kH), -(mT + mB) / (2 * kV))
+    // keep the nearest corner in front of the near plane (never binds for a real box)
+    e = Math.min(e, Math.min(...zs) - MIN_ZOOM_NEARS * near)
+    const a = centredOffset(xs, zs, e)
+    const b = centredOffset(ys, zs, e)
+
+    const target = center.addScaledVector(right, a).addScaledVector(up, b)
+    this.camera.position.copy(target).addScaledVector(forward, e)
+    this.camera.near = near
+    this.camera.far = Math.max(r * FAR_MUL, 2 * (-e + r))
+    this.camera.updateProjectionMatrix()
+    this.setTarget(target)
+  }
+
+  /** ground grid sized to the loaded model (built once per model, not per fit) */
+  private buildGrid(box: THREE.Box3): void {
+    if (this.gridHelper) {
+      this.scene.remove(this.gridHelper)
+      this.gridHelper.dispose()
+      this.gridHelper = null
+    }
     if (box.isEmpty()) return
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
     const maxDim = Math.max(size.x, size.y, size.z)
-    const dist = maxDim / (2 * Math.tan((this.camera.fov * Math.PI) / 360))
-
-    const dir = new THREE.Vector3(1, -1, 0.7).normalize()
-    this.stopInertia()
-    this.camera.up.copy(WORLD_UP)
-    this.camera.position.copy(center).addScaledVector(dir, dist * 1.5)
-    this.camera.near = maxDim / 1000
-    this.camera.far = maxDim * 100
-    this.camera.updateProjectionMatrix()
-    this.setTarget(center)
-
-    // ground grid sized to the model
-    if (this.gridHelper) {
-      this.scene.remove(this.gridHelper)
-      this.gridHelper.dispose()
-    }
     const gridSize = Math.pow(10, Math.ceil(Math.log10(maxDim * 2)))
     this.gridHelper = new THREE.GridHelper(gridSize, 20, 0x3a4250, 0x2a3038)
     // GridHelper lies in XZ; rotate into XY plane for Z-up world
@@ -366,6 +476,93 @@ export class Viewer {
     this.gridHelper.position.set(center.x, center.y, box.min.z)
     this.gridHelper.visible = this._gridVisible
     this.scene.add(this.gridHelper)
+  }
+
+  // ---- zoom toward a point, double-click pivot ----------------------------
+
+  /**
+   * Zoom about `anchor` (the surface point under the cursor) or, over empty
+   * space, the point under the cursor on the plane through the target square
+   * to the view. Camera and target both scale about that point, so the view
+   * direction is unchanged and the point stays under the cursor. scale < 1 zooms in.
+   */
+  zoomAt(ndc: THREE.Vector2, scale: number, anchor: THREE.Vector3 | null): void {
+    if (!(scale > 0) || scale === 1) return
+    this.finishViewAnim()
+    this.camera.updateMatrixWorld()
+    const p = anchor ?? this.targetPlanePoint(ndc)
+    const cam = this.camera.position
+    const target = this.target.clone()
+    let s = scale
+    if (s < 1) s = Math.min(1, Math.max(s, (this.camera.near * MIN_ZOOM_NEARS) / cam.distanceTo(p)))
+    else s = Math.max(1, Math.min(s, (this.camera.far * MAX_ZOOM_FAR) / cam.distanceTo(target)))
+    if (s === 1) return
+    cam.sub(p).multiplyScalar(s).add(p)
+    target.sub(p).multiplyScalar(s).add(p)
+    this.setTarget(target) // both schemes' targets + lookAt + update
+  }
+
+  private targetPlanePoint(ndc: THREE.Vector2): THREE.Vector3 {
+    this.raycaster.setFromCamera(ndc, this.camera)
+    const forward = this.target.clone().sub(this.camera.position).normalize()
+    const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(forward, this.target)
+    return this.raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? this.target.clone()
+  }
+
+  /** Make `point` the rotation centre: slide the view sideways (no turn, no zoom) until it sits mid-screen. */
+  orbitAround(point: THREE.Vector3): void {
+    this.viewAnim = null // a second double-click starts from wherever the first one got to
+    this.stopInertia()
+    const from = this.camera.position.clone()
+    const fromTarget = this.target.clone()
+    const forward = fromTarget.clone().sub(from).normalize()
+    const depth = Math.max(point.clone().sub(from).dot(forward), this.camera.near * MIN_ZOOM_NEARS)
+    this.viewAnim = {
+      from,
+      to: point.clone().addScaledVector(forward, -depth),
+      fromTarget,
+      toTarget: point.clone(),
+      start: performance.now(),
+    }
+    this.showPivotMarker(point)
+  }
+
+  private stepViewAnim(now: number): void {
+    const a = this.viewAnim!
+    const t = THREE.MathUtils.clamp((now - a.start) / PIVOT_MS, 0, 1)
+    const k = t * t * (3 - 2 * t) // smoothstep
+    this.camera.position.lerpVectors(a.from, a.to, k)
+    const target = new THREE.Vector3().lerpVectors(a.fromTarget, a.toTarget, k)
+    this.controls.target.copy(target)
+    this.trackball.target.copy(target)
+    this.camera.lookAt(target) // the loop's controls.update() follows
+    if (t >= 1) this.viewAnim = null
+  }
+
+  /** Jump a running pivot slide to its end, so whatever interrupts it orbits the new centre. */
+  private finishViewAnim(): void {
+    const a = this.viewAnim
+    if (!a) return
+    this.viewAnim = null
+    this.camera.position.copy(a.to)
+    this.setTarget(a.toTarget)
+  }
+
+  private showPivotMarker(at: THREE.Vector3): void {
+    this.removePivotMarker()
+    // on the scene, not `overlay`: the overlay belongs to the measure tool
+    this.pivotMarker = this.makeLabel('', at, 'pivot-marker')
+    this.scene.add(this.pivotMarker)
+    this.pivotMarkerTimer = setTimeout(() => this.removePivotMarker(), PIVOT_MARKER_MS)
+  }
+
+  private removePivotMarker(): void {
+    clearTimeout(this.pivotMarkerTimer)
+    this.pivotMarkerTimer = undefined
+    if (!this.pivotMarker) return
+    this.scene.remove(this.pivotMarker)
+    this.pivotMarker.element.remove()
+    this.pivotMarker = null
   }
 
   // ---- grid ---------------------------------------------------------------
@@ -396,6 +593,7 @@ export class Viewer {
 
   setRotateMode(mode: RotateMode): void {
     if (mode === this._rotateMode) return
+    this.finishViewAnim()
     this.stopInertia()
     const target = this.target.clone() // from the scheme being switched away from
     this._rotateMode = mode
@@ -419,6 +617,7 @@ export class Viewer {
    * up, so the face on that side of the model comes into view.
    */
   rotateView(azimuth: number, elevation: number): void {
+    this.finishViewAnim()
     const target = this.target
     const offset = this.camera.position.clone().sub(target)
     const r = offset.length()
@@ -447,6 +646,7 @@ export class Viewer {
 
   /** Slide the view across the screen; dx/dy are fractions of the view height. */
   pan(dx: number, dy: number): void {
+    this.finishViewAnim()
     const { right, up } = this.screenAxes()
     const dist = this.camera.position.distanceTo(this.target)
     const viewHeight = 2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)
@@ -457,14 +657,17 @@ export class Viewer {
 
   /** factor < 1 moves closer, > 1 moves away */
   zoom(factor: number): void {
+    this.finishViewAnim()
     const offset = this.camera.position.clone().sub(this.target)
     const minDist = this.camera.near * 2
-    offset.setLength(Math.max(offset.length() * factor, minDist))
+    const maxDist = Math.max(this.camera.far * MAX_ZOOM_FAR, offset.length())
+    offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, minDist, maxDist))
     this.camera.position.copy(this.target).add(offset)
   }
 
   /** Jump to a standard view, keeping the current target and distance. */
   setView(preset: ViewPreset): void {
+    this.finishViewAnim()
     this.stopInertia()
     const p = PRESETS[preset]
     const dir = new THREE.Vector3(...p.dir).normalize()
@@ -540,4 +743,27 @@ export class Viewer {
       if (src instanceof THREE.Vector2 && dst instanceof THREE.Vector2) dst.copy(src)
     }
   }
+}
+
+/**
+ * Lateral offset o that leaves equal margins on both sides: the largest and
+ * smallest of (c - o) / (z - e) cancel. Each term falls as o grows, so the
+ * sum is monotonic and bisection is exact enough after 60 steps.
+ */
+function centredOffset(cs: number[], zs: number[], e: number): number {
+  let lo = Math.min(...cs)
+  let hi = Math.max(...cs)
+  for (let i = 0; i < 60; i++) {
+    const o = (lo + hi) / 2
+    let max = -Infinity
+    let min = Infinity
+    for (let k = 0; k < cs.length; k++) {
+      const r = (cs[k] - o) / (zs[k] - e)
+      if (r > max) max = r
+      if (r < min) min = r
+    }
+    if (max + min > 0) lo = o
+    else hi = o
+  }
+  return (lo + hi) / 2
 }
