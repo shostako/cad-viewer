@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { TrackballControls } from 'three/examples/jsm/controls/TrackballControls.js'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
@@ -10,17 +11,55 @@ const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
 /** loose curves (parts with no faces) — the dark edge color would vanish on the background */
 const CURVE_COLOR = 0xe0b050
+const WORLD_UP = new THREE.Vector3(0, 0, 1)
+/**
+ * Keep the turntable camera this far (rad, ~0.06 deg) from the poles: lookAt
+ * with up=Z degenerates there. The top / bottom presets stop at the same
+ * margin, so a key turn right after them doesn't snap.
+ */
+const POLE_MARGIN = 1e-3
+
+/**
+ * How mouse drags and arrow keys rotate the view.
+ * - turntable: world Z stays up on screen (CAD default; can't roll over the top)
+ * - free: tumble in any direction, including over the top (trackball)
+ */
+export type RotateMode = 'turntable' | 'free'
+
+export type ViewPreset = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom' | 'iso'
+
+/** camera direction (from target) and screen-up for each standard view (Z-up world) */
+const PRESETS: Record<ViewPreset, { dir: [number, number, number]; up: [number, number, number] }> = {
+  front: { dir: [0, -1, 0], up: [0, 0, 1] },
+  back: { dir: [0, 1, 0], up: [0, 0, 1] },
+  right: { dir: [1, 0, 0], up: [0, 0, 1] },
+  left: { dir: [-1, 0, 0], up: [0, 0, 1] },
+  // top / bottom: +X stays to the right, as on a drawing
+  top: { dir: [0, 0, 1], up: [0, 1, 0] },
+  bottom: { dir: [0, 0, -1], up: [0, -1, 0] },
+  iso: { dir: [1, -1, 1], up: [0, 0, 1] },
+}
 
 export class Viewer {
   readonly scene = new THREE.Scene()
   readonly camera: THREE.PerspectiveCamera
   readonly renderer: THREE.WebGLRenderer
+  /** turntable controls (world Z up) */
   readonly controls: OrbitControls
+  /** free-rotation controls; enabled only in 'free' rotate mode */
+  readonly trackball: TrackballControls
+  /** spin the view around the vertical axis (deg/s) when autoRotate is on */
+  autoRotate = false
+  autoRotateSpeed = 30
   readonly labelRenderer: CSS2DRenderer
   /** overlay group for dimensions / markers / annotations */
   readonly overlay = new THREE.Group()
   private modelGroup = new THREE.Group()
   private gridHelper: THREE.GridHelper | null = null
+  private _gridVisible = true
+  private _rotateMode: RotateMode = 'turntable'
+  /** pointers held down on the canvas — auto-rotate pauses so it doesn't fight the user */
+  private heldPointers = new Set<number>()
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
@@ -46,6 +85,30 @@ export class Viewer {
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement)
     this.controls.enableDamping = true
+    this.trackball = new TrackballControls(this.camera, this.renderer.domElement)
+    // TrackballControls turns ~1 rad per half-width drag at speed 1; 4 roughly
+    // matches the turntable's feel (one screen height = one turn)
+    this.trackball.rotateSpeed = 4
+    this.trackball.zoomSpeed = 1.2
+    this.trackball.panSpeed = 0.8
+    this.trackball.enabled = false
+    // Track held pointers ourselves rather than the controls' start/end:
+    // TrackballControls (three r185) handles pointercancel without an 'end',
+    // so a touch/pen gesture cancelled by the OS would leave auto-rotate
+    // paused for good. Release events are taken on window so a pointer let go
+    // outside the canvas still counts.
+    const canvas = this.renderer.domElement
+    canvas.addEventListener('pointerdown', (e) => {
+      this.heldPointers.add(e.pointerId)
+    })
+    const release = (e: PointerEvent) => {
+      this.heldPointers.delete(e.pointerId)
+    }
+    window.addEventListener('pointerup', release)
+    window.addEventListener('pointercancel', release)
+    canvas.addEventListener('lostpointercapture', release)
+    // a button held while the window loses focus (Alt+Tab) never sends pointerup
+    window.addEventListener('blur', () => this.heldPointers.clear())
 
     // CAD-ish lighting: hemisphere + key + fill
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2))
@@ -67,12 +130,20 @@ export class Viewer {
       this.renderer.setSize(w, h)
       this.labelRenderer.setSize(w, h)
       for (const m of this.lineMaterials) m.resolution.set(w, h)
+      this.trackball.handleResize()
     }
     new ResizeObserver(resize).observe(container)
     resize()
 
-    this.renderer.setAnimationLoop(() => {
-      this.controls.update()
+    let last = performance.now()
+    this.renderer.setAnimationLoop((now: number) => {
+      // clamp: a background tab resumes with a huge gap, which would jump the spin
+      const dt = Math.min((now - last) / 1000, 0.1)
+      last = now
+      if (this.autoRotate && this.heldPointers.size === 0 && dt > 0) {
+        this.rotateView((this.autoRotateSpeed * Math.PI / 180) * dt, 0)
+      }
+      this.activeControls().update()
       this.renderer.render(this.scene, this.camera)
       this.labelRenderer.render(this.scene, this.camera)
     })
@@ -275,12 +346,13 @@ export class Viewer {
     const dist = maxDim / (2 * Math.tan((this.camera.fov * Math.PI) / 360))
 
     const dir = new THREE.Vector3(1, -1, 0.7).normalize()
+    this.stopInertia()
+    this.camera.up.copy(WORLD_UP)
     this.camera.position.copy(center).addScaledVector(dir, dist * 1.5)
     this.camera.near = maxDim / 1000
     this.camera.far = maxDim * 100
     this.camera.updateProjectionMatrix()
-    this.controls.target.copy(center)
-    this.controls.update()
+    this.setTarget(center)
 
     // ground grid sized to the model
     if (this.gridHelper) {
@@ -292,6 +364,180 @@ export class Viewer {
     // GridHelper lies in XZ; rotate into XY plane for Z-up world
     this.gridHelper.rotation.x = Math.PI / 2
     this.gridHelper.position.set(center.x, center.y, box.min.z)
+    this.gridHelper.visible = this._gridVisible
     this.scene.add(this.gridHelper)
+  }
+
+  // ---- grid ---------------------------------------------------------------
+
+  get gridVisible(): boolean {
+    return this._gridVisible
+  }
+
+  set gridVisible(v: boolean) {
+    this._gridVisible = v
+    if (this.gridHelper) this.gridHelper.visible = v
+  }
+
+  // ---- view navigation ----------------------------------------------------
+
+  get rotateMode(): RotateMode {
+    return this._rotateMode
+  }
+
+  /**
+   * Point the view orbits around. Each control scheme keeps its own copy (a
+   * trackball pan moves only the trackball's), so read the active one and
+   * hand it over on a mode switch.
+   */
+  get target(): THREE.Vector3 {
+    return this.activeControls().target
+  }
+
+  setRotateMode(mode: RotateMode): void {
+    if (mode === this._rotateMode) return
+    this.stopInertia()
+    const target = this.target.clone() // from the scheme being switched away from
+    this._rotateMode = mode
+    this.controls.target.copy(target)
+    this.trackball.target.copy(target)
+    this.trackball.enabled = mode === 'free'
+    this.controls.enabled = mode === 'turntable'
+    if (mode === 'turntable') {
+      // the turntable assumes Z up: undo any roll left over from free
+      // rotation, and step off the poles where lookAt degenerates
+      this.camera.up.copy(WORLD_UP)
+      this.rotateView(0, 0)
+    }
+    this.camera.lookAt(target)
+    this.activeControls().update()
+  }
+
+  /**
+   * Orbit the camera around the target. azimuth turns about the vertical axis,
+   * elevation tilts up/down (radians). Positive values move the CAMERA right /
+   * up, so the face on that side of the model comes into view.
+   */
+  rotateView(azimuth: number, elevation: number): void {
+    const target = this.target
+    const offset = this.camera.position.clone().sub(target)
+    const r = offset.length()
+    if (r === 0) return
+    if (this._rotateMode === 'turntable') {
+      // camera right = +azimuth around +Z (counter-clockwise seen from above)
+      offset.applyAxisAngle(WORLD_UP, azimuth)
+      const phi = THREE.MathUtils.clamp(
+        Math.acos(THREE.MathUtils.clamp(offset.z / r, -1, 1)) - elevation,
+        POLE_MARGIN,
+        Math.PI - POLE_MARGIN,
+      )
+      const theta = Math.atan2(offset.y, offset.x)
+      offset.set(r * Math.sin(phi) * Math.cos(theta), r * Math.sin(phi) * Math.sin(theta), r * Math.cos(phi))
+    } else {
+      const { right, up } = this.screenAxes()
+      const q = new THREE.Quaternion()
+        .setFromAxisAngle(up, azimuth)
+        .multiply(new THREE.Quaternion().setFromAxisAngle(right, -elevation))
+      offset.applyQuaternion(q)
+      this.camera.up.copy(up).applyQuaternion(q).normalize()
+    }
+    this.camera.position.copy(target).add(offset)
+    this.camera.lookAt(target)
+  }
+
+  /** Slide the view across the screen; dx/dy are fractions of the view height. */
+  pan(dx: number, dy: number): void {
+    const { right, up } = this.screenAxes()
+    const dist = this.camera.position.distanceTo(this.target)
+    const viewHeight = 2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)
+    const move = right.multiplyScalar(dx * viewHeight).add(up.multiplyScalar(dy * viewHeight))
+    this.camera.position.add(move)
+    this.setTarget(this.target.clone().add(move))
+  }
+
+  /** factor < 1 moves closer, > 1 moves away */
+  zoom(factor: number): void {
+    const offset = this.camera.position.clone().sub(this.target)
+    const minDist = this.camera.near * 2
+    offset.setLength(Math.max(offset.length() * factor, minDist))
+    this.camera.position.copy(this.target).add(offset)
+  }
+
+  /** Jump to a standard view, keeping the current target and distance. */
+  setView(preset: ViewPreset): void {
+    this.stopInertia()
+    const p = PRESETS[preset]
+    const dir = new THREE.Vector3(...p.dir).normalize()
+    const dist = this.camera.position.distanceTo(this.target) || 1
+    if (this._rotateMode === 'turntable') {
+      this.camera.up.copy(WORLD_UP)
+      if (Math.abs(dir.z) > 0.999) {
+        // Straight down/up is the turntable's pole, where lookAt with up=Z
+        // has no answer. Step off it so the screen-up lands on the preset's
+        // up (+X stays right): screen-up ~ -sign(dir.z) * nudge, hence the sign.
+        dir.addScaledVector(new THREE.Vector3(...p.up), -Math.sign(dir.z) * POLE_MARGIN).normalize()
+      }
+    } else {
+      this.camera.up.set(...p.up)
+    }
+    this.camera.position.copy(this.target).addScaledVector(dir, dist)
+    this.camera.lookAt(this.target)
+    this.activeControls().update()
+  }
+
+  private activeControls(): OrbitControls | TrackballControls {
+    return this._rotateMode === 'free' ? this.trackball : this.controls
+  }
+
+  private setTarget(t: THREE.Vector3): void {
+    this.controls.target.copy(t)
+    this.trackball.target.copy(t)
+    this.camera.lookAt(t)
+    this.activeControls().update()
+  }
+
+  /** camera right / up directions on screen, orthonormal */
+  private screenAxes(): { right: THREE.Vector3; up: THREE.Vector3 } {
+    const forward = this.target.clone().sub(this.camera.position).normalize()
+    const right = forward.clone().cross(this.camera.up).normalize()
+    if (right.lengthSq() < 1e-12) right.set(1, 0, 0) // looking along up: pick any
+    const up = right.clone().cross(forward).normalize()
+    return { right, up }
+  }
+
+  /**
+   * End the coast of a drag that just ended. Without this, a preset view or
+   * fit set during the coast drifts away as the leftover spin is applied.
+   * Callers overwrite the camera right after, so how the coast ends doesn't
+   * matter as long as nothing is left pending.
+   */
+  private stopInertia(): void {
+    // only the active scheme: update() on the inactive one would re-aim the
+    // camera at its stale target (and OrbitControls assumes Z up)
+    if (this._rotateMode === 'turntable') {
+      if (this.controls.enableDamping) {
+        // OrbitControls has no public "stop": with damping off, update()
+        // applies the pending delta in one step (fast-forwards the coast)
+        // and clears it
+        this.controls.enableDamping = false
+        this.controls.update()
+        this.controls.enableDamping = true
+      }
+      return
+    }
+    // TrackballControls keeps its coast in private fields (three r185, which
+    // package.json pins). Touch them only if they are there: if a three update
+    // renames them, a stale coast is far better than every preset throwing.
+    const tb = this.trackball as unknown as Record<string, unknown>
+    if (typeof tb._lastAngle === 'number') tb._lastAngle = 0
+    for (const [from, to] of [
+      ['_moveCurr', '_movePrev'],
+      ['_panEnd', '_panStart'],
+      ['_zoomEnd', '_zoomStart'],
+    ]) {
+      const src = tb[from]
+      const dst = tb[to]
+      if (src instanceof THREE.Vector2 && dst instanceof THREE.Vector2) dst.copy(src)
+    }
   }
 }
