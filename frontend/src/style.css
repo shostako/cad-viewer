@@ -61,6 +61,12 @@ body,
   margin-bottom: 2px;
 }
 
+#hud-keys {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #7f8b99;
+}
+
 #dropzone {
   position: absolute;
   inset: 16px;
