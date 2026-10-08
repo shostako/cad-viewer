@@ -17,7 +17,6 @@ from playwright.sync_api import sync_playwright
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
-STEP = str(TESTDATA / "mini_mold.step")
 DXF = str(TESTDATA / "plate_drawing.dxf")
 PREFS = "cad-viewer:props"
 
@@ -67,6 +66,12 @@ CLOSED_STL = os.path.join(tmp, "box_closed.stl")
 OPEN_STL = os.path.join(tmp, "box_open.stl")
 box_stl(CLOSED_STL, (10, 20, 30))
 box_stl(OPEN_STL, (10, 20, 30), top=False)
+# A private copy of the mold (nine trailing newlines: its own content hash, so
+# its own sidecar, emptied below). Other scripts leave measurements on the
+# shared mini_mold.step; restored here they would lengthen the measurement list
+# that the layout check in 5. lays out against the GUI.
+STEP = os.path.join(tmp, "mini_mold.step")
+Path(STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 9)
 
 try:
     with sync_playwright() as p:
@@ -82,6 +87,15 @@ try:
             return pg
 
         page = new_page()
+        r = page.request.post(
+            f"{BASE_URL}/api/models",
+            multipart={"file": {"name": "mini_mold.step", "mimeType": "application/octet-stream",
+                                "buffer": Path(STEP).read_bytes()}},
+            timeout=120000,
+        )
+        assert r.ok, ("upload", r.status, r.text())
+        r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": []})
+        assert r.ok, ("empty sidecar", r.status, r.text())
         page.evaluate(f"localStorage.removeItem('{PREFS}')")
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")

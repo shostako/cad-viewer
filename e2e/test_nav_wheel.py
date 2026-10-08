@@ -5,13 +5,14 @@ the CI per-script limit. Helpers and the rule for expected values: nav_common.py
 import math
 
 from nav_common import (
-    LOAD_DIR, MOLD, RUNNER, STEP, SURFACE,
+    LOAD_DIR, MOLD, RUNNER, SURFACE,
     add, close, corners, cross, dot, length, mul, nav_session, norm, sub,
 )
 
 with nav_session() as n:
     page = n.page
     paths = n.paths
+    STEP = paths["step"]  # private copy, empty sidecar (nav_session)
     load, settle, view, project, pick = n.load, n.settle, n.view, n.project, n.pick
     canvas_rect, ctl, click_button, set_mode, set_rotate = n.canvas_rect, n.ctl, n.click_button, n.set_mode, n.set_rotate
     direction, same_dir, rect, fill_check, depth_check = n.direction, n.same_dir, n.rect, n.fill_check, n.depth_check
@@ -29,8 +30,7 @@ with nav_session() as n:
             for _ in range(3):
                 page.keyboard.press("ArrowRight")
             assert not close(view()["up"], [0, 0, 1], 1e-3)
-        page.keyboard.press("f")
-        settle()
+        n.fit()
 
         # B1. toward a surface: the point stays under the cursor
         cur = tuple(round(c) for c in project(SURFACE))
@@ -118,8 +118,7 @@ with nav_session() as n:
         f = direction(v)
         for c in corners(*MOLD):
             assert dot(sub(c, v["position"]), f) < v["far"], (mode, "model beyond far")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
 
         # B4. a section: the clipped side is not a zoom point
         page.locator(".lil-gui .lil-title", has_text="断面").click()
@@ -140,8 +139,7 @@ with nav_session() as n:
         assert abs(k - 0.9) <= 1e-6, (mode, "B4 zoomed about a clipped point", k)
         ctl("有効").locator("input").click()
         page.locator(".lil-gui .lil-title", has_text="断面").click()
-        page.keyboard.press("f")
-        settle()
+        n.fit()  # waits for the 断面 folder to finish closing
 
         # B5. the page itself never scrolls
         assert page.evaluate("document.scrollingElement.scrollTop") == 0

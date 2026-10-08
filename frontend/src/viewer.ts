@@ -6,6 +6,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { draftColors, draftColorsFlat, windingSign } from './draft'
+import { MIN_FREE, type ScreenRect } from './freearea'
 import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
 
@@ -20,8 +21,14 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1)
  * margin, so a key turn right after them doesn't snap.
  */
 const POLE_MARGIN = 1e-3
-/** share of the limiting viewport dimension a fit fills; the rest is margin */
+/** share of the limiting dimension of the fit area a fit fills; the rest is margin */
 const FIT_FILL = 0.88
+/**
+ * The furthest (share of the canvas width / height) a fit moves the view
+ * centre from the canvas middle: a free area at least MIN_FREE wide has its
+ * centre within this of the middle. A resize clamps to the same bound.
+ */
+const MAX_VIEW_SHIFT = (1 - MIN_FREE) / 2
 /** direction (target -> camera) a freshly loaded model is seen from */
 const LOAD_VIEW_DIR = new THREE.Vector3(1, -1, 0.7).normalize()
 /** near = framed radius / NEAR_DIV, far = radius * FAR_MUL: the same 1e5 depth range as before, relative to the model */
@@ -104,6 +111,21 @@ export class Viewer {
   private pivotMarker: CSS2DObject | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
   private container: HTMLElement
+  /**
+   * The part of the canvas (canvas CSS px) a fit frames the model in, or null
+   * for the whole canvas. Read once per fit: later panel changes do not re-fit.
+   */
+  fitArea: () => ScreenRect | null = () => null
+  /**
+   * Canvas centre minus view centre (CSS px), set by each fit. The projection
+   * is shifted by this (setViewOffset) so the orbit target, which stays on the
+   * model, shows at the centre of the fit area: rotation, presets, zoom and
+   * the double-click pivot all keep working around it. Kept in px across
+   * resizes (the panels are fixed-size and anchored to the window edges).
+   */
+  private viewShift = new THREE.Vector2()
+  /** canvas CSS size last applied by fitToContainer */
+  private cssSize = new THREE.Vector2()
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -427,11 +449,15 @@ export class Viewer {
     })
   }
 
+  /**
+   * Show a new model. It is not framed here: the caller frames it with
+   * frameNewModel() once this load's panels (tree, restored measurements,
+   * HUD) are on screen, so the one fit of a load keeps clear of them.
+   */
   setModel(model: ModelData): void {
     this.clearModel()
     for (const part of model.parts) this.addPart(part)
     this.buildGrid(this.modelBBox())
-    this.resetView()
   }
 
   private addPart(part: PartData): void {
@@ -526,8 +552,8 @@ export class Viewer {
     this.frameBox(box, forward.normalize())
   }
 
-  /** View for a freshly loaded model: default oblique direction, Z up. */
-  private resetView(): void {
+  /** The load fit: default oblique direction, Z up, framed in fitArea. */
+  frameNewModel(): void {
     this.viewAnim = null
     this.stopInertia()
     this.camera.up.copy(WORLD_UP)
@@ -537,7 +563,8 @@ export class Viewer {
 
   /**
    * Place the camera on `forward` so the box's 8 corners fill FIT_FILL of the
-   * limiting viewport dimension, with equal margins on both axes.
+   * limiting dimension of the fit area (fitArea), centred in it with equal
+   * margins on both axes.
    *
    * With camera C = centre + a*right + b*up + e*forward (e < 0: behind the
    * centre), a corner at (x, y, z) in the same axes is inside the shrunken
@@ -574,8 +601,24 @@ export class Viewer {
       ys.push(q.dot(up))
       zs.push(q.dot(forward))
     }
-    const kV = FIT_FILL * Math.tan((this.camera.fov * Math.PI) / 360)
-    const kH = kV * this.camera.aspect
+    // the ResizeObserver may not have run yet (e.g. right after the 2D view hid the canvas)
+    if (this.container.clientWidth !== this.cssSize.x || this.container.clientHeight !== this.cssSize.y) {
+      this.fitToContainer()
+    }
+    const W = this.cssSize.x
+    const H = this.cssSize.y
+    let area: ScreenRect = { left: 0, top: 0, right: W, bottom: H }
+    if (W > 0 && H > 0) area = this.fitArea() ?? area
+    // the target goes to the area's centre
+    this.viewShift.set(W / 2 - (area.left + area.right) / 2, H / 2 - (area.top + area.bottom) / 2)
+    this.applyViewShift()
+    // With the offset the area is symmetric about the camera axis, and one px
+    // is the same slope both ways, so its half-size in slope is
+    // tan(fov/2) * size / H. For the whole canvas these are the old kV and
+    // kV * aspect.
+    const tanHalf = Math.tan((this.camera.fov * Math.PI) / 360)
+    const kV = H > 0 ? FIT_FILL * tanHalf * ((area.bottom - area.top) / H) : FIT_FILL * tanHalf
+    const kH = H > 0 ? FIT_FILL * tanHalf * ((area.right - area.left) / H) : kV * this.camera.aspect
     let mR = -Infinity
     let mL = -Infinity
     let mT = -Infinity
@@ -597,7 +640,7 @@ export class Viewer {
     this.camera.position.copy(target).addScaledVector(forward, e)
     this.camera.near = near
     this.camera.far = Math.max(r * FAR_MUL, 2 * (-e + r))
-    this.camera.updateProjectionMatrix()
+    this.camera.updateProjectionMatrix() // keeps the view offset
     this.setTarget(target)
   }
 
@@ -734,12 +777,27 @@ export class Viewer {
     if (w === 0 || h === 0) return
     const dpr = window.devicePixelRatio || 1
     if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr)
+    this.cssSize.set(w, h)
     this.camera.aspect = w / h
-    this.camera.updateProjectionMatrix()
+    this.applyViewShift() // the offset is in px of this size: re-apply it with the new one
     this.renderer.setSize(w, h)
     this.labelRenderer.setSize(w, h)
     for (const m of this.lineMaterials) m.resolution.set(w, h)
     this.trackball.handleResize()
+  }
+
+  /**
+   * Shift the projection by viewShift (clamped to the current size) without
+   * zooming: setViewOffset with the full size equal to the view size only
+   * translates the frustum window. The stored shift is never clamped, so
+   * widening the window again restores it. Updates the projection matrix.
+   */
+  private applyViewShift(): void {
+    const { x: w, y: h } = this.cssSize
+    const sx = THREE.MathUtils.clamp(this.viewShift.x, -MAX_VIEW_SHIFT * w, MAX_VIEW_SHIFT * w)
+    const sy = THREE.MathUtils.clamp(this.viewShift.y, -MAX_VIEW_SHIFT * h, MAX_VIEW_SHIFT * h)
+    if (w > 0 && h > 0 && (sx !== 0 || sy !== 0)) this.camera.setViewOffset(w, h, sx, sy, w, h)
+    else this.camera.clearViewOffset()
   }
 
   /**

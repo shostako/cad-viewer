@@ -11,7 +11,7 @@ The expected pixels never come from the export code. They come from:
 - the colours of the specification (background #1d2126, markers #ffb020,
   dimension labels #ffd060) and contrast against white (WCAG luminance).
 
-Viewport 1000 x 640 at devicePixelRatio 2 (1 for a while, through CDP, as
+Viewport 1280 x 800 at devicePixelRatio 2 (1 for a while, through CDP, as
 when the window moves to another monitor), time zone Asia/Tokyo, downloads
 through Playwright's download event. The STEP is a private copy with seven
 trailing newlines (its own hash, so its own model id and sidecar on a shared
@@ -42,7 +42,9 @@ COLOURS_DXF = TESTDATA / "colours_drawing.dxf"
 if not COLOURS_DXF.exists():
     subprocess.run([str(BACKEND_PY), str(TESTDATA / "make_dxf.py"), "colours_drawing"], check=True)
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
-VIEW_W, VIEW_H, DPR = 1000, 640, 2
+# 全体表示 frames the model clear of the panels (README), so a smaller window
+# draws the mold too small: its dimension and note labels would touch
+VIEW_W, VIEW_H, DPR = 1280, 800, 2
 TZ = "Asia/Tokyo"
 BG = (0x1D, 0x21, 0x26)  # scene background
 MARKER = (0xFF, 0xB0, 0x20)  # measurement markers (3D spheres, 2D circles)
@@ -276,8 +278,6 @@ try:
         set_mode("なし")
         ctl("グリッド").locator("input").click()
         blur()
-        for _ in range(3):
-            page.keyboard.press("-")
         settle()
         page.wait_for_function(
             "(() => { const e = document.querySelector('#props-panel');"

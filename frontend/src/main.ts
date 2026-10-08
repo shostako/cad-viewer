@@ -17,8 +17,9 @@ import {
 } from './api'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
+import { largestFreeRect, type ScreenRect } from './freearea'
 import { MeasureTool, type EntryData } from './measure'
-import { toModelData } from './model'
+import { toModelData, type ModelData } from './model'
 import { Picker } from './picking'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
@@ -59,6 +60,7 @@ app.innerHTML = `
 
 const viewport = document.querySelector<HTMLDivElement>('#viewport')!
 const dropzone = document.querySelector<HTMLDivElement>('#dropzone')!
+const hud = document.querySelector<HTMLDivElement>('#hud')!
 const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
 const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
@@ -659,6 +661,28 @@ gui.onOpenClose((changed) => {
   const timer = setTimeout(reveal, REVEAL_FALLBACK_MS)
 })
 
+/**
+ * Panels over the 3D view a fit keeps the model clear of. The bottom-right
+ * stack counts child by child: its own box would also cover the empty corner
+ * beside the narrower child. Hidden panels measure 0 x 0 and drop out. Not
+ * here: the empty-screen card (hidden whenever a model is shown), the drop
+ * zone and the note box (both transient).
+ * A new overlay panel goes here and in e2e/nav_common.py PANELS.
+ */
+const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl]
+viewer.fitArea = () => {
+  const c = viewer.renderer.domElement.getBoundingClientRect()
+  if (c.width === 0 || c.height === 0) return null
+  const panels: ScreenRect[] = []
+  for (const el of FIT_PANELS) {
+    const r = el.getBoundingClientRect()
+    if (r.width > 0 && r.height > 0) {
+      panels.push({ left: r.left - c.left, top: r.top - c.top, right: r.right - c.left, bottom: r.bottom - c.top })
+    }
+  }
+  return largestFreeRect(c.width, c.height, panels)
+}
+
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
@@ -890,6 +914,19 @@ viewport.addEventListener('dblclick', (e) => {
   if (p) viewer.orbitAround(p)
 })
 
+/** the part tree (top left), for a model with more than one part or with B-rep faces */
+function showTree(model: ModelData): void {
+  if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
+    renderTree(treeBody, model.tree, (partId, visible) => {
+      viewer.setPartVisible(partId, visible)
+      propsPanel.refresh()
+    })
+    treePanel.classList.remove('hidden')
+  } else {
+    treePanel.classList.add('hidden')
+  }
+}
+
 function fmtBBox(meta: ModelMeta): string {
   const d = meta.bbox.max.map((v, i) => v - meta.bbox.min[i])
   return d.map((v) => v.toFixed(1)).join(' × ')
@@ -967,34 +1004,38 @@ async function loadFile(file: File): Promise<void> {
       modelSummary =
         `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
         `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
+      // Both GETs at once: the restored measurement list is a panel the one
+      // fit of this load must keep clear of, so the sidecar is needed before
+      // the fit. (The flush above has already landed, so the GET reads it.)
+      const sidecarReq = getSidecar(meta.id)
+      // awaited below; this only stops an unhandled rejection if the mesh fails first
+      sidecarReq.catch(() => {})
       const pack = await fetchMesh(meta.id)
       if (gen !== loadGen) return
+      const sidecar = await sidecarReq
+      if (gen !== loadGen) return
       const model = toModelData(pack)
+      // No await from here to frameNewModel(): no frame is drawn before the
+      // fit, so the view never jumps from a provisional framing to the final one
       viewer.setModel(model)
       setContentShown(true, file.name)
       showEmpty(false)
       picker.setModel(model.parts)
       measureTool.setModel(meta.id, meta.format === 'brep')
       sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
-      void updateProperties(meta.id) // not awaited: the load goes on meanwhile
-
       // restore persisted measurements / annotations
-      const sidecar = await getSidecar(meta.id)
-      if (gen !== loadGen) return
       const entries = (sidecar.entries ?? []) as EntryData[]
       if (entries.length) measureTool.restore(entries)
-
-      if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
-        renderTree(treeBody, model.tree, (partId, visible) => {
-          viewer.setPartVisible(partId, visible)
-          propsPanel.refresh()
-        })
-        treePanel.classList.remove('hidden')
-      } else {
-        treePanel.classList.add('hidden')
-      }
+      showTree(model)
+      // after setModel: isPartVisible is ready when the values arrive. They
+      // always arrive after the fit below (a later task), which does not wait
+      // for them: the panel shows 計算中… at the fit and is not re-framed.
+      void updateProperties(meta.id)
 
       hudInfo.textContent = modelSummary
+      // every panel of this load is on screen (the HUD text too: it sets the
+      // HUD's size). E2E waits for this HUD text, set in this same task.
+      viewer.frameNewModel()
     } finally {
       // release only our own claim: a newer load may have taken ownership
       if (restoringOwner === gen) restoringOwner = 0

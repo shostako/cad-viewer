@@ -1,18 +1,21 @@
 """E2E: 全体表示 (fit) — the A checks of the navigation suite.
 
 Split from test_navigation.py so each script stays well under the CI
-per-script limit. Helpers and the rule for expected values: nav_common.py.
+per-script limit. Helpers and the rule for expected values: nav_common.py
+(the fit fills the free area of the canvas, clear of the panels; the cases
+built around the panels themselves are in test_nav_fit_panels.py).
 """
 import re
 
 from nav_common import (
-    DXF, HUGE, LOAD_DIR, MOLD, MOLD_NO_PLATE, RUNNER, STEP, SURFACE, TINY,
+    DXF, HUGE, LOAD_DIR, MOLD, MOLD_NO_PLATE, RUNNER, SURFACE, TINY,
     add, close, corners, cross, dot, length, mul, nav_session, norm, sub,
 )
 
 with nav_session(boxes=("runner", "tiny", "huge")) as n:
     page = n.page
     paths = n.paths
+    STEP = paths["step"]  # private copy, empty sidecar (nav_session)
     load, settle, view, project, pick = n.load, n.settle, n.view, n.project, n.pick
     canvas_rect, ctl, click_button, set_mode, set_rotate = n.canvas_rect, n.ctl, n.click_button, n.set_mode, n.set_rotate
     direction, same_dir, rect, fill_check, depth_check = n.direction, n.same_dir, n.rect, n.fill_check, n.depth_check
@@ -46,11 +49,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
             page.keyboard.press("Shift+ArrowRight")
         v0 = view()
         trig = triggers[i % len(triggers)]
-        if trig == "button":
-            click_button("全体表示")
-        else:
-            page.keyboard.press(trig)
-        settle()
+        n.fit(trig)
         v1 = view()
         same_dir(v0, v1)
         print("A3", preset, trig, fill_check(*RUNNER, preset))
@@ -59,13 +58,11 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     # A4. narrow viewport: the width limits
     page.set_viewport_size({"width": 600, "height": 900})
     page.wait_for_timeout(300)
-    page.keyboard.press("f")
-    settle()
+    n.fit()
     print("A4 narrow", fill_check(*RUNNER, "600x900"))
     page.set_viewport_size({"width": 1280, "height": 800})
     page.wait_for_timeout(300)
-    page.keyboard.press("f")
-    settle()
+    n.fit()
     fill_check(*RUNNER, "1280x800")
 
     # A5. free rotation: fit keeps the roll
@@ -77,8 +74,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     for _ in range(3):
         page.keyboard.press("-")
     v0 = view()
-    page.keyboard.press("f")
-    settle()
+    n.fit()
     v1 = view()
     same_dir(v0, v1)
     assert abs(v1["up"][2]) < 0.9, ("still rolled", v1["up"])
@@ -88,13 +84,12 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     # A6. height-limited view, then hidden parts
     load(STEP)
     click_button("右")
-    page.keyboard.press("f")
-    settle()
-    print("A6 right", fill_check(*MOLD, "mold right"))
+    n.fit()
+    # the tree (top left) narrows the free area: a fit that ignored it would overfill
+    print("A6 right", fill_check(*MOLD, "mold right", needs=("#tree-panel",)))
     plate_box = page.locator("#tree-panel label", has_text=re.compile("^plate$")).locator("input")
     plate_box.click()
-    page.keyboard.press("f")
-    settle()
+    n.fit()
     print("A6 no plate", fill_check(*MOLD_NO_PLATE, "no plate"))
     plate_box.click()
 
@@ -135,7 +130,8 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
         page.keyboard.press(key)
         assert close(vbox(), vb0, 1e-9 * max(map(abs, vb0))), (key, vbox(), vb0)
     load(STEP)
-    fill_check(*MOLD, "after 2D")
+    # the load fit, with the tree that this same load shows
+    fill_check(*MOLD, "after 2D", needs=("#tree-panel",))
 
     # A10. F typed into the note box does not fit
     set_mode("注記")
@@ -150,8 +146,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     assert close(view()["position"], before["position"], 1e-12), "F in the note box moved the view"
     page.keyboard.press("Escape")
     set_mode("なし")
-    page.keyboard.press("f")
-    settle()
+    n.fit()
 
     page.screenshot(path="/tmp/cad_viewer_nav_fit.png")
     print("NAV FIT E2E OK")
