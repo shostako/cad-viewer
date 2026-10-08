@@ -13,9 +13,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: test-${{ github.ref }}
-  # cancel superseded PR runs only: every master commit keeps its own result
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # One group per PR, so a new push cancels the superseded run. Each push to
+  # master gets its own group (its sha), so every master commit keeps its own
+  # result. (An expression in cancel-in-progress cancelled nothing in practice:
+  # the new PR run just queued behind the old one.)
+  group: test-${{ github.event_name == 'push' && github.sha || github.ref }}
+  cancel-in-progress: true
 
 jobs:
   ci:
