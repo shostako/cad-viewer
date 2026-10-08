@@ -11,7 +11,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
-BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5173")
+BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
 
 STL = str(TESTDATA / "ribbed_plate.stl")
 
