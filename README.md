@@ -56,19 +56,18 @@ backend より backend のコードが新しければ backend を立て直す。
 ## 開発
 
 ```bash
-# backend (WSL2) — Python 3.11+ (新PCは 3.12 で動作確認済み)
-cd backend
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.lock
-.venv/bin/uvicorn app.main:app --reload --port 8008
+# リポのルートで実行する（cd はサブシェルの中だけで効く）
 
-# frontend（HMR 付き dev サーバ）
-cd frontend
-npm install
-npm run dev        # http://localhost:5173 （/api は 8008 にプロキシ）
+# backend — Python 3.11+ (新PCは 3.12 で動作確認済み)
+(cd backend && python3 -m venv .venv && .venv/bin/pip install -r requirements.lock)
+(cd backend && .venv/bin/uvicorn app.main:app --reload --port 8008)
+
+# frontend（HMR 付き dev サーバ、別の端末で）
+(cd frontend && npm ci)
+(cd frontend && npm run dev)        # http://localhost:5173 （/api は 8008 にプロキシ）
 
 # テスト
-cd backend && .venv/bin/pytest
+(cd backend && .venv/bin/pytest)
 ```
 
 テストデータ生成: `backend/.venv/bin/python testdata/make_testdata.py`
