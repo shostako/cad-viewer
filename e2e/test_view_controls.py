@@ -76,7 +76,9 @@ with sync_playwright() as p:
 
         The patch is computed at run time beside the model: from the left edge
         to just left of the model's projected box, between the tree panel and
-        the HUD. The fit fills most of the canvas, so a fixed patch would
+        the HUD or the axis triad (bottom left), whichever reaches higher: both
+        are page DOM over the canvas, so a screenshot shows them as ink. The
+        fit fills most of the canvas, so a fixed patch would
         overlap the model; and close up the floor's 50 mm grid lines are too
         far apart to cross a narrow patch, so step back first (from a fresh
         fit, so every call sees the same view).
@@ -87,8 +89,9 @@ with sync_playwright() as p:
         xs = [project([x, y, z])["x"] for x in (0, 100) for y in (0, 60) for z in (0, 40)]
         tree = page.locator("#tree-panel").bounding_box()
         hud = page.locator("#hud").bounding_box()
+        tri = page.locator("#triad").bounding_box()
         x0, x1 = 8, int(min(xs)) - 8
-        y0, y1 = int(tree["y"] + tree["height"]) + 8, int(hud["y"]) - 8
+        y0, y1 = int(tree["y"] + tree["height"]) + 8, int(min(hud["y"], tri["y"] if tri else hud["y"])) - 8
         assert x1 - x0 >= 60 and y1 - y0 >= 200, ("floor patch too small", x0, x1, y0, y1)
         png = page.screenshot()
         img = Image.open(io.BytesIO(png)).convert("RGB")

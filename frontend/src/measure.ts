@@ -297,10 +297,7 @@ export class MeasureTool {
     m.position.copy(at)
     const viewer = this.viewer
     m.onBeforeRender = () => {
-      const dist = viewer.camera.position.distanceTo(m.position)
-      const s = (dist * Math.tan((viewer.camera.fov * Math.PI) / 360) * 2) /
-        viewer.renderer.domElement.clientHeight * 4 // ≈4px radius
-      m.scale.setScalar(s)
+      m.scale.setScalar(viewer.worldPerPixel(m.position) * 4) // ≈4px radius, either projection
     }
     return m
   }

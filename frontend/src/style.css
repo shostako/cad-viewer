@@ -469,3 +469,49 @@ body,
   font-size: 11px;
   color: #7f8b99;
 }
+
+/* axis triad (bottom left). Only the discs and their letters take the
+   pointer: between them clicks go through to the canvas. */
+#triad {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  width: 88px;
+  height: 88px;
+  pointer-events: none;
+  user-select: none;
+}
+
+#triad.hidden {
+  display: none;
+}
+
+#triad svg {
+  display: block;
+  overflow: visible;
+}
+
+#triad .triad-bg {
+  fill: rgba(20, 24, 30, 0.35);
+  pointer-events: none;
+}
+
+#triad .triad-end line {
+  pointer-events: none;
+}
+
+#triad .triad-end circle,
+#triad .triad-end text {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#triad .triad-end:hover circle {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+/* while the triad is shown, the HUD sits right of it (12 + 88 + 8) */
+#hud.beside-triad {
+  left: 108px;
+}
