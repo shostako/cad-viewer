@@ -1,0 +1,85 @@
+name: test
+
+# Backend pytest, frontend type check + build, and every E2E script, on each
+# PR and on master. Cloud sessions cannot push workflow files (the Claude
+# GitHub App has no workflows permission), so this file is maintained locally.
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # One venv serves the backend, the test-data generators (they need OCP)
+      # and the E2E scripts (playwright + pillow). It must be backend/.venv:
+      # e2e/test_iges_sewing.py calls that interpreter to make its fixture.
+      - name: Backend venv
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/bin/pip install -q -r backend/requirements.lock
+          backend/.venv/bin/pip install -q playwright==1.58.0
+          backend/.venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Test data
+        run: |
+          set -e
+          for g in make_testdata make_step_assembly make_dxf make_iges_loose; do
+            backend/.venv/bin/python "testdata/$g.py"
+          done
+
+      - name: Backend tests
+        working-directory: backend
+        run: .venv/bin/pytest -q -p no:cacheprovider
+
+      - name: Frontend type check and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+      - name: E2E
+        run: |
+          (cd backend && nohup .venv/bin/uvicorn app.main:app --port 8008 > /tmp/uvicorn.log 2>&1 &)
+          (cd frontend && nohup npx vite --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
+          for _ in $(seq 1 90); do
+            curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:8008/api/health >/dev/null \
+              && curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break
+            sleep 1
+          done
+          failed=0
+          for t in e2e/test_*.py; do
+            echo "::group::$t"
+            if ! timeout 300 backend/.venv/bin/python "$t"; then
+              echo "::error title=E2E failed::$t"
+              failed=1
+            fi
+            echo "::endgroup::"
+          done
+          exit "$failed"
+
+      - name: Server logs
+        if: failure()
+        run: tail -n 100 /tmp/uvicorn.log /tmp/vite.log || true
