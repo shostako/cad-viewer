@@ -63,12 +63,18 @@ jobs:
       - name: E2E
         run: |
           (cd backend && nohup .venv/bin/uvicorn app.main:app --port 8008 > /tmp/uvicorn.log 2>&1 &)
-          (cd frontend && nohup npx vite --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
-          for _ in $(seq 1 90); do
+          # --host: Vite's default "localhost" resolves to ::1 on the runner, and
+          # the tests connect to 127.0.0.1
+          (cd frontend && nohup npx vite --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
+          up() {
             curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:8008/api/health >/dev/null \
-              && curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break
-            sleep 1
-          done
+              && curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null
+          }
+          for _ in $(seq 1 90); do up && break; sleep 1; done
+          if ! up; then
+            echo "::error title=E2E servers::uvicorn :8008 or Vite :5183 did not come up"
+            exit 1
+          fi
           failed=0
           for t in e2e/test_*.py; do
             echo "::group::$t"
