@@ -22,6 +22,10 @@ alive() { curl -sf --connect-timeout 1 -m 3 "${URL}/api/health" >/dev/null 2>&1;
 # 同時起動の直列化。起動アイコンを続けて 2 回押すと start.sh が 2 本走り、
 # backend を 2 つ立てようとして pidfile が負けた側を指すことがある。
 # 先の 1 本が終わるまで待ち、後の 1 本は「起動済み」としてブラウザを開くだけにする。
+if ! command -v flock >/dev/null 2>&1; then
+  log "ERROR: flock が無い（util-linux を入れろ）"
+  exit 1
+fi
 exec 9>/tmp/cadviewer.lock
 if ! flock -w 300 9; then
   log "ERROR: 別の start.sh が 5 分以上終わらない（/tmp/cadviewer.lock）"
@@ -77,7 +81,8 @@ backend_stale() {
 if alive && backend_stale; then
   old_pid="$(cat "${PIDFILE}")"
   log "backend のコードが起動後に更新されている → 再起動"
-  kill "${old_pid}"
+  # 確認から kill までの間に自然に落ちていても止まったことになる（set -e で黙って落とさない）
+  kill "${old_pid}" 2>/dev/null || true
   for _ in $(seq 1 20); do
     kill -0 "${old_pid}" 2>/dev/null || break
     sleep 0.5
@@ -99,15 +104,18 @@ else
     # 生きている間ずっとロックが握られ、次の start.sh が 5 分待たされる）
     nohup "${VENV}/bin/uvicorn" app.main:app --port "${PORT}" > /tmp/cadviewer.log 2>&1 9>&- &
     echo $! > "${PIDFILE}" )
-  # health 待ち（最大 15 秒）
-  for _ in $(seq 1 30); do
-    alive && break
+  # health 待ち（最大 30 秒。alive 自体が最大 3 秒かかるので回数でなく時刻で区切る）
+  deadline=$((SECONDS + 30))
+  until alive; do
+    if [ "${SECONDS}" -ge "${deadline}" ]; then
+      # 立てた uvicorn を残すと、次の start.sh が 2 本目を立てて管理外の 1 本が残る
+      kill "$(cat "${PIDFILE}")" 2>/dev/null || true
+      rm -f "${PIDFILE}"
+      log "ERROR: backend が起動しなかった。ログ: /tmp/cadviewer.log"
+      exit 1
+    fi
     sleep 0.5
   done
-  if ! alive; then
-    log "ERROR: backend が起動しなかった。ログ: /tmp/cadviewer.log"
-    exit 1
-  fi
   # 自分の uvicorn が実際にポートを持っているときだけ pidfile を残す。
   # 手で立てた別の backend が先にポートを取っていたら、それは自分の管理外。
   listener="$(ss -ltnpH "sport = :${PORT}" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
@@ -118,5 +126,5 @@ else
 fi
 
 # 3. Windows 側の既定ブラウザで開く（WSL からは cmd.exe 経由）
-cmd.exe /c start "" "${URL}" >/dev/null 2>&1 || true
+cmd.exe /c start "" "${URL}" >/dev/null 2>&1 9>&- || true
 log "起動完了 → ${URL}"
