@@ -67,7 +67,6 @@ const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
 
-const hud = document.querySelector<HTMLDivElement>('#hud')!
 const cornerBr = document.querySelector<HTMLDivElement>('#corner-br')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
@@ -671,6 +670,10 @@ gui.onOpenClose((changed) => {
  */
 const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl]
 viewer.fitArea = () => {
+  // The right-hand column sizes its panels from ResizeObservers, a frame
+  // after a change (a folder opened, a load filled the lists); a fit reads
+  // the panels now, so it lays the column out for what is in it first.
+  layoutCorner()
   const c = viewer.renderer.domElement.getBoundingClientRect()
   if (c.width === 0 || c.height === 0) return null
   const panels: ScreenRect[] = []
@@ -720,22 +723,67 @@ function applyDensity(): void {
 }
 applyDensity()
 
+type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown }
+
+function settled<T>(p: Promise<T>): Promise<Settled<T>> {
+  return p.then(
+    (value) => ({ ok: true as const, value }),
+    (error) => ({ ok: false as const, error }),
+  )
+}
+
+/** p's outcome if it settles within ms, else null. ms <= 0: only if it has already settled. */
+function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  // already settled: p is first in the race, so its reaction runs first
+  if (ms <= 0) return Promise.race([p, Promise.resolve(null)])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const timeout = new Promise<null>((r) => (timer = setTimeout(() => r(null), ms)))
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer))
+}
+
+/**
+ * How long (ms from the request) a load waits for the 体積・重量 values
+ * before its fit. The values set the panel's final size (a table row per
+ * part, the totals, notes), and the one fit of a load must keep clear of
+ * that size, not of the small 計算中… box: an end of a long part would slide
+ * under the panel when it grows. Usually they come with the mesh; a slow
+ * one (a big B-rep re-read after a backend restart) is not waited for past
+ * this, and its panel may still grow after the fit. E2E sets it
+ * (__cadPropsWait) so that a check never depends on timing.
+ */
+const PROPS_WAIT_MS = 1500
+let propsWaitMs = PROPS_WAIT_MS
+
 // Latest properties request wins. Not tied to loadGen: a replacement upload
 // that fails before the teardown bumps loadGen but leaves the current model on
 // screen, and that model's answer must still be shown (not 計算中… for good).
 let propsRequest = 0
-async function updateProperties(modelId: string): Promise<void> {
-  const req = ++propsRequest
-  propsPanel.showLoading()
-  try {
-    const p = await fetchProperties(modelId)
-    if (req !== propsRequest || modelId !== currentModelId) return // superseded
-    propsPanel.setData(p)
-    modelProps = p
-    if (draftState.enabled) renderLegend() // the note on open parts may be due now
-  } catch (e) {
-    if (req !== propsRequest || modelId !== currentModelId) return
-    propsPanel.showError(e instanceof Error ? e.message : String(e))
+/**
+ * Show the 体積・重量 panel for modelId from a request already in flight.
+ * done: its outcome when that is already known (the panel gets its final
+ * size now); otherwise 計算中… until it comes.
+ */
+function showProperties(
+  modelId: string,
+  req: Promise<Settled<ModelProperties>>,
+  done: Settled<ModelProperties> | null,
+): void {
+  const n = ++propsRequest
+  const apply = (r: Settled<ModelProperties>): void => {
+    if (n !== propsRequest || modelId !== currentModelId) return // superseded
+    if (r.ok) {
+      propsPanel.setData(r.value)
+      modelProps = r.value
+      if (draftState.enabled) renderLegend() // the note on open parts may be due now
+    } else {
+      propsPanel.showError(r.error instanceof Error ? r.error.message : String(r.error))
+    }
+  }
+  if (done) {
+    apply(done)
+  } else {
+    propsPanel.showLoading()
+    void req.then(apply)
   }
 }
 
@@ -1004,38 +1052,54 @@ async function loadFile(file: File): Promise<void> {
       modelSummary =
         `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
         `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
-      // Both GETs at once: the restored measurement list is a panel the one
-      // fit of this load must keep clear of, so the sidecar is needed before
-      // the fit. (The flush above has already landed, so the GET reads it.)
-      const sidecarReq = getSidecar(meta.id)
-      // awaited below; this only stops an unhandled rejection if the mesh fails first
-      sidecarReq.catch(() => {})
+      // The mesh, the sidecar and the 体積・重量 values at once. The restored
+      // measurement list and the values panel are panels the one fit of this
+      // load must keep clear of, so both are wanted before the fit. (The
+      // flush above has already landed, so the sidecar GET reads it.)
+      const propsStart = performance.now()
+      const propsReq = settled(fetchProperties(meta.id))
+      // A sidecar that cannot be read (network error, a body that is not
+      // JSON) is treated like a missing one: the model still loads. The HUD
+      // says so, since a later edit saves over the unread one.
+      let restoreProblem = ''
+      const sidecarReq = getSidecar(meta.id).catch((e: unknown): Record<string, unknown> => {
+        restoreProblem = `計測・注記を読み込めなかった（${e instanceof Error ? e.message : e}）`
+        return {}
+      })
       const pack = await fetchMesh(meta.id)
       if (gen !== loadGen) return
       const sidecar = await sidecarReq
+      if (gen !== loadGen) return
+      const props = await within(propsReq, propsWaitMs - (performance.now() - propsStart))
       if (gen !== loadGen) return
       const model = toModelData(pack)
       // No await from here to frameNewModel(): no frame is drawn before the
       // fit, so the view never jumps from a provisional framing to the final one
       viewer.setModel(model)
-      setContentShown(true, file.name)
-      showEmpty(false)
-      picker.setModel(model.parts)
-      measureTool.setModel(meta.id, meta.format === 'brep')
-      sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
-      // restore persisted measurements / annotations
-      const entries = (sidecar.entries ?? []) as EntryData[]
-      if (entries.length) measureTool.restore(entries)
-      showTree(model)
-      // after setModel: isPartVisible is ready when the values arrive. They
-      // always arrive after the fit below (a later task), which does not wait
-      // for them: the panel shows 計算中… at the fit and is not re-framed.
-      void updateProperties(meta.id)
+      try {
+        setContentShown(true, file.name)
+        showEmpty(false)
+        picker.setModel(model.parts)
+        measureTool.setModel(meta.id, meta.format === 'brep')
+        sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
+        // restore persisted measurements / annotations
+        const entries = Array.isArray(sidecar.entries) ? (sidecar.entries as EntryData[]) : []
+        const skipped = entries.length ? measureTool.restore(entries) : 0
+        if (skipped) restoreProblem = `保存された計測・注記のうち ${skipped} 件を復元できなかった`
+        showTree(model)
+        // after setModel: isPartVisible is ready for the values
+        showProperties(meta.id, propsReq, props)
 
-      hudInfo.textContent = modelSummary
-      // every panel of this load is on screen (the HUD text too: it sets the
-      // HUD's size). E2E waits for this HUD text, set in this same task.
-      viewer.frameNewModel()
+        // the note goes on the line once; the heatmap and the draft colouring
+        // restore the plain summary
+        hudInfo.textContent = modelSummary + (restoreProblem ? ` — ${restoreProblem}` : '')
+      } finally {
+        // Every panel of this load is on screen (the HUD text too: it sets
+        // the HUD's size). E2E waits for this HUD text, set in this same task.
+        // In a finally: should a step above throw, the model on screen is
+        // still framed, not left at the previous model's camera.
+        viewer.frameNewModel()
+      }
     } finally {
       // release only our own claim: a newer load may have taken ownership
       if (restoringOwner === gen) restoringOwner = 0
@@ -1095,6 +1159,10 @@ testHooks.__cadView = () => ({
 })
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 testHooks.__cadStallProperties = (ms: number) => __stallNextProperties(ms)
+// how long a load waits for the 体積・重量 values before its fit (no argument: the app's own)
+testHooks.__cadPropsWait = (ms?: number) => {
+  propsWaitMs = ms ?? PROPS_WAIT_MS
+}
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.camera.updateMatrixWorld()
   const r = picker.pick(toNdc(clientX, clientY))

@@ -133,6 +133,40 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     # the load fit, with the tree that this same load shows
     fill_check(*MOLD, "after 2D", needs=("#tree-panel",))
 
+    # A11. the window resized while a 2D drawing is shown, then a 3D load: the
+    #      3D canvas was hidden, so it has not taken the new size yet when the
+    #      mesh comes; the load fit must use the new size anyway. Whether the
+    #      canvas has caught up by then depends on timing (a frame may pass
+    #      while the mesh is fetched), so the cycle runs with several sizes.
+    for w, h in ((900, 700), (1100, 650), (800, 900), (1280, 800)):
+        load(DXF, wait_text="2D図面")
+        page.set_viewport_size({"width": w, "height": h})
+        load(STEP)
+        _, _, cw, ch = canvas_rect()
+        assert (cw, ch) == (w, h), ("A11 the canvas fills the window", cw, ch, w, h)
+        print("A11", w, h, fill_check(*MOLD, f"after 2D + resize to {w}x{h}"))
+
+    # A12. the same without timing: the canvas's box changes and a fit runs in
+    #      the same task, so the ResizeObserver cannot have reported the new
+    #      size yet (it does so at the next frame). The style is the test's
+    #      stand-in for a resize the canvas has not caught up with.
+    page.evaluate(
+        """() => {
+             const v = document.querySelector('#viewport')
+             v.style.right = '320px'
+             v.style.bottom = '120px'
+             window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', code: 'KeyF' }))
+           }"""
+    )
+    settle()
+    n.fit_panels = n.panel_rects()  # as at the fit: nothing changed them since
+    _, _, cw, ch = canvas_rect()
+    assert (cw, ch) == (960, 680), ("A12 the canvas follows its box", cw, ch)
+    print("A12", fill_check(*MOLD, "fit before the resize is reported"))
+    page.evaluate("(() => { const v = document.querySelector('#viewport'); v.style.right = ''; v.style.bottom = '' })()")
+    page.wait_for_timeout(300)
+    n.fit()
+
     # A10. F typed into the note box does not fit
     set_mode("注記")
     page.keyboard.press("-")

@@ -14,9 +14,11 @@ none. free_rect() below is an independent copy of that rule (the app's is
 frontend/src/freearea.ts). The fit reads the panels once, when it runs, so the
 oracle uses the panel rects recorded at the fit (Nav.fit / Nav.load) and fails
 if they change before the check (a lil-gui folder animates for 300 ms; the HUD
-text changes after measurements). Nav loads hold the properties request
-(__cadStallProperties), so the 体積・重量 panel stays at 計算中… as it is at the
-load fit.
+text changes after measurements). A load waits a little for the 体積・重量
+values before its fit, so that the fit sees the panel's final size; Nav.load
+takes timing out of that (props=): by default it holds the values
+(__cadStallProperties) and has the load not wait for them (__cadPropsWait(0)),
+so the panel shows 計算中… at the fit and keeps it until the check.
 
 The navigation checks used to be one script (test_navigation.py). On the CI
 runner it took longer than the per-script limit (300 s), so it is split into
@@ -195,13 +197,19 @@ class Nav:
     def load(self, path, wait_text="tris", props="frozen"):
         """Open a file and wait for its HUD text (set in the same task as the load fit).
 
-        props="frozen" holds the 体積・重量 request, so the panel keeps the
-        計算中… size it has at the load fit; "live" lets it through (and
-        disarms a hold left over from a 2D load, which makes no request); a
-        number holds it for that many ms.
+        props: the 体積・重量 values.
+        - "frozen": held for good, and the load does not wait for them: the
+          panel shows 計算中… at the fit and after it
+        - "live": let through (also disarms a hold left over from a 2D load,
+          which makes no request), and the load waits for them however long
+          they take: the panel shows the values at the fit
+        - "late": held for good, with the app's own wait: the load waits that
+          long, then fits with 計算中…
         """
-        ms = 1e9 if props == "frozen" else 0 if props == "live" else props
-        self.page.evaluate(f"window.__cadStallProperties({ms})")
+        stall, wait = {"frozen": (1e9, 0), "live": (0, 600000), "late": (1e9, None)}[props]
+        self.page.evaluate(
+            "([s, w]) => { window.__cadStallProperties(s); window.__cadPropsWait(w ?? undefined) }", [stall, wait]
+        )
         self.page.set_input_files("#file-input", str(path))
         self.page.wait_for_function(
             f"document.querySelector('#hud-info').textContent.includes({wait_text!r})"
@@ -378,13 +386,24 @@ class Nav:
             self.page.mouse.wheel(0, dy)
         self.settle()
 
-    def canvas_ink_rect(self):
-        """bounding box (page px) of canvas pixels that differ from the background"""
+    def canvas_image(self):
+        """the canvas as drawn (an RGB image of its device pixels)"""
         url = self.page.evaluate(
             "new Promise(r => requestAnimationFrame(() =>"
             " r(document.querySelector('#viewport canvas').toDataURL())))"
         )
-        img = Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).convert("RGB")
+        return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).convert("RGB")
+
+    def canvas_rgb(self, points):
+        """the drawn colour at each page point"""
+        img = self.canvas_image()
+        cl, ct, cw, ch = self.canvas_rect()
+        sx, sy = img.width / cw, img.height / ch
+        return [img.getpixel((int((x - cl) * sx), int((y - ct) * sy))) for x, y in points]
+
+    def canvas_ink_rect(self):
+        """bounding box (page px) of canvas pixels that differ from the background"""
+        img = self.canvas_image()
         cl, ct, cw, ch = self.canvas_rect()
         sx, sy = img.width / cw, img.height / ch
         diff = ImageChops.difference(img, Image.new("RGB", img.size, BG))
@@ -412,11 +431,11 @@ class Nav:
         self.fit()
 
 
-def empty_sidecar(page, path):
-    """Upload a file through the API and save an empty sidecar for it.
+def put_sidecar(page, path, entries):
+    """Upload a file through the API and save a sidecar with these entries for it.
 
     The sidecar is keyed by the file's content hash, so the next load of the
-    same bytes restores no measurement list.
+    same bytes restores exactly these entries. The backend stores any JSON.
     """
     r = page.request.post(
         f"{BASE_URL}/api/models",
@@ -425,8 +444,13 @@ def empty_sidecar(page, path):
         timeout=120000,
     )
     assert r.ok, ("upload", r.status, r.text())
-    r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": []})
-    assert r.ok, ("empty sidecar", r.status, r.text())
+    r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": entries})
+    assert r.ok, ("put sidecar", r.status, r.text())
+
+
+def empty_sidecar(page, path):
+    """an empty sidecar for this file: its next load restores no measurement list"""
+    put_sidecar(page, path, [])
 
 
 @contextmanager

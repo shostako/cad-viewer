@@ -303,9 +303,11 @@ try:
         assert not requests, requests
         page.close()
 
-        # 10. a late answer for a model that was replaced is dropped
+        # 10. a late answer for a model that was replaced is dropped. The load
+        #     does not wait for the values (__cadPropsWait(0)): it shows 計算中…
+        #     at once, whatever the machine's speed
         page = new_page()
-        page.evaluate("window.__cadStallProperties(2000)")
+        page.evaluate("window.__cadStallProperties(2000); window.__cadPropsWait(0)")
         page.set_input_files("#file-input", STEP)
         page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'", timeout=60000)
         load(DXF, wait_text="2D図面")
@@ -319,7 +321,7 @@ try:
         bad = TESTDATA / "_broken_for_props.stl"
         bad.write_text("this is not an STL")
         try:
-            page.evaluate("window.__cadStallProperties(2000)")
+            page.evaluate("window.__cadStallProperties(2000); window.__cadPropsWait(0)")
             page.set_input_files("#file-input", STEP)
             page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'", timeout=60000)
             page.set_input_files("#file-input", str(bad))

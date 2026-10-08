@@ -452,7 +452,8 @@ export class Viewer {
   /**
    * Show a new model. It is not framed here: the caller frames it with
    * frameNewModel() once this load's panels (tree, restored measurements,
-   * HUD) are on screen, so the one fit of a load keeps clear of them.
+   * 体積・重量 values, HUD) are on screen, so the one fit of a load keeps
+   * clear of them.
    */
   setModel(model: ModelData): void {
     this.clearModel()

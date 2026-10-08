@@ -14,8 +14,13 @@ panel: a correct fit that ignored it would fail the same check.
 - P6 a resize keeps the shift in px (clamped, restored), with no re-fit
 - P4 700 x 900: left of the GUI; with 表示 closed, the band under it
 - P5 400 x 900 falls back to the whole canvas; 450 x 900 does not
-- P2 an IGES with a short tree and the 体積・重量 values (the motivating layout)
-- P7 a long measurement list; a reload restores it before the one load fit
+- P2 an IGES with a short tree and the 体積・重量 values: values later than the
+     app's wait (the fit sees 計算中…), values in time (the fit sees them);
+     the runner with the GUI collapsed, where the values panel decides
+- P7 a long measurement list; a reload (from another model) restores it
+     before the one load fit, and no frame shows the mold at another pose
+- P8 a sidecar entry that cannot be rebuilt, and a sidecar GET that fails:
+     the model still loads and is framed
 """
 import math
 import os
@@ -26,8 +31,8 @@ import time
 from pathlib import Path
 
 from nav_common import (
-    LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, TESTDATA,
-    close, empty_sidecar, free_rect, nav_session, norm, overlaps, sub,
+    LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, SURFACE, TESTDATA,
+    close, empty_sidecar, free_rect, nav_session, norm, overlaps, put_sidecar, sub,
 )
 
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
@@ -193,27 +198,48 @@ try:
         print("P5 450x900", fill_check(*RUNNER, "450x900", fallback=False))
         resize(1280, 800)
 
-        # ---- P2. an IGES with a short tree, then its 体積・重量 values -----------
+        # ---- P2. an IGES with a short tree, and the 体積・重量 values -----------
         # pins a binding width independent of CI fonts; the fit reads whatever
         # rects are on screen, so the oracle stays independent
         page.add_style_tag(content="#props-panel{min-width:330px}")
-        # the values are held for 2 s, so the load-time check runs while the
-        # panel is still 計算中… (as at the load fit)
-        load(LOOSE_IGES, props=2000)
+
+        def values_shown():
+            return page.evaluate(
+                "(() => { const e = document.querySelector('#props-total');"
+                " return !!e && !e.classList.contains('hidden') && e.offsetParent !== null })()"
+            )
+
+        # P2a. values that never come: the load waits the app's own time for
+        # them, then fits with the panel at 計算中… (it stays so: held for good)
+        load(LOOSE_IGES, props="late")
+        assert page.inner_text("#props-status") == "計算中…" and not values_shown(), "P2a the values must be held"
         F, _ = n.free_area()
         tree = panels()["#tree-panel"]
         assert F[0] == 0 and F[1] >= tree[3] - 0.5, ("P2 the band under the short tree", F, tree)
-        print("P2 load", fill_check(*LOOSE_BOX, "IGES load", needs=("#tree-panel", "#hud")))
-        page.wait_for_function(
-            "(() => { const e = document.querySelector('#props-total');"
-            " return e && !e.classList.contains('hidden') })()",
-            timeout=30000,
-        )
-        settle()
-        fit()
+        print("P2 late values", fill_check(*LOOSE_BOX, "IGES load", needs=("#tree-panel", "#hud")))
+
+        # P2b. values in time: the load fit already keeps clear of the panel
+        # with them (a fit made while it showed 計算中… would be covered once
+        # it grows; load() records the panels at the fit, and fill_check fails
+        # if they changed since)
+        load(LOOSE_IGES, props="live")
+        assert values_shown(), "P2b the values must be shown at the load fit"
         pr, g, hud = panels()["#props-panel"], panels()[GUI], panels()["#hud"]
         assert pr[0] <= g[0] - 60 and pr[1] <= hud[1] - 30, ("P2 the values panel must reach past the GUI and the HUD", pr, g, hud)
         print("P2 values", fill_check(*LOOSE_BOX, "IGES values", needs=("#props-panel", "#tree-panel", "#hud")))
+
+        # P2c. the long runner with the GUI collapsed (to get more room): the
+        # values panel is what bounds the free area from below
+        page.locator(".lil-gui.lil-root > .lil-title").click()
+        n.wait_gui_idle()
+        load(n.paths["runner"], props="live")
+        assert values_shown(), "P2c the values must be shown at the load fit"
+        F, _ = n.free_area()
+        pr = panels()["#props-panel"]
+        assert abs(F[3] - pr[1]) <= 0.5, ("P2c the free area must end at the values panel", F, pr)
+        print("P2c runner, GUI collapsed", fill_check(*RUNNER, "runner values", fallback=False, needs=("#props-panel",)))
+        page.locator(".lil-gui.lil-root > .lil-title").click()
+        n.wait_gui_idle()
 
         # ---- P7. the mold with a long measurement list ----------------------------
         empty_sidecar(page, MOLD_COPY)  # a previous failed run may have left entries
@@ -247,10 +273,15 @@ try:
         fit()
         print("P7 long list", fill_check(*MOLD, "mold, 12 notes", needs=("#measure-panel", "#tree-panel")))
 
-        # reload: the list is restored before the one fit of the load. The
-        # sidecar GET is delayed, and every frame's camera position is sampled:
-        # a provisional fit drawn before the list is back would show up as a
-        # third pose (neither the one before nor the final one)
+        # reload: the list is restored before the one fit of the load. It
+        # starts from another model (the runner: another pose), with the
+        # sidecar GET delayed. Every frame records the camera position and
+        # whether the mold is drawn (__cadPick at the projection of a point
+        # on its plate hits that point; the runner is lower than it). A frame
+        # with the mold at any pose but the final one, or any third pose, is
+        # a provisional framing.
+        load(n.paths["runner"])  # its load saves the mold's list (flush)
+
         def slow_sidecar(route):
             if route.request.method == "GET":
                 time.sleep(0.3)
@@ -259,29 +290,88 @@ try:
         page.route("**/sidecar", slow_sidecar)
         try:
             page.evaluate(
-                """() => { window.__poses = []; window.__sampling = true
-                   const tick = () => { window.__poses.push(window.__cadView().position)
+                """([px, py, pz]) => { window.__frames = []; window.__sampling = true
+                   const tick = () => {
+                     const q = window.__cadProject(px, py, pz)
+                     const hit = window.__cadPick(q.x, q.y)
+                     window.__frames.push([window.__cadView().position, hit ? hit.point : null])
                      if (window.__sampling) requestAnimationFrame(tick) }
-                   requestAnimationFrame(tick) }"""
+                   requestAnimationFrame(tick) }""",
+                list(SURFACE),
             )
             pre = view()["position"]
             load(MOLD_COPY)
             page.evaluate("window.__sampling = false")
-            poses = page.evaluate("window.__poses")
+            frames = page.evaluate("window.__frames")
         finally:
             page.unroute("**/sidecar")
         assert page.locator("#measure-list li").count() == 12, "P7 the list must be restored"
         print("P7 reload", fill_check(*MOLD, "mold reload", needs=("#measure-panel",)))
         final = view()["position"]
         scale = max(map(abs, final))
+        assert not close(pre, final, 1e-3 * scale), ("P7 the reload must start from another pose", pre, final)
+        poses = [q for q, _ in frames]
         other = [q for q in poses if not (close(q, pre, 1e-9 * scale) or close(q, final, 1e-9 * scale))]
-        print("P7 sampled frames", len(poses), "other poses", len(other))
-        assert len(poses) >= 10, ("P7 too few frames sampled", len(poses))
+        drawn = [q for q, hit in frames if hit and math.dist(hit, SURFACE) < 1]
+        early = [q for q in drawn if not close(q, final, 1e-9 * scale)]
+        print("P7 sampled frames", len(frames), "with the mold", len(drawn), "other poses", len(other), "early", len(early))
+        assert len(frames) >= 10, ("P7 too few frames sampled", len(frames))
+        assert drawn, "P7 the sampler never saw the mold"
         assert not other, ("P7 a provisional framing was drawn", other[:3], pre, final)
+        assert not early, ("P7 the mold was drawn before its fit", early[:3], final)
+
+        # ---- P8. a sidecar that cannot be restored -------------------------------
+        # P8a. an entry without labelPos (the app always writes one; a hand edit
+        # may not) between two good ones: the good ones come back, the bad one
+        # is skipped whole (none of its markers is drawn), the HUD says so, and
+        # the load goes on to the tree, the values panel and the fit
+        def note(x, **kw):
+            return {"text": f"注記 {x}", "labelText": f"N{x}", "labelPos": [x, 5, 15],
+                    "annotation": True, "markers": [[x, 5, 15]], **kw}
+
+        bad = note(40)
+        del bad["labelPos"]
+        put_sidecar(page, MOLD_COPY, [note(20), bad, note(60)])
+        # from the runner: a model left unframed would keep its far camera
+        load(n.paths["runner"])
+        load(MOLD_COPY)
+        hud_text = page.inner_text("#hud-info")
+        assert "1 件を復元できなかった" in hud_text, ("P8a the HUD must say what was skipped", hud_text)
+        assert page.locator("#measure-list li").count() == 2, "P8a the two good entries"
+        assert not page.locator("#tree-panel").evaluate("e => e.classList.contains('hidden')"), "P8a the tree"
+        assert page.inner_text("#props-status") == "計算中…", "P8a the values panel"
+        print("P8a bad entry", fill_check(*MOLD, "mold, a bad entry"))
+        good_px, bad_px, good2_px = n.canvas_rgb([project((20, 5, 15)), project((40, 5, 15)), project((60, 5, 15))])
+
+        def marker_colour(c):  # MARKER_COLOR 0xffb020, drawn over the model
+            return c[0] > 200 and 120 < c[1] < 220 and c[2] < 100
+
+        print("P8a pixels", good_px, bad_px, good2_px)
+        assert marker_colour(good_px) and marker_colour(good2_px), ("P8a the good markers", good_px, good2_px)
+        assert not marker_colour(bad_px), ("P8a a marker of the skipped entry is drawn", bad_px)
+
+        # P8b. the sidecar GET fails (a 200 whose body is not JSON): the mold
+        # loads as with no sidecar, framed, and the HUD says so
+        def broken_sidecar(route):
+            if route.request.method == "GET":
+                route.fulfill(status=200, content_type="application/json", body="not json")
+            else:
+                route.continue_()
+
+        load(n.paths["runner"])
+        page.route("**/sidecar", broken_sidecar)
+        try:
+            load(MOLD_COPY)
+        finally:
+            page.unroute("**/sidecar")
+        hud_text = page.inner_text("#hud-info")
+        assert "計測・注記を読み込めなかった" in hud_text, ("P8b the HUD must say so", hud_text)
+        assert page.locator("#measure-list li").count() == 0, "P8b no list"
+        assert not page.locator("#tree-panel").evaluate("e => e.classList.contains('hidden')"), "P8b the tree"
+        print("P8b sidecar GET failed", fill_check(*MOLD, "mold, sidecar GET failed"))
 
         # leave the private sidecar empty
-        with page.expect_response(lambda r: "/sidecar" in r.url and r.request.method == "PUT", timeout=10000):
-            ctl("計測クリア").locator("button").click()
+        empty_sidecar(page, MOLD_COPY)
 
         page.screenshot(path="/tmp/cad_viewer_nav_fit_panels.png")
         print("NAV FIT PANELS E2E OK")
