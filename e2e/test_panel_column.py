@@ -47,6 +47,11 @@ with sync_playwright() as p:
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    # "ResizeObserver loop completed with undelivered notifications" reaches
+    # window's error event but not always the console: collect it in the page
+    page.add_init_script(
+        "window.__winErrors = []; window.addEventListener('error', e => window.__winErrors.push(String(e.message)))"
+    )
     # The shared backend may hold notes on mini_mold from other scripts, and
     # this one deletes entries: sidecars stay in the page, the backend is
     # neither read nor written.
@@ -260,6 +265,7 @@ with sync_playwright() as p:
     assert not overlap(r6["hud"], r6["gui"]) and not overlap(r6["hud"], r6["props"]), r6
     page.screenshot(path="/tmp/cad_viewer_panel_column.png")
 
+    errors += page.evaluate("window.__winErrors")
     if errors:
         print("PAGE ERRORS:", errors)
     assert not errors
