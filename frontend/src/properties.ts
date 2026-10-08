@@ -114,6 +114,9 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, id?: string, text?: s
   return e
 }
 
+/** the parts table never gets shorter than this (about two rows) */
+const TABLE_MIN_PX = 44
+
 export class PropertiesPanel {
   private root: HTMLElement
   private isVisible: (id: number) => boolean
@@ -197,7 +200,14 @@ export class PropertiesPanel {
   fitHeight(maxPanelPx: number): void {
     if (this.root.classList.contains('hidden')) return
     const rest = this.root.offsetHeight - this.wrap.offsetHeight
-    this.wrap.style.maxHeight = `${Math.max(maxPanelPx - rest, 44)}px`
+    this.wrap.style.maxHeight = `${Math.max(maxPanelPx - rest, TABLE_MIN_PX)}px`
+  }
+
+  /** the smallest height fitHeight can leave the panel at (0 while hidden) */
+  minHeight(): number {
+    if (this.root.classList.contains('hidden')) return 0
+    const rest = this.root.offsetHeight - this.wrap.offsetHeight
+    return rest + (this.wrap.classList.contains('hidden') ? 0 : TABLE_MIN_PX)
   }
 
   private showStatus(text: string): void {

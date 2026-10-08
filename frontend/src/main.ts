@@ -65,6 +65,8 @@ const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
 
+const hud = document.querySelector<HTMLDivElement>('#hud')!
+const cornerBr = document.querySelector<HTMLDivElement>('#corner-br')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
@@ -573,19 +575,78 @@ function savePropsPrefs(): void {
   }
 }
 
-// keep the bottom-right stack below the GUI column (fixed, z 1001, grows as folders open)
-function fitCornerStack(): void {
-  const guiBottom = gui.domElement.getBoundingClientRect().bottom
-  const measure = measurePanel.classList.contains('hidden') ? 0 : measurePanel.getBoundingClientRect().height + 8
-  propsPanel.fitHeight(window.innerHeight - 12 - (guiBottom + 8) - measure)
+// The right-hand column: the GUI at the top (fixed, z 1001, grows as folders
+// open) and the bottom-right stack under it (measure list, volume / weight).
+// The stack keeps a usable minimum; when the column is too short for both, the
+// GUI gives way and scrolls inside (lil-gui scrolls its children once the root
+// has a max-height). Nothing in the stack ever sits under the GUI.
+const COLUMN_MARGIN = 12 // #corner-br's distance from the bottom
+const COLUMN_GAP = 8
+const MEASURE_MIN_PX = 120 // the measure list's title and about three rows
+const GUI_MIN_PX = 240 // below this the GUI stops giving way
+const HUD_MIN_PX = 200 // below this the HUD stops wrapping and may meet the stack
+function layoutCorner(): void {
+  const h = window.innerHeight
+  const measureShown = !measurePanel.classList.contains('hidden')
+  // natural height: content and padding (scrollHeight) plus the border
+  const measureNatural = measurePanel.scrollHeight + measurePanel.offsetHeight - measurePanel.clientHeight
+  const measureMin = measureShown ? Math.min(measureNatural, MEASURE_MIN_PX) : 0
+  const propsMin = propsPanel.minHeight()
+  const stackMin = measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
+  const guiMax = Math.max(h - COLUMN_MARGIN - COLUMN_GAP - stackMin, GUI_MIN_PX)
+  gui.domElement.style.maxHeight = stackMin && guiMax < h ? `${guiMax}px` : ''
+  const room = h - COLUMN_MARGIN - (gui.domElement.getBoundingClientRect().bottom + COLUMN_GAP)
+  const propsShare = propsMin ? propsMin + COLUMN_GAP : 0
+  measurePanel.style.maxHeight = `${Math.max(Math.min(0.4 * h, room - propsShare), measureMin)}px`
+  const measureUsed = measureShown ? measurePanel.getBoundingClientRect().height + COLUMN_GAP : 0
+  propsPanel.fitHeight(room - measureUsed)
+  // the HUD (bottom left) wraps its lines rather than run under the right-hand
+  // column on a narrow window (half a screen): the column starts at the GUI or
+  // at the stack, whichever reaches further left (the stack is as wide as its
+  // widest panel)
+  const hudLeft = hud.getBoundingClientRect().left
+  const columnLeft = Math.min(gui.domElement.getBoundingClientRect().left, cornerBr.getBoundingClientRect().left)
+  hud.style.maxWidth = `${Math.max(columnLeft - COLUMN_GAP - hudLeft, HUD_MIN_PX)}px`
 }
-const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id), fitCornerStack)
+// From a ResizeObserver, lay out on the next frame: changing an observed
+// element's size inside its own callback reports a "ResizeObserver loop" error.
+// The layout settles in a frame or two (the second pass sets the same sizes).
+let layoutQueued = false
+function queueLayoutCorner(): void {
+  if (layoutQueued) return
+  layoutQueued = true
+  requestAnimationFrame(() => {
+    layoutQueued = false
+    layoutCorner()
+  })
+}
+const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id), layoutCorner)
 // Watch the GUI and the measure list only, never the props panel itself:
-// fitHeight resizes the panel's table, and watching that would loop
-// ("ResizeObserver loop" errors).
-new ResizeObserver(fitCornerStack).observe(gui.domElement)
-new ResizeObserver(fitCornerStack).observe(measurePanel)
-window.addEventListener('resize', fitCornerStack)
+// fitHeight resizes the panel's table, and the panel reports its own changes.
+// The list (ul) too: once the panel is capped, new entries only grow the list.
+new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
+new ResizeObserver(queueLayoutCorner).observe(measurePanel)
+new ResizeObserver(queueLayoutCorner).observe(measureList)
+window.addEventListener('resize', layoutCorner)
+// When the GUI has had to give way (it scrolls), bring a folder the user just
+// opened into view once lil-gui's opening animation ends.
+gui.onOpenClose((changed) => {
+  if (changed === gui || changed._closed) return
+  const kids = changed.domElement.querySelector<HTMLElement>(':scope > .lil-children')
+  const scroller = gui.domElement.querySelector<HTMLElement>(':scope > .lil-children')
+  if (!kids || !scroller) return
+  const reveal = (e: TransitionEvent): void => {
+    if (e.target !== kids) return
+    kids.removeEventListener('transitionend', reveal)
+    if (changed._closed) return
+    const box = changed.domElement.getBoundingClientRect()
+    const view = scroller.getBoundingClientRect()
+    // scroll by the part hidden below, but never past the folder's title
+    const by = Math.min(box.bottom - view.bottom, box.top - view.top)
+    if (by > 0) scroller.scrollTop += by
+  }
+  kids.addEventListener('transitionend', reveal)
+})
 
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
