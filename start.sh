@@ -19,6 +19,15 @@ log() { printf '[cad-viewer] %s\n' "$1"; }
 # 127.0.0.1 のポートへの接続が拒否されず黒穴になり、素の curl は 2 分以上返らない。
 alive() { curl -sf --connect-timeout 1 -m 3 "${URL}/api/health" >/dev/null 2>&1; }
 
+# 同時起動の直列化。起動アイコンを続けて 2 回押すと start.sh が 2 本走り、
+# backend を 2 つ立てようとして pidfile が負けた側を指すことがある。
+# 先の 1 本が終わるまで待ち、後の 1 本は「起動済み」としてブラウザを開くだけにする。
+exec 9>/tmp/cadviewer.lock
+if ! flock -w 300 9; then
+  log "ERROR: 別の start.sh が 5 分以上終わらない（/tmp/cadviewer.lock）"
+  exit 1
+fi
+
 # 0. backend venv 健全性チェック
 if [ ! -x "${VENV}/bin/uvicorn" ]; then
   log "ERROR: backend venv が無い。README の手順で backend/.venv を作れ:"
@@ -86,7 +95,9 @@ else
   # cd を & の外に出す。`cd && nohup ... &` だと & が列全体にかかり、$! が
   # uvicorn でなく中継のサブシェルの pid になる
   ( cd "${ROOT}/backend" || exit 1
-    nohup "${VENV}/bin/uvicorn" app.main:app --port "${PORT}" > /tmp/cadviewer.log 2>&1 &
+    # 9>&-: ロックの fd を uvicorn に引き継がせない（引き継ぐと backend が
+    # 生きている間ずっとロックが握られ、次の start.sh が 5 分待たされる）
+    nohup "${VENV}/bin/uvicorn" app.main:app --port "${PORT}" > /tmp/cadviewer.log 2>&1 9>&- &
     echo $! > "${PIDFILE}" )
   # health 待ち（最大 15 秒）
   for _ in $(seq 1 30); do
@@ -96,6 +107,12 @@ else
   if ! alive; then
     log "ERROR: backend が起動しなかった。ログ: /tmp/cadviewer.log"
     exit 1
+  fi
+  # 自分の uvicorn が実際にポートを持っているときだけ pidfile を残す。
+  # 手で立てた別の backend が先にポートを取っていたら、それは自分の管理外。
+  listener="$(ss -ltnpH "sport = :${PORT}" 2>/dev/null | grep -o 'pid=[0-9]*' | head -1 | cut -d= -f2 || true)"
+  if [ "${listener}" != "$(cat "${PIDFILE}")" ]; then
+    rm -f "${PIDFILE}"
   fi
   log "backend 起動完了"
 fi
