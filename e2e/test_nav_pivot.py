@@ -179,30 +179,33 @@ with nav_session(boxes=("runner",)) as n:
     # C10. a wheel step during the slide zooms from the slide's end pose: at the
     # canvas centre that is P itself, so the target stays P (picking in the
     # in-between pose would zoom about another point and move the target off P)
-    # The camera state when the wheel event arrives is recorded (window capture
-    # runs before the viewer's listener), to prove the wheel really landed
-    # mid-slide. On a slow machine the 250 ms slide may end first: then retry.
+    # The wheel must land while the 250 ms slide is still running. Timing two
+    # separate inputs cannot promise that (on the CI runner the slide ended first
+    # every time), so the wheel is sent from inside the page: a one-shot window
+    # dblclick listener runs after the viewer's own (on #viewport) has started
+    # the slide, and dispatches the wheel in the next task. The camera state
+    # when the wheel arrives is recorded (window capture runs first) to prove it.
+    page.keyboard.press("f")
+    settle()
+    cur = tuple(round(c) for c in project(SURFACE))
+    P = pick(cur)["point"]
+    v0 = view()
+    depth = dot(sub(P, v0["position"]), direction(v0))
     page.evaluate(
-        """() => window.addEventListener('wheel', () => { window.__atWheel = window.__cadView() },
-                                         { capture: true })"""
+        """([cx, cy]) => {
+             const vp = document.querySelector('#viewport')
+             window.addEventListener('wheel', () => { window.__atWheel = window.__cadView() },
+                                     { capture: true, once: true })
+             window.addEventListener('dblclick', () => setTimeout(() => vp.dispatchEvent(
+               new WheelEvent('wheel', { deltaY: -100, clientX: cx, clientY: cy, bubbles: true, cancelable: true })
+             ), 0), { once: true })
+           }""",
+        centre,
     )
-    for attempt in range(3):
-        page.keyboard.press("f")
-        settle()
-        cur = tuple(round(c) for c in project(SURFACE))
-        P = pick(cur)["point"]
-        v0 = view()
-        depth = dot(sub(P, v0["position"]), direction(v0))
-        page.mouse.dblclick(*cur)
-        page.mouse.move(*centre)
-        page.mouse.wheel(0, -100)
-        page.wait_for_timeout(400)
-        at = page.evaluate("window.__atWheel")
-        if math.dist(at["target"], P) > 1e-3:
-            break  # the wheel arrived while the target was still on its way to P
-        print("C10 slide ended before the wheel, retrying", attempt)
-    else:
-        raise AssertionError("C10 could not send the wheel during the slide")
+    page.mouse.dblclick(*cur)
+    page.wait_for_timeout(400)
+    at = page.evaluate("window.__atWheel")
+    assert at and math.dist(at["target"], P) > 1e-3, ("C10 the wheel did not land mid-slide", at and at["target"], P)
     v = view()
     assert close(v["target"], P, 1e-4), ("C10 target", v["target"], P)
     assert abs(math.dist(v["position"], P) - 0.9 * depth) <= 1e-6 * depth, ("C10 distance", math.dist(v["position"], P), depth)
