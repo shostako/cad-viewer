@@ -6,6 +6,7 @@ import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import type { ModelData, PartData } from './model'
+import { paintLabels, type ExportBackground } from './snapshot'
 
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
@@ -34,6 +35,13 @@ const PIVOT_MS = 250
 const PIVOT_MARKER_MS = 1000
 /** a press that moves further than this (px) is a drag, not a click */
 export const DRAG_PX = 5
+/** PNG export with 背景=白 */
+const WHITE = new THREE.Color(0xffffff)
+const GRID_DIVISIONS = 20
+/** ground grid: centre lines, other lines */
+const GRID_COLORS: [number, number] = [0x3a4250, 0x2a3038]
+/** the same grid on a white export: the dark one would print as heavy lines */
+const GRID_COLORS_ON_WHITE: [number, number] = [0xc0c6ce, 0xdde1e6]
 
 /**
  * How mouse drags and arrow keys rotate the view.
@@ -72,6 +80,8 @@ export class Viewer {
   readonly overlay = new THREE.Group()
   private modelGroup = new THREE.Group()
   private gridHelper: THREE.GridHelper | null = null
+  /** size and placement of the current grid, so an export can build a recoloured copy */
+  private gridSpec: { size: number; x: number; y: number; z: number } | null = null
   private _gridVisible = true
   private _rotateMode: RotateMode = 'turntable'
   /** pointers held down on the canvas — auto-rotate pauses so it doesn't fight the user */
@@ -90,6 +100,7 @@ export class Viewer {
   } | null = null
   private pivotMarker: CSS2DObject | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
+  private container: HTMLElement
 
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
@@ -164,21 +175,10 @@ export class Viewer {
     this.scene.add(this.modelGroup)
     this.scene.add(this.overlay)
 
-    const resize = () => {
-      const w = container.clientWidth
-      const h = container.clientHeight
-      // hidden (2D drawing shown): keep the last size, so the aspect never
-      // becomes NaN for the next 3D load
-      if (w === 0 || h === 0) return
-      this.camera.aspect = w / h
-      this.camera.updateProjectionMatrix()
-      this.renderer.setSize(w, h)
-      this.labelRenderer.setSize(w, h)
-      for (const m of this.lineMaterials) m.resolution.set(w, h)
-      this.trackball.handleResize()
-    }
-    new ResizeObserver(resize).observe(container)
-    resize()
+    this.container = container
+    new ResizeObserver(() => this.fitToContainer()).observe(container)
+    this.fitToContainer()
+    this.watchPixelRatio()
 
     let last = performance.now()
     this.renderer.setAnimationLoop((now: number) => {
@@ -388,6 +388,7 @@ export class Viewer {
       this.gridHelper.dispose()
       this.gridHelper = null
     }
+    this.gridSpec = null
   }
 
   /** Zoom to fit the visible bodies, keeping the current view direction and roll. */
@@ -483,17 +484,26 @@ export class Viewer {
       this.gridHelper.dispose()
       this.gridHelper = null
     }
+    this.gridSpec = null
     if (box.isEmpty()) return
     const size = box.getSize(new THREE.Vector3())
     const center = box.getCenter(new THREE.Vector3())
     const maxDim = Math.max(size.x, size.y, size.z)
     const gridSize = Math.pow(10, Math.ceil(Math.log10(maxDim * 2)))
-    this.gridHelper = new THREE.GridHelper(gridSize, 20, 0x3a4250, 0x2a3038)
-    // GridHelper lies in XZ; rotate into XY plane for Z-up world
-    this.gridHelper.rotation.x = Math.PI / 2
-    this.gridHelper.position.set(center.x, center.y, box.min.z)
+    this.gridSpec = { size: gridSize, x: center.x, y: center.y, z: box.min.z }
+    this.gridHelper = this.makeGrid(GRID_COLORS)
     this.gridHelper.visible = this._gridVisible
     this.scene.add(this.gridHelper)
+  }
+
+  /** a grid at gridSpec in the given colours (not added to the scene) */
+  private makeGrid(colors: [number, number]): THREE.GridHelper {
+    const s = this.gridSpec!
+    const grid = new THREE.GridHelper(s.size, GRID_DIVISIONS, ...colors)
+    // GridHelper lies in XZ; rotate into XY plane for Z-up world
+    grid.rotation.x = Math.PI / 2
+    grid.position.set(s.x, s.y, s.z)
+    return grid
   }
 
   // ---- zoom toward a point, double-click pivot ----------------------------
@@ -571,6 +581,8 @@ export class Viewer {
     this.removePivotMarker()
     // on the scene, not `overlay`: the overlay belongs to the measure tool
     this.pivotMarker = this.makeLabel('', at, 'pivot-marker')
+    // a one-second fading cue, not content: a saved image leaves it out
+    this.pivotMarker.element.dataset.noExport = ''
     this.scene.add(this.pivotMarker)
     this.pivotMarkerTimer = setTimeout(() => this.removePivotMarker(), PIVOT_MARKER_MS)
   }
@@ -582,6 +594,112 @@ export class Viewer {
     this.scene.remove(this.pivotMarker)
     this.pivotMarker.element.remove()
     this.pivotMarker = null
+  }
+
+  /**
+   * Size the renderers to the container, at the current devicePixelRatio.
+   * setSize alone keeps the ratio the renderer was made with, but the ratio
+   * changes with browser zoom and when the window moves to a monitor with
+   * another scale: the canvas would stay blurry and an export too small.
+   */
+  private fitToContainer(): void {
+    const w = this.container.clientWidth
+    const h = this.container.clientHeight
+    // hidden (2D drawing shown): keep the last size, so the aspect never
+    // becomes NaN for the next 3D load
+    if (w === 0 || h === 0) return
+    const dpr = window.devicePixelRatio || 1
+    if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr)
+    this.camera.aspect = w / h
+    this.camera.updateProjectionMatrix()
+    this.renderer.setSize(w, h)
+    this.labelRenderer.setSize(w, h)
+    for (const m of this.lineMaterials) m.resolution.set(w, h)
+    this.trackball.handleResize()
+  }
+
+  /**
+   * A move to a monitor with another scale changes devicePixelRatio without
+   * resizing the container, so the ResizeObserver does not fire. A media
+   * query on the current resolution does; it is re-armed for the new value.
+   */
+  private watchPixelRatio(): void {
+    const mq = window.matchMedia(`(resolution: ${window.devicePixelRatio || 1}dppx)`)
+    mq.addEventListener(
+      'change',
+      () => {
+        this.fitToContainer()
+        this.watchPixelRatio()
+      },
+      { once: true },
+    )
+  }
+
+  // ---- PNG export -----------------------------------------------------------
+
+  /**
+   * The current view as a canvas at the WebGL drawing-buffer size (CSS size x
+   * pixel ratio), with the HTML labels painted on top.
+   *
+   * The renderer keeps preserveDrawingBuffer off (it costs every frame), so
+   * the buffer is only defined until the frame is presented: render once here
+   * and copy it in the same task, before the browser presents. A render target
+   * with readRenderTargetPixels was not used: it would need the MSAA resolve,
+   * the colour-space conversion and a y-flip that the canvas path does for us.
+   */
+  snapshot(background: ExportBackground): HTMLCanvasElement {
+    const src = this.renderer.domElement
+    if (this.renderer.getContext().isContextLost()) throw new Error('WebGL の描画が失われている（再読み込みしてほしい）')
+    // the image is at the screen's current scale even if no resize or media
+    // query event has reached us yet (resizing clears the buffer: the render
+    // below draws it again)
+    if (this.renderer.getPixelRatio() !== (window.devicePixelRatio || 1)) this.fitToContainer()
+    const out = document.createElement('canvas')
+    out.width = src.width
+    out.height = src.height
+    const ctx = out.getContext('2d')
+    if (!ctx) throw new Error('画像を作れない')
+    let restore = () => {}
+    try {
+      if (background === 'white') restore = this.applyWhiteBackground()
+      this.renderer.render(this.scene, this.camera)
+      // same task as render(): without preserveDrawingBuffer the buffer is undefined once presented
+      ctx.drawImage(src, 0, 0)
+    } finally {
+      restore()
+      // the visible canvas holds the normal frame again (a hidden tab may not
+      // run the loop for a while)
+      this.renderer.render(this.scene, this.camera)
+    }
+    this.labelRenderer.render(this.scene, this.camera) // label positions for exactly this camera
+    const rect = src.getBoundingClientRect()
+    // scale from the real buffer and rect, not devicePixelRatio: they differ after a browser zoom
+    paintLabels(ctx, this.labelRenderer.domElement, rect, out.width / rect.width, out.height / rect.height)
+    return out
+  }
+
+  /**
+   * White scene background and, if the grid is shown, a light copy of the
+   * grid in its place. Returns the undo. The light grid is built before the
+   * scene is touched, so a throw leaves nothing to undo.
+   */
+  private applyWhiteBackground(): () => void {
+    const grid = this.gridHelper
+    const light = grid?.visible && this.gridSpec ? this.makeGrid(GRID_COLORS_ON_WHITE) : null
+    const bg = this.scene.background
+    this.scene.background = WHITE
+    if (grid && light) {
+      grid.visible = false
+      this.scene.add(light)
+    }
+    return () => {
+      this.scene.background = bg // the same Color object as before
+      if (grid && light) {
+        this.scene.remove(light)
+        light.dispose()
+        grid.visible = true
+      }
+    }
   }
 
   // ---- grid ---------------------------------------------------------------
