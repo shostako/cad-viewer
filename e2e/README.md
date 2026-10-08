@@ -27,3 +27,4 @@ for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
 - `test_nav_fit.py`（全体表示）・`test_nav_wheel.py`（ホイールの拡大縮小）・`test_nav_pivot.py`（ダブルクリックの回転の中心）は、共通の部品を `nav_common.py` から使う。検査用の箱の STL は一時ディレクトリに書いて使い、最後に消す。1 本にまとめると CI の 1 本あたりの打ち切り（300 秒）を超えたので分けてある。1 本は目安 2 分以内に収める
 - `test_properties.py`（体積・重量のパネル）は `/properties` を持つ backend が要る。`window.__cadStallProperties(ms)` で次の 1 回の取得を遅らせ、古い応答を捨てることを確かめる
 - `test_view_modes.py`（空の画面の案内、2D 図面で 3D 用の項目を隠す）は、メッシュの取得をわざと失敗させる（`page.route` で中断）ことで、前のモデルを片付けたあとの失敗で案内が戻ることを確かめる
+- `test_png_export.py`（画像を保存）は、devicePixelRatio 2・時間帯 Asia/Tokyo のブラウザで、Playwright のダウンロードの仕組みで PNG を受け取り、画素を調べる。mini_mold.step は末尾に改行を足した自分専用のコピーを一時ディレクトリに作って使う（別のモデル id とサイドカーになり、共有の backend のサイドカーに触れない）。DXF は `plate.drawing.dxf` という名前のコピーで、ファイル名の規則（最後の拡張子だけを除く）を確かめる。期待値は、画面に出ているフレーム（canvas の toDataURL）、`__cadProject` の投影、ezdxf の背景の矩形からの DXF→SVG の対応、パネルとラベルの矩形から出す。保存した PNG は `/tmp/cad_viewer_png_*.png` に残る

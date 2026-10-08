@@ -20,6 +20,7 @@ import { toModelData } from './model'
 import { Picker } from './picking'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { renderTree } from './tree'
 import { DRAG_PX, Viewer, type RotateMode, type ViewPreset } from './viewer'
 
@@ -113,6 +114,13 @@ function show2D(on: boolean): void {
   setKeys(on ? KEYS_2D : KEYS_3D)
 }
 
+/** whether a model or drawing is on screen, and its file name (for the PNG export) */
+function setContentShown(on: boolean, fileName = ''): void {
+  contentShown = on
+  shownFileName = on ? fileName : ''
+  savePngCtl.enable(on)
+}
+
 /** the "open / drop a file" card in the middle of an empty screen */
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
@@ -120,6 +128,9 @@ function showEmpty(on: boolean): void {
 // whether a model or drawing is on screen: a failed load after the old one was
 // torn down leaves an empty screen, which gets the card back
 let contentShown = false
+// file name of what is on screen (File.name, not meta.name: the backend
+// answers a duplicate upload with the first upload's name)
+let shownFileName = ''
 
 let currentModelId: string | null = null
 // Sidecar-save suppression during model teardown/restore. Generation-tagged
@@ -138,6 +149,8 @@ const actions = {
     measureTool.clearAll()
     drawing2d.clearMeasurements()
   },
+  // a function declaration below, so it is hoisted
+  savePng: () => void savePng(),
 }
 gui.add(actions, 'open').name('ファイルを開く')
 gui.add(actions, 'fit').name('全体表示')
@@ -152,6 +165,53 @@ const modeCtl = gui
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
 gui.add(actions, 'clearMeasure').name('計測クリア')
+
+// ---- save the view as a PNG
+// The background choice survives a reload, like the view preferences.
+const EXPORT_PREFS_KEY = 'cad-viewer:export'
+const exportPrefs = { background: 'screen' as ExportBackground }
+try {
+  const saved = JSON.parse(localStorage.getItem(EXPORT_PREFS_KEY) ?? '{}')
+  if (saved.background === 'screen' || saved.background === 'white') exportPrefs.background = saved.background
+} catch {
+  /* defaults */
+}
+function saveExportPrefs(): void {
+  try {
+    localStorage.setItem(EXPORT_PREFS_KEY, JSON.stringify(exportPrefs))
+  } catch {
+    /* best-effort */
+  }
+}
+// disabled until something is on screen (setContentShown)
+const savePngCtl = gui.add(actions, 'savePng').name('画像を保存（PNG）').disable()
+// a select, not a checkbox: E2E scripts click the first checkbox of the panel.
+// Labelled 画像の背景 so nobody takes it for the screen's own background.
+gui
+  .add(exportPrefs, 'background', { 画面のまま: 'screen', 白: 'white' })
+  .name('画像の背景')
+  .onChange(saveExportPrefs)
+let exporting = false
+async function savePng(): Promise<void> {
+  // the button is disabled then too; this also covers keyboard activation and races
+  if (!contentShown || exporting) return
+  exporting = true
+  // name and time of the click, even if a load starts during a slow 2D decode
+  const name = pngFileName(shownFileName, new Date())
+  const bg = exportPrefs.background
+  try {
+    // clicks while this runs are dropped: say why nothing else happens
+    hudInfo.textContent = '画像を作成中...'
+    // 3D: no await before snapshot(), which renders and copies in one task
+    const canvas = is2D ? await drawing2d.snapshot(bg) : viewer.snapshot(bg)
+    downloadBlob(await canvasToPng(canvas), name)
+    hudInfo.textContent = `画像を保存: ${name}`
+  } catch (e) {
+    hudInfo.textContent = `画像の保存に失敗: ${e instanceof Error ? e.message : e}`
+  } finally {
+    exporting = false
+  }
+}
 
 // ---- display & view navigation
 // Preferences survive a reload. Storage can be unavailable (private window,
@@ -668,7 +728,7 @@ async function loadFile(file: File): Promise<void> {
       // the old drawing goes too: if the new load fails below, the screen must
       // be really empty (not the old drawing, still interactive, under the card)
       drawing2d.clear()
-      contentShown = false
+      setContentShown(false)
       picker.setModel([])
       treeBody.replaceChildren()
       treePanel.classList.add('hidden')
@@ -680,7 +740,7 @@ async function loadFile(file: File): Promise<void> {
         sectionTool.update()
         drawing2d.load(svg, meta.snapPoints ?? [])
         show2D(true)
-        contentShown = true
+        setContentShown(true, file.name)
         showEmpty(false)
         const d = meta.bbox2d
           ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
@@ -694,7 +754,7 @@ async function loadFile(file: File): Promise<void> {
       if (gen !== loadGen) return
       const model = toModelData(pack)
       viewer.setModel(model)
-      contentShown = true
+      setContentShown(true, file.name)
       showEmpty(false)
       picker.setModel(model.parts)
       measureTool.setModel(meta.id, meta.format === 'brep')

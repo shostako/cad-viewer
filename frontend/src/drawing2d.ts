@@ -6,6 +6,8 @@
  * and dxf coords (exact measurement values).
  */
 
+import { flipNearWhite, type ExportBackground } from './snapshot'
+
 export interface SnapPoint {
   dxf: [number, number]
   svg: [number, number]
@@ -49,6 +51,8 @@ export class Drawing2D {
     this.baseVb = { x, y, w, h }
 
     this.overlayG = document.createElementNS(SVG_NS, 'g')
+    // named so a white export can leave the measurement colours alone
+    this.overlayG.setAttribute('class', 'overlay2d')
     this.svg.appendChild(this.overlayG)
     this.snaps = snaps
     this.pendingSnap = null
@@ -139,6 +143,55 @@ export class Drawing2D {
     this.applyViewBox()
   }
 
+  /**
+   * The drawing as on screen (current viewBox = current pan and zoom, with the
+   * measurement overlay) rasterised at device-pixel resolution. 'white' gives
+   * a white page with near-white lines turned black.
+   */
+  async snapshot(background: ExportBackground): Promise<HTMLCanvasElement> {
+    const svg = this.svg
+    if (!svg) throw new Error('図面が開かれていない')
+    const rect = svg.getBoundingClientRect()
+    const dpr = window.devicePixelRatio || 1
+    const w = Math.max(1, Math.round(rect.width * dpr))
+    const h = Math.max(1, Math.round(rect.height * dpr))
+    const k = w / rect.width
+    // clone at the click: a load that starts during the async decode can't change it
+    const clone = svg.cloneNode(true) as SVGSVGElement
+    clone.removeAttribute('style')
+    // the viewBox and preserveAspectRatio come along, so the mapping is the screen's
+    clone.setAttribute('width', String(w))
+    clone.setAttribute('height', String(h))
+    // a standalone SVG image does not inherit the page font
+    clone.setAttribute('font-family', getComputedStyle(svg).fontFamily)
+    // a non-scaling stroke is measured in image pixels, which are device pixels here
+    for (const el of Array.from(clone.querySelectorAll('[vector-effect="non-scaling-stroke"]'))) {
+      el.setAttribute('stroke-width', String((Number(el.getAttribute('stroke-width')) || 1) * k))
+    }
+    if (background === 'white') whitenDrawing(clone)
+
+    const url = URL.createObjectURL(
+      new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }),
+    )
+    try {
+      const img = new Image()
+      img.src = url
+      await img.decode()
+      const out = document.createElement('canvas')
+      out.width = w
+      out.height = h
+      const ctx = out.getContext('2d')
+      if (!ctx) throw new Error('画像を作れない')
+      // the page around the drawing: the container colour on screen
+      ctx.fillStyle = background === 'white' ? '#ffffff' : getComputedStyle(this.container).backgroundColor
+      ctx.fillRect(0, 0, w, h)
+      ctx.drawImage(img, 0, 0, w, h)
+      return out
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
   private nearestSnap(cx: number, cy: number): SnapPoint | null {
     const [sx, sy] = this.clientToSvg(cx, cy)
     const maxDist = SNAP_PX * this.unitsPerPx()
@@ -222,4 +275,26 @@ export class Drawing2D {
       t.setAttribute('font-size', String(13 * u))
     }
   }
+}
+
+/**
+ * White page for a drawing: the ezdxf background rect (a direct child of the
+ * <svg>) turns white, and near-white drawing colours (ACI 7, drawn white on
+ * the dark page) turn black, in <style> rules and in stroke / fill / style
+ * attributes. The measurement overlay keeps its colours. Non-hex colours
+ * (`white`, `rgb()`) are not changed: ezdxf writes hex.
+ */
+function whitenDrawing(svg: SVGSVGElement): void {
+  const overlay = svg.querySelector('g.overlay2d')
+  for (const st of Array.from(svg.querySelectorAll('style'))) {
+    st.textContent = flipNearWhite(st.textContent ?? '')
+  }
+  for (const el of Array.from(svg.querySelectorAll('[stroke],[fill],[style]'))) {
+    if (overlay?.contains(el)) continue
+    for (const attr of ['stroke', 'fill', 'style']) {
+      const v = el.getAttribute(attr)
+      if (v) el.setAttribute(attr, flipNearWhite(v))
+    }
+  }
+  svg.querySelector(':scope > rect')?.setAttribute('fill', '#ffffff')
 }
