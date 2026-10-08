@@ -6,6 +6,7 @@ Geometry (see testdata/make_step_assembly.py):
   cavity_block: box 40x30x20 at (30,15,15)
 """
 import pathlib
+from collections import OrderedDict
 
 import pytest
 from fastapi.testclient import TestClient
@@ -106,12 +107,49 @@ def test_measure_on_mesh_format_rejected(model):
     assert r.status_code == 422
 
 
-def test_measure_after_cache_hit(model):
+@pytest.fixture
+def fresh_state(tmp_path, monkeypatch):
+    """An empty model store and an empty disk cache for one test.
+
+    The store is process-wide: without this, an earlier upload of the same file
+    makes the next upload a store dedup hit, and the disk-cache-hit path these
+    tests exist for is never taken. The module-scoped `model` entry comes back
+    after the test (monkeypatch restores the store's internals).
+    """
+    from app import cache
+    from app.store import store
+
+    monkeypatch.setattr(store, "_models", OrderedDict())
+    monkeypatch.setattr(store, "_by_hash", {})
+    monkeypatch.setattr(cache, "CACHE_DIR", tmp_path / "cache")
+    return store
+
+
+def _upload_via_disk_cache(client, store):
+    """Upload mini_mold.step so that it takes the DISK-cache-hit path.
+
+    The first upload parses and fills the disk cache. Dropping the live entry
+    makes the re-upload miss the store dedup and hit the disk cache instead.
+    """
+    data = STEP.read_bytes()
+    r1 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
+    assert r1.status_code == 200
+    assert r1.json()["cached"] is False, "first upload must parse, not hit a cache"
+    store.remove(r1.json()["id"])
+    r2 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
+    assert r2.status_code == 200
+    meta = r2.json()
+    assert meta["cached"] is True
+    entry = store.get(meta["id"])
+    assert "raw" in entry.extra, "expected a disk-cache-hit entry carrying raw bytes"
+    assert entry.brep is None, "a disk-cache hit has no live B-rep until the first measure"
+    return meta, entry
+
+
+def test_measure_after_cache_hit(model, fresh_state):
     """Cache-hit models must lazily rebuild B-rep handles for measurement."""
     client, _, pin_ids = model
-    r = client.post("/api/models", files={"file": ("mini_mold.step", STEP.read_bytes(), "x")})
-    meta = r.json()
-    assert meta["cached"] is True
+    meta, entry = _upload_via_disk_cache(client, fresh_state)
     r = client.post(
         f"/api/models/{meta['id']}/measure",
         json={
@@ -121,6 +159,7 @@ def test_measure_after_cache_hit(model):
         },
     )
     assert r.status_code == 200
+    assert entry.brep is not None, "the measure must have rebuilt the B-rep"
 
 
 def test_vertex_ref_exact_distance(model):
@@ -152,24 +191,12 @@ def test_vertex_ref_exact_distance(model):
     assert best == pytest.approx((100**2 + 60**2 + 15**2) ** 0.5, abs=1e-9)
 
 
-def test_raw_bytes_released_after_lazy_reparse():
+def test_raw_bytes_released_after_lazy_reparse(fresh_state):
     """Regression: cache-hit entries kept the original upload bytes forever
     after the B-rep was lazily rebuilt, doubling memory for the LRU lifetime."""
     client = TestClient(app)
-    data = STEP.read_bytes()
-    from app.store import store as _store
-
-    r1 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
-    assert r1.status_code == 200
-    # drop the live entry so the re-upload takes the DISK-cache-hit path
-    # (same-process re-uploads are deduped by the store and never carry raw)
-    _store.remove(r1.json()["id"])
-    r2 = client.post("/api/models", files={"file": ("mini_mold.step", data, "x")})
-    assert r2.status_code == 200
-    mid = r2.json()["id"]
-
-    entry = _store.get(mid)
-    assert "raw" in entry.extra, "expected a disk-cache-hit entry carrying raw bytes"
+    meta, entry = _upload_via_disk_cache(client, fresh_state)
+    mid = meta["id"]
 
     # trigger the lazy reparse via a measurement
     res = client.post(
