@@ -90,6 +90,8 @@ export class Viewer {
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
+  /** per-triangle copies of mesh-format parts while the draft colouring is on */
+  private flatCopies = new Map<number, THREE.Mesh>()
   private raycaster = new THREE.Raycaster()
   /** running double-click pivot slide (camera and target both move) */
   private viewAnim: {
@@ -256,6 +258,7 @@ export class Viewer {
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
       if (!mesh) continue
+      this.removeFlatCopy(partId) // the heatmap colours the part mesh itself
       // contract: one thickness value per display vertex
       if (t.length !== mesh.geometry.getAttribute('position').count) {
         console.warn(`thickness length mismatch for part ${partId} — skipped`)
@@ -295,17 +298,104 @@ export class Viewer {
    * Draft-angle colouring (draft.ts) on every part with faces. Hidden parts are
    * coloured too, so they are right when shown again; colours live on the
    * geometry, which the section's stencil meshes share but do not draw.
+   * Mesh-format parts are coloured on their flat copy (see flatCopy).
    */
   setDraftColors(dir: readonly [number, number, number], requiredDeg: number): void {
-    for (const mesh of this.partMeshes.values()) {
+    for (const [partId, mesh] of this.partMeshes) {
       if (!mesh.geometry.index?.count) continue // loose curves: nothing to colour
-      const normals = mesh.geometry.getAttribute('normal').array
-      this.applyVertexColors(mesh, (out) => draftColors(normals, dir, requiredDeg, out))
+      const target = mesh.userData.meshFormat ? this.flatCopy(partId, mesh) : mesh
+      const normals = target.geometry.getAttribute('normal').array
+      this.applyVertexColors(target, (out) => draftColors(normals, dir, requiredDeg, out))
     }
+  }
+
+  /**
+   * A non-indexed copy of a mesh-format part (STL, 3MF, ...) with one vertex
+   * triple per triangle and the triangle's own normal (from its winding).
+   *
+   * The display normals of those parts are averaged across edges shallower
+   * than 30° (backend smooth_shade), so a large planar wall shares its corner
+   * normals with the fillet next to it. Classified per vertex, the colour of
+   * that corner then blends across the whole wall triangle: the top of an
+   * under-drafted wall would read as enough. The triangles are the true shape
+   * of a mesh file, so they are classified one by one and drawn flat.
+   *
+   * The part mesh stays in place for picking (its BVH and faceIndex) and the
+   * section's stencil; it is only hidden while the copy is shown. The copy sits
+   * in the part's group, so tree visibility and clipping (setClippingPlanes
+   * walks the model group) apply to it too.
+   */
+  private flatCopy(partId: number, mesh: THREE.Mesh): THREE.Mesh {
+    const have = this.flatCopies.get(partId)
+    if (have) return have
+    const pos = mesh.geometry.getAttribute('position').array
+    const idx = mesh.geometry.index!.array
+    const nTri = Math.floor(idx.length / 3)
+    const P = new Float32Array(nTri * 9)
+    const N = new Float32Array(nTri * 9)
+    for (let t = 0; t < nTri; t++) {
+      const a = idx[t * 3] * 3
+      const b = idx[t * 3 + 1] * 3
+      const c = idx[t * 3 + 2] * 3
+      for (let k = 0; k < 3; k++) {
+        P[t * 9 + k] = pos[a + k]
+        P[t * 9 + 3 + k] = pos[b + k]
+        P[t * 9 + 6 + k] = pos[c + k]
+      }
+      // (b - a) x (c - a): counter-clockwise winding = front = outward
+      const ux = pos[b] - pos[a]
+      const uy = pos[b + 1] - pos[a + 1]
+      const uz = pos[b + 2] - pos[a + 2]
+      const vx = pos[c] - pos[a]
+      const vy = pos[c + 1] - pos[a + 1]
+      const vz = pos[c + 2] - pos[a + 2]
+      let nx = uy * vz - uz * vy
+      let ny = uz * vx - ux * vz
+      let nz = ux * vy - uy * vx
+      const len = Math.sqrt(nx * nx + ny * ny + nz * nz)
+      // a degenerate triangle keeps a zero normal: draftColors takes it as a wall
+      if (len > 0) {
+        nx /= len
+        ny /= len
+        nz /= len
+      }
+      for (let v = 0; v < 3; v++) {
+        N[t * 9 + v * 3] = nx
+        N[t * 9 + v * 3 + 1] = ny
+        N[t * 9 + v * 3 + 2] = nz
+      }
+    }
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.BufferAttribute(P, 3))
+    geo.setAttribute('normal', new THREE.BufferAttribute(N, 3))
+    const src = mesh.material as THREE.MeshStandardMaterial
+    const mat = src.clone()
+    // the same plane objects as the part (clone() copies them), so a section
+    // moved before the next setClippingPlanes still clips both alike
+    mat.clippingPlanes = src.clippingPlanes
+    const copy = new THREE.Mesh(geo, mat)
+    copy.renderOrder = mesh.renderOrder
+    mesh.parent!.add(copy)
+    mesh.visible = false
+    this.flatCopies.set(partId, copy)
+    return copy
+  }
+
+  /** Drop the flat copy of a part (if any) and show the part mesh again. */
+  private removeFlatCopy(partId: number): void {
+    const copy = this.flatCopies.get(partId)
+    if (!copy) return
+    copy.parent?.remove(copy)
+    copy.geometry.dispose()
+    ;(copy.material as THREE.Material).dispose()
+    this.flatCopies.delete(partId)
+    const mesh = this.partMeshes.get(partId)
+    if (mesh) mesh.visible = true
   }
 
   /** Back to the part colours (thickness heatmap or draft colouring off). */
   clearVertexColors(): void {
+    for (const partId of [...this.flatCopies.keys()]) this.removeFlatCopy(partId)
     for (const mesh of this.partMeshes.values()) {
       const mat = mesh.material as THREE.MeshStandardMaterial
       if (mat.vertexColors) {
@@ -378,6 +468,8 @@ export class Viewer {
       polygonOffsetUnits: 1,
     })
     const mesh = new THREE.Mesh(geo, mat)
+    // mesh formats (STL, 3MF, ...) carry no B-rep faces: their triangles are the shape
+    mesh.userData.meshFormat = part.faceRanges.length === 0
     group.add(mesh)
     this.partMeshes.set(part.id, mesh)
 
@@ -420,6 +512,7 @@ export class Viewer {
     }
     this.partGroups.clear()
     this.partMeshes.clear()
+    this.flatCopies.clear() // disposed with their groups above
     this.lineMaterials = []
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     this.viewAnim = null

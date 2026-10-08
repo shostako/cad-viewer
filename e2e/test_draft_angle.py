@@ -10,11 +10,16 @@ expected face (window.__cadPick). Lighting shades the class colours, so a
 pixel is classified by its dominant channel: green = 抜ける側, red = 勾配不足,
 blue = 反対側, anything greyish = neutral (part colours, cap, background).
 
-Steps: (a) mini_mold: classes, section, direction, 0 deg, off, bottom view,
-free rotation + keyboard, hidden part; (b) frustum: all six pull directions and
-the 2 deg boundary; (c) mutual exclusion with the thickness heatmap, including
-a held and an aborted thickness request; (d) hidden on a drawing, reset on
-reload; (e) remembered direction / angle, bad stored values.
+Steps: (a) empty screen, then mini_mold: classes, horizontal pulls (the pins'
+curved faces), section, direction, 0 deg, off, bottom view, free rotation +
+keyboard (a dropdown that keeps focus), hidden part; (b) frustum: all six pull
+directions and the 2 deg boundary; a filleted STL whose under-drafted wall
+must stay red up to the fillet (mesh formats are classified per triangle);
+an open STL gets the legend's note on face orientation; (c) mutual exclusion
+with the thickness heatmap, including held and aborted thickness requests, a
+方式 switch and a measure result on the status line; (d) hidden on a drawing,
+reset on reload, ticking while the mesh is still loading; (e) remembered
+direction / angle, bad stored values.
 """
 import base64
 import io
@@ -62,11 +67,14 @@ SIX = {
 }
 
 
-def frustum_stl(path):
-    """ASCII STL of the frustum: quads as nav_common.box_stl, normals from the winding"""
+def frustum_stl(path, bottom=True):
+    """ASCII STL of the frustum: quads as nav_common.box_stl, normals from the winding.
+    bottom=False leaves the base out: an open surface (no volume)"""
     a, b = F_HALF, F_TOPHALF
     v = [(-a, -a, 0.0), (a, -a, 0.0), (a, a, 0.0), (-a, a, 0.0), (-b, -b, F_H), (b, -b, F_H), (b, b, F_H), (-b, b, F_H)]
     quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6), (1, 2, 6, 5), (3, 0, 4, 7)]
+    if not bottom:
+        quads = quads[1:]
     lines = ["solid frustum"]
     for q in quads:
         for tri in ((q[0], q[1], q[2]), (q[0], q[2], q[3])):
@@ -78,6 +86,65 @@ def frustum_stl(path):
     lines.append("endsolid frustum")
     with open(path, "w") as f:
         f.write("\n".join(lines))
+
+
+# ---- filleted bar: profile in XZ extruded along Y; side walls with 1 deg draft
+# run up to z G_HW, then an R3 fillet of 6 facets turns into the flat top.
+# The backend averages vertex normals across edges below 30 deg, so the wall's
+# top corners share normals with the first fillet facet (about 7.4 deg away).
+G_HALF, G_HW, G_R, G_L, G_DRAFT, G_FACETS = 20.0, 7.0, 3.0, 30.0, 1.0, 6
+
+
+def fillet_profile():
+    """CCW in (x, z): right wall up, fillet, top, left fillet, left wall down"""
+    t = math.tan(math.radians(G_DRAFT))
+    pw = (G_HALF - G_HW * t, G_HW)  # top of the right wall
+    th0 = math.radians(G_DRAFT)  # elevation of the wall normal
+    n0 = (math.cos(th0), math.sin(th0))
+    c = (pw[0] - G_R * n0[0], pw[1] - G_R * n0[1])  # fillet centre
+    right = [(G_HALF, 0.0), pw]
+    for k in range(1, G_FACETS + 1):
+        th = th0 + (math.pi / 2 - th0) * k / G_FACETS
+        right.append((c[0] + G_R * math.cos(th), c[1] + G_R * math.sin(th)))
+    left = [(-x, z) for x, z in reversed(right)]
+    return right + left
+
+
+G_TOP_Z = fillet_profile()[G_FACETS + 1][1]
+
+
+def facet(lines, p):
+    n = norm(cross(sub(p[1], p[0]), sub(p[2], p[0])))
+    lines.append(f"facet normal {n[0]!r} {n[1]!r} {n[2]!r}\n outer loop")
+    lines += [f"  vertex {c[0]!r} {c[1]!r} {c[2]!r}" for c in p]
+    lines.append(" endloop\nendfacet")
+
+
+def fillet_stl(path):
+    prof = fillet_profile()
+    lines = ["solid fillet"]
+    for i in range(len(prof)):
+        (x0, z0), (x1, z1) = prof[i], prof[(i + 1) % len(prof)]
+        a, b, c, d = (x0, 0.0, z0), (x1, 0.0, z1), (x1, G_L, z1), (x0, G_L, z0)
+        facet(lines, (a, d, c))  # (dz, 0, -dx): outward for a CCW profile
+        facet(lines, (a, c, b))
+    cx = sum(x for x, _ in prof) / len(prof)
+    cz = sum(z for _, z in prof) / len(prof)
+    for i in range(len(prof)):
+        (x0, z0), (x1, z1) = prof[i], prof[(i + 1) % len(prof)]
+        facet(lines, ((cx, 0.0, cz), (x0, 0.0, z0), (x1, 0.0, z1)))  # -Y
+        facet(lines, ((cx, G_L, cz), (x1, G_L, z1), (x0, G_L, z0)))  # +Y
+    lines.append("endsolid fillet")
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+
+
+def wall_pt(z):
+    """on the +X wall of the filleted bar, mid-length"""
+    return (G_HALF - z * math.tan(math.radians(G_DRAFT)), G_L / 2, z)
+
+
+G_PTS = {"W90": wall_pt(0.9 * G_HW), "W60": wall_pt(0.6 * G_HW), "W20": wall_pt(0.2 * G_HW)}
 
 
 def cls(rgb):
@@ -97,15 +164,20 @@ tmp = tempfile.mkdtemp(prefix="cad_draft_")
 try:
     FRUSTUM = os.path.join(tmp, "draft_frustum.stl")
     frustum_stl(FRUSTUM)
+    FILLET = os.path.join(tmp, "draft_fillet.stl")
+    fillet_stl(FILLET)
+    OPEN = os.path.join(tmp, "draft_open.stl")
+    frustum_stl(OPEN, bottom=False)
 
     with nav_session() as nav:
         page = nav.page
         settle, project, pick, ctl, click_button = nav.settle, nav.project, nav.pick, nav.ctl, nav.click_button
         # The shared backend may hold measure markers on mini_mold from other
-        # runs; they would be drawn over the sample points.
+        # runs; they would be drawn over the sample points. Saves stay in the
+        # page too (step c measures): nothing is written to the backend.
         page.route(
             "**/sidecar",
-            lambda r: r.fulfill(json={"version": 1, "entries": []}) if r.request.method == "GET" else r.continue_(),
+            lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
         )
         page.evaluate(f"localStorage.removeItem('{DRAFT_KEY}')")
         page.reload()
@@ -193,12 +265,27 @@ try:
         def hud():
             return page.inner_text("#hud-info")
 
+        def props_ready():
+            """the 体積・重量 panel has the /properties answer of the model on screen"""
+            page.wait_for_function(
+                "!document.querySelector('#props-panel').classList.contains('hidden')"
+                " && document.querySelector('#props-status').classList.contains('hidden')",
+                timeout=60000,
+            )
+
         def summary_line():
             t = hud()
             assert "tris" in t and "肉厚" not in t and "エラー" not in t, ("status line", t)
 
         # ================= (a) mini_mold ==========================================
+        # a0. nothing to colour on the empty screen: the box snaps back
+        open_folder("抜き勾配")
+        toggle("色分け", True)
+        assert not checked("色分け"), "a0 ticked on the empty screen"
+        assert not legend_shown(), "a0 legend over an empty scene"
+
         nav.load(STEP)
+        props_ready()
         for p in ALL_PTS.values():
             on_face(p)
         B = colours(ALL_PTS)
@@ -217,9 +304,12 @@ try:
             "a2 +Z 1.0",
         )
         assert not same(got["CAV_FRONT"][1], B["CAV_FRONT"]), ("cavity wall not recoloured", got, B)
+        assert not same(got["PIN2_SIDE"][1], B["PIN2_SIDE"]), ("pin not recoloured", got, B)
         assert legend_shown()
         text = legend()
         assert "+Z" in text and "1.0°" in text and "垂直な壁を含む" in text, text
+        assert "型開き側にあれば逆勾配" in text, ("blue must not promise a release", text)
+        assert "緑と青が逆" not in text, ("closed solids get no orientation note", text)
         i_ok, i_short, i_opp = text.index("抜ける側"), text.index("勾配不足"), text.index("反対側")
         assert i_ok < i_short < i_opp, text
         sw = page.evaluate(
@@ -227,6 +317,23 @@ try:
             ".map(e => getComputedStyle(e).backgroundColor.match(/\\d+/g).map(Number))"
         )
         assert [cls(tuple(c)) for c in sw] == ["ok", "short", "opposite"], sw
+
+        # a2b. horizontal pulls: the side walls and the pins' curved faces. The pin
+        # at x 75 is the second instance of a shared shape; PIN2_SIDE's normal is
+        # (0.707, -0.707, 0), so n.d = 0.707 for both +X and -Y.
+        set_dir("+X")
+        expect(
+            ALL_PTS,
+            {"PIN2_SIDE": "ok", "RIGHT": "ok", "FRONT": "short", "TOP": "short", "CAV_FRONT": "short"},
+            "a2b +X",
+        )
+        set_dir("−Y")
+        expect(
+            ALL_PTS,
+            {"PIN2_SIDE": "ok", "FRONT": "ok", "CAV_FRONT": "ok", "RIGHT": "short", "TOP": "short"},
+            "a2b -Y",
+        )
+        set_dir("+Z")
 
         # a3. section, still in the load view: clipping survives the vertex-colour shader
         open_folder("断面")
@@ -285,12 +392,22 @@ try:
         expect({"B": BOTTOM}, {"B": "ok"}, "a7 bottom -Z")
         set_dir("+Z")
 
-        # a8. free rotation; the select gives the arrow keys back to the view
+        # a8. free rotation; the arrow keys move the view even while the
+        # dropdown keeps focus (after a pick, and after closing it unchanged)
         nav.set_rotate("自由回転")
         click_button("等角")
         set_dir("−Z")
         sel = ctl("型開き方向").locator("select")
-        assert not sel.evaluate("s => document.activeElement === s"), "the select must not keep focus"
+        assert sel.evaluate("s => document.activeElement === s"), "set_dir leaves the select focused"
+        sel.click()  # open the popup ...
+        page.keyboard.press("Escape")  # ... and close it without a change
+        assert sel.evaluate("s => document.activeElement === s"), "still focused after Escape"
+        v0 = nav.view()
+        page.keyboard.press("ArrowRight")
+        settle()
+        assert dir_text() == "−Z", ("ArrowRight on the closed select changed the direction", dir_text())
+        assert "−Z" in legend(), legend()
+        assert max(abs(a - b) for a, b in zip(nav.view()["position"], v0["position"])) > 1e-3, "the view must turn"
         for _ in range(3):
             page.keyboard.press("ArrowUp")
         for _ in range(2):
@@ -351,6 +468,74 @@ try:
             assert same(now[k], FB[k]), ("b4 base colour not restored", k, now[k], FB[k])
         set_dir("+Z")
         set_required(1.0)
+
+        # b5. filleted STL: the 1 deg wall is under-drafted at 3 deg all the way
+        # up to the fillet; the facets of the fillet itself lean 8 deg or more
+        nav.load(FILLET)
+        click_button("右")
+        page.keyboard.press("f")
+        settle()
+        for p in G_PTS.values():
+            on_face(p)
+        GB = colours(G_PTS)
+        open_folder("断面")
+        toggle("有効", True)  # X 0.5: the +X half (with the wall) is cut away
+        set_required(3.0)
+        toggle("色分け", True)
+        for k, p in G_PTS.items():
+            # the eye goes through the cut to the inside of the far (-X) wall
+            hit = pick(project(p))
+            assert hit is None or hit["point"][0] < 0, ("b5 wall must be clipped", k, hit)
+        got = classes(G_PTS)
+        assert all(v[0] == "neutral" for v in got.values()), ("b5 clipped wall drawn coloured", got)
+        toggle("有効", False)
+        expect(G_PTS, {"W90": "short", "W60": "short", "W20": "short"}, "b5 wall at 3 deg")
+        set_required(0.5)
+        expect(G_PTS, {"W90": "ok", "W60": "ok", "W20": "ok"}, "b5 wall at 0.5 deg")
+        set_required(3.0)
+        click_button("等角")
+        page.keyboard.press("f")
+        settle()
+        top_pt = (0.0, G_L / 2, G_TOP_Z)
+        on_face(top_pt)
+        expect({"T": top_pt}, {"T": "ok"}, "b5 top")
+        click_button("右")
+        page.keyboard.press("f")
+        settle()
+        # the heatmap takes over: the per-triangle copy goes, the part shows its heatmap
+        open_folder("肉厚")
+        toggle("ヒートマップ", True)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚ヒートマップ表示中')")
+        assert not checked("色分け")
+        # W90: nine tenths from the wall's top corners, which sit 40 mm from the
+        # far wall (thick: the heatmap's blue end, nothing like the draft red)
+        H = classes({"W90": G_PTS["W90"]})["W90"]
+        assert H[0] != "short", ("b5 draft colours left over the heatmap", H)
+        toggle("ヒートマップ", False)
+        toggle("色分け", True)
+        expect(G_PTS, {"W90": "short"}, "b5 colouring again")
+        toggle("色分け", False)
+        now = colours(G_PTS)
+        for k in G_PTS:
+            assert same(now[k], GB[k]), ("b5 base colour not restored", k, now[k], GB[k])
+        set_required(1.0)
+
+        # b6. open STL (no base): the legend notes that its faces keep the file's
+        # orientation, once /properties has answered (held 4 s here)
+        page.evaluate("window.__cadStallProperties(4000)")
+        nav.load(OPEN)
+        click_button("等角")
+        page.keyboard.press("f")
+        settle()
+        toggle("色分け", True)
+        assert "緑と青が逆" not in legend(), ("b6 note before /properties answered", legend())
+        page.wait_for_function(
+            "document.querySelector('#draft-legend').textContent.includes('緑と青が逆')", timeout=30000
+        )
+        assert "1 個" in legend(), legend()
+        on_face(FTOP)
+        expect({"FTOP": FTOP}, {"FTOP": "ok"}, "b6 top of the open frustum")
+        toggle("色分け", False)
 
         # ================= (c) thickness heatmap: one at a time ===================
         nav.load(STEP)
@@ -444,6 +629,43 @@ try:
         summary_line()
         set_dir("+Z")
 
+        # c12. the request of the previous 方式 failing after a switch is dropped:
+        # ball is held, ray (cached) is shown, then the ball request fails
+        meth = ctl("方式").locator("select")
+        meth.select_option(label="ローリングボール法")  # heatmap off: nothing fetched
+        held3 = []
+        page.route(THICK_RE, lambda r: held3.append(r))
+        toggle("ヒートマップ", True)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('ボール法')")
+        for _ in range(50):
+            if held3:
+                break
+            page.wait_for_timeout(100)
+        assert held3, "ball request not seen"
+        meth.select_option(label="レイ法")
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚ヒートマップ表示中（レイ法')")
+        n_err = len(nav.errors)
+        with page.expect_event("requestfailed", lambda r: "thickness.bin" in r.url):
+            held3[0].abort()
+        page.wait_for_timeout(300)
+        settle()
+        page.unroute(THICK_RE)
+        nav.errors[n_err:] = [e for e in nav.errors[n_err:] if "Failed to load resource" not in e]
+        assert "エラー" not in hud() and "レイ法" in hud(), ("c12 late failure of the old 方式", hud())
+        assert checked("ヒートマップ"), "c12 the heatmap must stay on"
+        assert same(colours({"TOP": TOP})["TOP"], T), "c12 heatmap colour"
+
+        # c13. a measure line written while the heatmap is on stays when it goes off
+        nav.set_mode("計測")
+        x, y = project(TOP)
+        page.mouse.click(x, y)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('を選択')")
+        msg = hud()
+        toggle("ヒートマップ", False)
+        assert hud() == msg, ("c13 the measure line was replaced", msg, hud())
+        nav.set_mode("なし")
+        assert same(colours({"TOP": TOP})["TOP"], B_TOP), "c13 base colour"
+
         # ================= (d) drawing, reload reset ==============================
         toggle("色分け", True)
         nav.load(DXF, wait_text="2D図面")
@@ -451,9 +673,30 @@ try:
         assert not title.is_visible(), "the folder must be hidden on a drawing"
         assert not legend_shown()
         assert not checked("色分け"), "a drawing resets the colouring"
-        nav.load(STEP)
+        # d2. ticked while the mesh is still on its way: nothing to colour yet,
+        # so the box snaps back and the model arrives uncoloured
+        held_mesh = []
+        page.route("**/mesh.bin", lambda r: held_mesh.append(r))
+        page.set_input_files("#file-input", STEP)
+        for _ in range(300):
+            if held_mesh:
+                break
+            page.wait_for_timeout(100)
+        assert held_mesh, "mesh request not seen"
         assert title.is_visible()
+        toggle("色分け", True)
+        assert not checked("色分け"), "d2 ticked while loading"
+        assert not legend_shown()
+        held_mesh[0].continue_()
+        page.unroute("**/mesh.bin")
+        page.wait_for_function(
+            "document.querySelector('#hud-info').textContent.includes('tris')"
+            " && document.querySelector('#hud-info').textContent.includes('mini_mold.step')",
+            timeout=60000,
+        )
+        settle()
         assert not checked("色分け")
+        assert not legend_shown()
         assert same(colours({"TOP": TOP})["TOP"], B_TOP), "d2 reloaded model is uncoloured"
 
         # ================= (e) remembered direction and angle =====================

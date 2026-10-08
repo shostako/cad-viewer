@@ -13,6 +13,7 @@ import {
   __stallNextSidecar,
   __stallNextProperties,
   type ModelMeta,
+  type ModelProperties,
 } from './api'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
@@ -297,8 +298,14 @@ const KEY_PAN = 0.05 // fraction of the view height
 const KEY_ZOOM = 0.9
 function isTextEntry(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false
-  if (el.isContentEditable || el instanceof HTMLTextAreaElement || el instanceof HTMLSelectElement)
-    return true
+  // A lil-gui dropdown keeps focus after a pick, and also when its popup is
+  // closed without a change (Escape, the same option again). Chrome then makes
+  // the arrows step through the options: the view keys would silently change
+  // a setting (型開き方向, モード, ...). The arrows navigate instead, and
+  // preventDefault below keeps the closed select as it is. An open popup gets
+  // its keys before the page does.
+  if (el instanceof HTMLSelectElement) return !el.closest('.lil-gui')
+  if (el.isContentEditable || el instanceof HTMLTextAreaElement) return true
   // sliders use the arrows themselves — leave those alone
   if (el.getAttribute('role') === 'slider') return true
   // checkboxes / buttons keep focus after a click — arrows must still navigate
@@ -409,6 +416,8 @@ try {
 } catch {
   /* defaults */
 }
+/** /properties of the current model (the legend's note on open parts); null until it answers */
+let modelProps: ModelProperties | null = null
 function saveDraftPrefs(): void {
   try {
     const { dir, required } = draftState
@@ -497,8 +506,15 @@ function updateDraft(): void {
   }
   viewer.setDraftColors(PULL_DIRS[draftState.dir], draftState.required)
   colorOwner = 'draft'
-  renderDraftLegend(draftLegend, draftState.dir, draftState.required)
+  renderLegend()
   draftLegend.classList.remove('hidden')
+}
+function renderLegend(): void {
+  // Parts with faces but no volume (open, mixed winding, ...): only closed
+  // bodies are turned outward on load, so their front side is the file's.
+  // Counted once /properties has answered; until then (or if it fails) no note.
+  const unoriented = modelProps?.parts.filter((p) => p.volume === null && p.reason !== 'no_faces').length ?? 0
+  renderDraftLegend(draftLegend, draftState.dir, draftState.required, unoriented)
 }
 const draftFolder = gui.addFolder('抜き勾配')
 draftFolder.close()
@@ -517,14 +533,11 @@ draftFolder
     }
     updateDraft()
   })
-const dirCtl = draftFolder
+draftFolder
   .add(draftState, 'dir', PULL_DIR_OPTIONS)
   .name('型開き方向')
   .onChange(() => {
-    // A select keeps focus after a mouse pick, and Chrome then makes the arrow
-    // keys pick the next option: the view keys would silently change the pull
-    // direction.
-    dirCtl.domElement.querySelector('select')?.blur()
+    // the arrows on the still-focused select move the view (isTextEntry)
     saveDraftPrefs()
     updateDraft()
   })
@@ -622,6 +635,8 @@ async function updateProperties(modelId: string): Promise<void> {
     const p = await fetchProperties(modelId)
     if (req !== propsRequest || modelId !== currentModelId) return // superseded
     propsPanel.setData(p)
+    modelProps = p
+    if (draftState.enabled) renderLegend() // the note on open parts may be due now
   } catch (e) {
     if (req !== propsRequest || modelId !== currentModelId) return
     propsPanel.showError(e instanceof Error ? e.message : String(e))
@@ -841,6 +856,7 @@ async function loadFile(file: File): Promise<void> {
       draftLegend.classList.add('hidden')
       thicknessHud = ''
       modelSummary = ''
+      modelProps = null
       propsPanel.hide()
       // Clear the stale 3D scene for BOTH branches: while the new model's
       // fetch is in flight (or if it fails), the old geometry must not stay

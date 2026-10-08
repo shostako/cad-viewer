@@ -90,6 +90,12 @@ body,
   flex: none;
 }
 
+.draft-note {
+  margin-top: 2px;
+  max-width: 34em;
+  color: #e0b050;
+}
+
 #hud-keys {
   margin-top: 4px;
   font-size: 11px;

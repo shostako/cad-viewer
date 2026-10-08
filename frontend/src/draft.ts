@@ -8,9 +8,10 @@
  * monotonic, so the classes compare sines and never call it.
  *
  * Works on the display mesh: planar B-rep faces have their own vertices (normal
- * = face normal, crisp colours), curved faces and mesh formats are approximated
- * per vertex. Orientation alone cannot see undercuts (faces hidden behind other
- * geometry along d).
+ * = face normal, crisp colours), curved B-rep faces are approximated per
+ * vertex, mesh formats are classified per triangle (Viewer.flatCopy).
+ * Orientation alone cannot see undercuts (faces hidden behind other geometry
+ * along d), nor which side of the parting line a face is on.
  */
 import * as THREE from 'three'
 
@@ -102,17 +103,34 @@ export function draftColors(
   }
 }
 
-/** Legend: title with the direction and angle, then one row per class (ok, short, opposite). */
-export function renderDraftLegend(el: HTMLElement, dir: PullDir, requiredDeg: number): void {
+/**
+ * Legend: title with the direction and angle, one row per class (ok, short,
+ * opposite), then a note when some parts have faces but no volume.
+ *
+ * unorientedParts: parts whose face orientation the backend could not confirm
+ * (open surfaces, unsewn faces, mixed winding; /properties gives them no
+ * volume). Only closed bodies are turned outward on load, so on these parts
+ * the file decides which side is the front: green and blue can be swapped.
+ * Red (|n·d| below the required sine) does not depend on the sign.
+ */
+export function renderDraftLegend(
+  el: HTMLElement,
+  dir: PullDir,
+  requiredDeg: number,
+  unorientedParts = 0,
+): void {
   const r = requiredDeg.toFixed(1)
   const title = document.createElement('div')
   title.className = 'draft-title'
   title.textContent = `抜き勾配（型開き ${PULL_DIR_LABELS[dir]}、必要 ${r}°）`
-  // at 0° a vertical wall (exactly 0°) already counts as enough
+  // At 0° a vertical wall (exactly 0°) already counts as enough. Blue says
+  // nothing about the parting line: a face on the far side of it releases in
+  // the other half, a wall on the pull side leaning the wrong way is a reverse
+  // draft that neither half releases. Orientation cannot tell the two apart.
   const rows: [DraftClass, string][] = [
     ['ok', `抜ける側（${r}° 以上）`],
     ['short', `勾配不足（${r}° 未満${requiredDeg > 0 ? '。垂直な壁を含む' : ''}）`],
-    ['opposite', `反対側（逆向きに ${r}° 以上。もう一方の型で抜く）`],
+    ['opposite', `反対側（逆向きに ${r}° 以上。パーティングより反対側の面なら抜ける。型開き側にあれば逆勾配）`],
   ]
   const children: HTMLElement[] = [title]
   for (const [cls, text] of rows) {
@@ -126,6 +144,14 @@ export function renderDraftLegend(el: HTMLElement, dir: PullDir, requiredDeg: nu
     label.textContent = text
     row.append(swatch, label)
     children.push(row)
+  }
+  if (unorientedParts > 0) {
+    const note = document.createElement('div')
+    note.className = 'draft-note'
+    note.textContent =
+      `注: 体積の出ない部品が ${unorientedParts} 個（閉じていない など）。` +
+      'その面は表裏がファイルのままなので、緑と青が逆のことがある（赤はそのまま正しい）'
+    children.push(note)
   }
   el.replaceChildren(...children)
 }
