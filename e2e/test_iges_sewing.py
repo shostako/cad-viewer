@@ -6,6 +6,7 @@
 """
 import io
 import os
+import subprocess
 from pathlib import Path
 
 from PIL import Image
@@ -14,6 +15,12 @@ from playwright.sync_api import sync_playwright
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
 IGES = str(TESTDATA / "loose_faces_box.igs")
+BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
+
+# the fixture is generated (testdata/*.igs is git-ignored): make it on a fresh
+# checkout. Needs OCP, so it runs in the backend venv, not this interpreter.
+if not Path(IGES).exists():
+    subprocess.run([str(BACKEND_PY), str(TESTDATA / "make_iges_loose.py")], check=True)
 CURVE = (0xE0, 0xB0, 0x50)
 
 with sync_playwright() as p:

@@ -315,7 +315,7 @@ def merge_loose_shapes(parts: list[Part], tree: TreeNode) -> tuple[list[Part], T
         new_tree.children.append(copy_node(child))
 
     if sheets:
-        bodies = _sew([p.shape for p in sheets], parts)
+        bodies = _sew([p.shape for p in sheets])
         solids = sum(1 for b in bodies if b.ShapeType() == TopAbs_ShapeEnum.TopAbs_SOLID)
         color = _common_color(sheets)
         for i, body in enumerate(bodies, 1):
@@ -337,9 +337,12 @@ def _common_color(parts: list[Part]):
     return colors.pop() if len(colors) == 1 else None
 
 
-def _sew(shapes: list[TopoDS_Shape], all_parts: list[Part]) -> list[TopoDS_Shape]:
+def _sew(shapes: list[TopoDS_Shape]) -> list[TopoDS_Shape]:
     """Sew faces into bodies: closed shells become solids, the rest stay shells."""
-    cap = max(_diagonal(all_parts) * SEW_MAX_REL, SEW_TOLERANCES[0])
+    # cap from the faces being sewn only: a long construction line or an
+    # unrelated big solid elsewhere in the file must not widen the tolerance
+    # enough to weld real gaps in a small body
+    cap = max(_shape_diagonal(shapes) * SEW_MAX_REL, SEW_TOLERANCES[0])
     tolerances = [t for t in SEW_TOLERANCES if t <= cap] or [SEW_TOLERANCES[0]]
     bodies: list[TopoDS_Shape] = []
     for tol in tolerances:
@@ -382,9 +385,13 @@ def _close(body: TopoDS_Shape) -> TopoDS_Shape:
 
 
 def _diagonal(parts: list[Part]) -> float:
+    return _shape_diagonal([p.shape for p in parts])
+
+
+def _shape_diagonal(shapes: list[TopoDS_Shape]) -> float:
     box = Bnd_Box()
-    for p in parts:
-        BRepBndLib.Add_s(p.shape, box)
+    for shape in shapes:
+        BRepBndLib.Add_s(shape, box)
     if box.IsVoid():
         return 0.0
     xmin, ymin, zmin, xmax, ymax, zmax = box.Get()

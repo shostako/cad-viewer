@@ -13,9 +13,11 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 
-from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+from OCP.Bnd import Bnd_Box
+from OCP.BRepBndLib import BRepBndLib
+from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_Transform
 from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
-from OCP.gp import gp_Pnt
+from OCP.gp import gp_Pnt, gp_Trsf, gp_Vec
 from OCP.IGESControl import IGESControl_Writer
 from OCP.TopAbs import TopAbs_FACE
 from OCP.TopExp import TopExp_Explorer
@@ -25,23 +27,37 @@ from app.main import app
 BOX = (10.0, 20.0, 30.0)
 
 
-def _write_iges(tmp_path: pathlib.Path, *, faces_one_by_one: bool, mode: int = 0, open_box: bool = False) -> bytes:
+def _write_iges(
+    tmp_path: pathlib.Path,
+    *,
+    faces_one_by_one: bool,
+    mode: int = 0,
+    open_box: bool = False,
+    size=BOX,
+    top_gap: float = 0.0,
+) -> bytes:
     """A 10x20x30 box as IGES plus two loose lines (coordinate-axis style).
 
     mode 0 writes trimmed surfaces (no solid). faces_one_by_one adds each face
     as its own entity — what CAD exports usually look like (the reader then
     reports one part per face). open_box drops the top face, so the faces
-    cannot close into a solid.
+    cannot close into a solid. top_gap lifts the top face by that much,
+    leaving a slit all around it.
     """
-    box = BRepPrimAPI_MakeBox(*BOX).Shape()
+    box = BRepPrimAPI_MakeBox(*size).Shape()
     w = IGESControl_Writer("MM", mode)
     if faces_one_by_one:
         e = TopExp_Explorer(box, TopAbs_FACE)
         n = 0
         while e.More():
             n += 1
+            face = e.Current()
+            if top_gap and _is_top(face, size[2]):
+                t = gp_Trsf()
+                t.SetTranslation(gp_Vec(0, 0, top_gap))
+                face = BRepBuilderAPI_Transform(face, t, True).Shape()
             if not (open_box and n == 6):
-                w.AddShape(e.Current())
+                w.AddShape(face)
             e.Next()
     else:
         w.AddShape(box)
@@ -51,6 +67,13 @@ def _write_iges(tmp_path: pathlib.Path, *, faces_one_by_one: bool, mode: int = 0
     path = tmp_path / "box.igs"
     assert w.Write(str(path))
     return path.read_bytes()
+
+
+def _is_top(face, height) -> bool:
+    box = Bnd_Box()
+    BRepBndLib.Add_s(face, box)
+    zmin = box.Get()[2]
+    return abs(zmin - height) < 1e-6
 
 
 @pytest.fixture
@@ -176,3 +199,23 @@ def test_cache_hit_reparse_numbers_faces_the_same(client, tmp_path):
     # face ids taken from the CACHED mesh still name the same faces
     assert _measure_faces(client, again["id"], 0, by_normal[(0, 0, 1)], by_normal[(0, 0, -1)]) == pytest.approx(BOX[2])
     assert _measure_faces(client, again["id"], 0, by_normal[(1, 0, 0)], by_normal[(-1, 0, 0)]) == pytest.approx(BOX[0])
+
+
+def test_sewing_cap_ignores_unrelated_geometry(client, tmp_path):
+    """A 5 mm body with a 0.005 mm slit must keep the slit even though the file
+    also holds 100 mm construction lines: the tolerance cap comes from the faces
+    being sewn (diag 8.7 mm -> cap ~0.0009 mm), not from the whole file (which
+    would allow 0.01 mm and weld the slit shut)."""
+    data = _write_iges(tmp_path, faces_one_by_one=True, size=(5.0, 5.0, 5.0), top_gap=0.005)
+    meta = _upload(client, data)
+    names = [p["name"] for p in meta["parts"]]
+    # the lifted top stays apart: open surfaces, no solid
+    assert names[-1] == "曲線（2 本）"
+    assert all(n.startswith("サーフェス") for n in names[:-1]) and len(names) >= 2, names
+
+
+def test_small_body_without_gap_still_closes(client, tmp_path):
+    """the same small body with no slit closes at the small cap"""
+    data = _write_iges(tmp_path, faces_one_by_one=True, size=(5.0, 5.0, 5.0))
+    meta = _upload(client, data)
+    assert [p["name"] for p in meta["parts"]] == ["ソリッド", "曲線（2 本）"]
