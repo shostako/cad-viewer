@@ -15,6 +15,10 @@ VENV="${ROOT}/backend/.venv"
 
 log() { printf '[cad-viewer] %s\n' "$1"; }
 
+# health 確認。--connect-timeout 必須: WSL の mirrored モードでは誰も聴いていない
+# 127.0.0.1 のポートへの接続が拒否されず黒穴になり、素の curl は 2 分以上返らない。
+alive() { curl -sf --connect-timeout 1 -m 3 "${URL}/api/health" >/dev/null 2>&1; }
+
 # 0. backend venv 健全性チェック
 if [ ! -x "${VENV}/bin/uvicorn" ]; then
   log "ERROR: backend venv が無い。README の手順で backend/.venv を作れ:"
@@ -33,7 +37,7 @@ if [ ! -f "${ROOT}/frontend/dist/index.html" ]; then
 fi
 
 # 2. backend が既に応答するなら起動不要（冪等）
-if curl -sf "${URL}/api/health" >/dev/null 2>&1; then
+if alive; then
   log "backend は既に起動済み"
 else
   log "backend 起動中..."
@@ -41,10 +45,10 @@ else
       > /tmp/cadviewer.log 2>&1 & )
   # health 待ち（最大 15 秒）
   for _ in $(seq 1 30); do
-    curl -sf "${URL}/api/health" >/dev/null 2>&1 && break
+    alive && break
     sleep 0.5
   done
-  if ! curl -sf "${URL}/api/health" >/dev/null 2>&1; then
+  if ! alive; then
     log "ERROR: backend が起動しなかった。ログ: /tmp/cadviewer.log"
     exit 1
   fi
