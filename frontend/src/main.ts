@@ -407,7 +407,8 @@ function toNdc(clientX: number, clientY: number): THREE.Vector2 {
 // the target distance, so it walks through a nearer surface.
 const WHEEL_STEP = 0.9 // scale per 100 px of wheel delta (one Chrome notch), same as the + key
 function wheelScale(e: WheelEvent): number {
-  let d = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 100 : 1)
+  // line mode (Firefox): one notch is 3 lines, so 100/3 per line matches Chrome's 100 px notch
+  let d = e.deltaY * (e.deltaMode === 1 ? 100 / 3 : e.deltaMode === 2 ? 100 : 1)
   if (e.ctrlKey) d *= 10 // a trackpad pinch arrives as ctrl+wheel with small deltas
   d = THREE.MathUtils.clamp(d, -300, 300) // one event never jumps more than ~3 notches
   return Math.pow(WHEEL_STEP, -d / 100)
@@ -433,15 +434,18 @@ let downAt: [number, number] | null = null
 // started (the view has turned) is not taken for a click.
 let travel = 0
 let clickTravels: [number, number] = [Infinity, Infinity]
+// Only the primary pointer counts: a second finger (pinch) would otherwise
+// overwrite where the first one went down.
 viewport.addEventListener('pointerdown', (e) => {
+  if (!e.isPrimary) return
   downAt = [e.clientX, e.clientY]
   travel = 0
 })
 viewport.addEventListener('pointermove', (e) => {
-  if (downAt) travel = Math.max(travel, Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]))
+  if (e.isPrimary && downAt) travel = Math.max(travel, Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]))
 })
 viewport.addEventListener('pointerup', (e) => {
-  if (!downAt) return
+  if (!e.isPrimary || !downAt) return
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1])
   downAt = null
   if (e.button === 0) clickTravels = [clickTravels[1], Math.max(travel, moved)]

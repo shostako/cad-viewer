@@ -674,7 +674,7 @@ export class Viewer {
   zoom(factor: number): void {
     this.finishViewAnim()
     const offset = this.camera.position.clone().sub(this.target)
-    const minDist = this.camera.near * 2
+    const minDist = this.camera.near * MIN_ZOOM_NEARS // same stop as the wheel
     const maxDist = Math.max(this.camera.far * MAX_ZOOM_FAR, offset.length())
     offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, minDist, maxDist))
     this.camera.position.copy(this.target).add(offset)

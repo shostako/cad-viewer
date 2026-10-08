@@ -165,30 +165,44 @@ with nav_session(boxes=("runner",)) as n:
     ctl("有効").locator("input").click()
     settle()
     cur = tuple(round(c) for c in project(SURFACE))
+    # the plate top under cur (x=90) is clipped away and the ray meets nothing on
+    # the kept side (x <= 50): a double-click there must not set a centre
     Q = pick(cur)
+    assert Q is None, ("C8 picked through the section", Q)
     v0 = view()
     page.mouse.dblclick(*cur)
     page.wait_for_timeout(500)
-    if Q and Q["kind"] == "face":
-        assert close(view()["target"], Q["point"], 1e-4) and view()["target"][0] <= 50 + 1e-6
-    else:
-        assert close(view()["target"], v0["target"], 1e-12)
+    assert close(view()["target"], v0["target"], 1e-12), ("C8 centred on a clipped point", view()["target"])
     ctl("有効").locator("input").click()
     page.locator(".lil-gui .lil-title", has_text="断面").click()
 
     # C10. a wheel step during the slide zooms from the slide's end pose: at the
     # canvas centre that is P itself, so the target stays P (picking in the
     # in-between pose would zoom about another point and move the target off P)
-    page.keyboard.press("f")
-    settle()
-    cur = tuple(round(c) for c in project(SURFACE))
-    P = pick(cur)["point"]
-    v0 = view()
-    depth = dot(sub(P, v0["position"]), direction(v0))
-    page.mouse.dblclick(*cur)
-    page.mouse.move(*centre)
-    page.mouse.wheel(0, -100)
-    page.wait_for_timeout(400)
+    # The camera state when the wheel event arrives is recorded (window capture
+    # runs before the viewer's listener), to prove the wheel really landed
+    # mid-slide. On a slow machine the 250 ms slide may end first: then retry.
+    page.evaluate(
+        """() => window.addEventListener('wheel', () => { window.__atWheel = window.__cadView() },
+                                         { capture: true })"""
+    )
+    for attempt in range(3):
+        page.keyboard.press("f")
+        settle()
+        cur = tuple(round(c) for c in project(SURFACE))
+        P = pick(cur)["point"]
+        v0 = view()
+        depth = dot(sub(P, v0["position"]), direction(v0))
+        page.mouse.dblclick(*cur)
+        page.mouse.move(*centre)
+        page.mouse.wheel(0, -100)
+        page.wait_for_timeout(400)
+        at = page.evaluate("window.__atWheel")
+        if math.dist(at["target"], P) > 1e-3:
+            break  # the wheel arrived while the target was still on its way to P
+        print("C10 slide ended before the wheel, retrying", attempt)
+    else:
+        raise AssertionError("C10 could not send the wheel during the slide")
     v = view()
     assert close(v["target"], P, 1e-4), ("C10 target", v["target"], P)
     assert abs(math.dist(v["position"], P) - 0.9 * depth) <= 1e-6 * depth, ("C10 distance", math.dist(v["position"], P), depth)

@@ -94,6 +94,9 @@ with nav_session() as n:
         v = view()
         d = dot(sub(P, v["position"]), direction(v))
         assert d > v["near"], (mode, "passed the near plane", d, v["near"])
+        # the stop itself (spec: 4 near-plane distances short of the point zoomed to)
+        stop = math.dist(v["position"], P)
+        assert abs(stop - 4 * v["near"]) <= 1e-6 * 4 * v["near"], (mode, "near stop", stop, v["near"])
         wheel(cur, -100, 2)
         v2 = view()
         assert close(v2["position"], v["position"], 1e-9), (mode, "zoomed past the stop")
@@ -110,6 +113,8 @@ with nav_session() as n:
                 dists.append(math.dist(v["position"], v["target"]))
         assert abs(dists[-1] - dists[-2]) <= 1e-9 * dists[-1], (mode, "zoom-out never stops", dists[-3:])
         v = view()
+        # where it stops (spec: camera to target = a quarter of the far plane)
+        assert abs(dists[-1] - 0.25 * v["far"]) <= 1e-6 * v["far"], (mode, "far stop", dists[-1], v["far"])
         f = direction(v)
         for c in corners(*MOLD):
             assert dot(sub(c, v["position"]), f) < v["far"], (mode, "model beyond far")
@@ -120,12 +125,12 @@ with nav_session() as n:
         page.locator(".lil-gui .lil-title", has_text="断面").click()
         ctl("有効").locator("input").click()
         settle()
-        Q = pick(cur)  # cur is over the plate at x=90, clipped away (x <= 50 is kept)
-        if Q and Q["kind"] == "face":
-            assert Q["point"][0] <= 50 + 1e-6, Q
-            expected = Q["point"]
-        else:
-            expected = plane_point(cur)
+        # cur is over the plate top at x=90, clipped away (x <= 50 is kept). Behind
+        # it the cursor's ray meets nothing on the kept side, so the zoom must go
+        # to the target-plane point, never to the clipped plate top
+        Q = pick(cur)
+        assert Q is None, (mode, "picked through the section", Q)
+        expected = plane_point(cur)
         v0 = view()
         wheel(cur, -100)
         assert math.dist(project(expected), cur) <= 0.5, (mode, "B4", Q)
