@@ -41,6 +41,12 @@ class MeasureError(Exception):
     pass
 
 
+# the two planes count as parallel when |na x nb| of their unit normals is at most this
+PARALLEL_SIN = 1e-9
+# mm: a dimension line put through a click must be as long as the value, this closely
+LINE_TOL = 1e-7
+
+
 def _resolve(ref: dict[str, Any], meshes: list[PartMesh]) -> TopoDS_Shape:
     kind = ref.get("kind")
     if kind == "point":
@@ -81,6 +87,10 @@ def distance(
         raise MeasureError("distance computation failed")
     value = ext.Value()
     line = _parallel_faces_line(sa, sb, near_a, near_b)
+    # the line through a click must realise the value: planes that are only
+    # nearly parallel pass the parallel test, yet drift apart across the faces
+    if line is not None and abs(line[0].Distance(line[1]) - value) > LINE_TOL:
+        line = None
     if line is None:
         i = _nearest_solution(ext, near_a, near_b)
         line = (ext.PointOnShape1(i), ext.PointOnShape2(i))
@@ -134,7 +144,7 @@ def _parallel_faces_line(sa, sb, near_a, near_b) -> tuple[gp_Pnt, gp_Pnt] | None
     (face_a, pln_a), (face_b, pln_b) = fa, fb
     na, nb = pln_a.Axis().Direction(), pln_b.Axis().Direction()
     # gp_Vec: gp_Dir.Crossed raises on parallel directions (a zero result)
-    if gp_Vec(na).Crossed(gp_Vec(nb)).Magnitude() > 1e-9:
+    if gp_Vec(na).Crossed(gp_Vec(nb)).Magnitude() > PARALLEL_SIN:
         return None
     for near, src_face, src_pln, dst_face, dst_pln, from_a in (
         (near_a, face_a, pln_a, face_b, pln_b, True),

@@ -5,6 +5,7 @@ Geometry (see testdata/make_step_assembly.py):
   core_pin: cylinder r=4 h=25, at (25,30,15) and (75,30,15)
   cavity_block: box 40x30x20 at (30,15,15)
 """
+import math
 import pathlib
 from collections import OrderedDict
 
@@ -308,3 +309,33 @@ def test_nearest_of_brepextrema_solutions(model):
     assert res["pointA"][2] == pytest.approx(15, abs=1e-6) and res["pointB"][2] == pytest.approx(15, abs=1e-6)
     res = _measure(model, {**req, "nearA": [29, 30, 38], "nearB": [71, 30, 38]})
     assert res["pointA"][2] == pytest.approx(40, abs=1e-6) and res["pointB"][2] == pytest.approx(40, abs=1e-6)
+
+
+def test_line_through_the_click_must_realise_the_value(monkeypatch):
+    """Planes only nearly parallel pass the parallel test, but drift apart
+    across the faces: the line through the click is longer than the minimum
+    there, so BRepExtrema's line is kept. Here the roof is tilted 0.01 rad and
+    the parallel test loosened to let it in (the drift is far bigger than at the
+    real threshold; the check that catches it is the same)."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeFace
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pln, gp_Pnt
+
+    from app import measure
+
+    def square(origin, normal, xdir):
+        """100 x 100 from the origin, along xdir and normal x xdir"""
+        pln = gp_Pln(gp_Ax3(gp_Pnt(*origin), gp_Dir(*normal), gp_Dir(*xdir)))
+        return BRepBuilderAPI_MakeFace(pln, 0, 100, 0, 100).Face()
+
+    t = 0.01
+    floor = square((0, 0, 0), (0, 0, 1), (1, 0, 0))
+    # z = 10 at x 0, rising to 10 + 100 sin t: the minimum is 10, along the low edge
+    roof = square((0, 0, 10), (-math.sin(t), 0, math.cos(t)), (math.cos(t), 0, math.sin(t)))
+    shapes = {1: floor, 2: roof}
+    monkeypatch.setattr(measure, "_resolve", lambda ref, meshes: shapes[ref["id"]])
+    monkeypatch.setattr(measure, "PARALLEL_SIN", 0.1)
+    # a click at x 80, where the roof is 10.8 above the floor
+    res = measure.distance({"kind": "face", "id": 1}, {"kind": "face", "id": 2}, [], near_a=[80, 50, 0])
+    assert res["value"] == pytest.approx(10.0, abs=1e-9)
+    assert math.dist(res["pointA"], res["pointB"]) == pytest.approx(res["value"], abs=1e-9), res
+    assert res["pointB"][0] == pytest.approx(0, abs=1e-6), ("on the roof's low edge", res)
