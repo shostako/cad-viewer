@@ -166,7 +166,14 @@ try:
             return decode(page.screenshot())
 
         def rows():
-            return [t.replace("×", "").strip() for t in page.locator("#measure-list li").all_inner_texts()]
+            """each row as (value, unit, the second line): the value first, then ΔX and ΔY"""
+            return [
+                tuple(r)
+                for r in page.evaluate(
+                    """() => [...document.querySelectorAll('#measure-list li')].map(li =>
+                         ['.m-value', '.m-unit', '.m-what'].map(s => li.querySelector(s)?.textContent ?? null))"""
+                )
+            ]
 
         def wait_rows(n):
             try:
@@ -272,11 +279,11 @@ try:
             got = rows()
             assert len(got) == len(current), (tag, got)
             assert page.locator("#measure-list li.m2d").count() == len(current), (tag, "rows not marked 2D")
-            for text, m in zip(got, current):
+            for (value, unit, what), m in zip(got, current):
                 d, dx, dy = expected(m)
-                mt = re.fullmatch(r"距離 ([\d.]+) \(ΔX ([\d.]+), ΔY ([\d.]+)\)", text)
-                assert mt and mt.groups() == (f"{d:.3f}", f"{dx:.3f}", f"{dy:.3f}"), (tag, "row", text, m)
-                assert "↔" not in text, (tag, "a 2D row reads like a 3D one", text)
+                # no unit: a drawing's numbers are in its own unit
+                assert (value, unit, what) == (f"{d:.3f}", None, f"ΔX {dx:.3f}　ΔY {dy:.3f}"), (tag, "row", value, unit, what, m)
+                assert "↔" not in what, (tag, "a 2D row reads like a 3D one", what)
 
         def check_layer(tag, pending=None):
             """the layer as drawn: the values in order, markers and lines on the projected
@@ -349,7 +356,7 @@ try:
         print("rows:", rows())
         # the value can be selected to copy it: a double-click takes the number
         r = page.evaluate(
-            """() => { const t = document.querySelector('#measure-list li span').firstChild
+            """() => { const t = document.querySelector('#measure-list li .m-value').firstChild
                 const i = t.data.indexOf('100.000'); const r = document.createRange()
                 r.setStart(t, i); r.setEnd(t, i + 7)
                 const b = r.getBoundingClientRect(); return [b.left, b.top, b.right, b.bottom] }"""
@@ -359,6 +366,18 @@ try:
         assert selected == "100.000", ("the value cannot be selected", selected)
         page.evaluate("getSelection().removeAllRanges()")
         assert page.locator("#measure-list button").first.inner_text() == "×"
+        # すべてコピー: a tab-separated line per row, the drawing's numbers without a unit
+        # (the clipboard is caught in the page: this context has no clipboard permission)
+        page.evaluate(
+            "() => { window.__copied = []; navigator.clipboard.writeText = t => { window.__copied.push(t); return Promise.resolve() } }"
+        )
+        page.click("#measure-copy-all")
+        page.wait_for_function("window.__copied.length === 1", timeout=5000)
+        lines = page.evaluate("window.__copied[0]").split("\n")
+        assert lines[0] == "種類\t値\t単位\t対象 A\t対象 B" and len(lines) == len(current) + 1, lines
+        for line, m in zip(lines[1:], current):
+            d, dx, dy = expected(m)
+            assert line == f"距離\t{d:.3f}\t\tΔX {dx:.3f}\tΔY {dy:.3f}", ("the copied line", line, m)
         print("list rows and copy ok")
 
         def check_view(tag):
