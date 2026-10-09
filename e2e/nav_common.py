@@ -377,7 +377,10 @@ class Nav:
 
         fallback: if given, whether the whole canvas must have been used.
         needs: panels this case depends on: a correct fit that ignored one of
-        them must fail these checks (otherwise the case cannot catch it).
+        them must fail these checks (otherwise the case cannot catch it). An
+        entry may be a tuple of panels that only set a side together, ignored
+        together: the HUD and the axis triad end about 3 px apart at the
+        bottom left, so leaving out just one of them hardly moves that side.
         """
         self.assert_panels_unchanged()
         cl, ct, cw, ch = self.canvas_rect()
@@ -395,8 +398,9 @@ class Nav:
         if fallback is not None:
             assert fell_back == fallback, ("fallback", fell_back, info)
         for sel in needs:
-            A, _ = self.free_area(exclude=(sel,))
-            assert would_fail(B, F, A), ("case no longer depends on", sel, A, info)
+            group = (sel,) if isinstance(sel, str) else tuple(sel)
+            A, _ = self.free_area(exclude=group)
+            assert would_fail(B, F, A), ("case no longer depends on", group, A, info)
         return info
 
     def depth_check(self, lo, hi):

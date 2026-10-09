@@ -17,7 +17,10 @@ Expected values never come from the code under test (rule of nav_common.py):
 The coast is waited out by frame count: OrbitControls' damping keeps 0.95 of
 the rest each frame (0.95^120 < 0.3 %), the trackball's 0.8 (0.8^40 < 1e-3).
 """
-from nav_common import STEP, nav_session
+from nav_common import STEP_SRC, nav_session
+
+# the shared mini_mold.step: this script keeps sidecars in the page (stub_sidecar)
+STEP = str(STEP_SRC)
 
 DRAG = 200
 TOL_TURNTABLE = 0.02
@@ -38,8 +41,7 @@ with nav_session(boxes=("tiny",)) as n:
         )
 
     def fit():
-        page.keyboard.press("f")
-        settle()
+        n.fit()  # records the panels the fit saw (fill_check compares them)
 
     def pan_shift(dx, dy, coast_frames):
         """right-drag by (dx, dy) in 10 steps (a frame between them); the shift

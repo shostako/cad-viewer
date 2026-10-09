@@ -22,7 +22,10 @@ import math
 import numpy as np
 from PIL import Image
 
-from nav_common import MOLD, STEP, SURFACE, close, dot, length, nav_session, norm, sub
+from nav_common import MOLD, STEP_SRC, SURFACE, close, dot, length, nav_session, norm, sub
+
+# the shared mini_mold.step: this script keeps sidecars in the page (stub_sidecar)
+STEP = str(STEP_SRC)
 
 CAV_TOP = (50, 30, 35)
 PLATE_TOP = (90, 10, 15)
@@ -44,8 +47,7 @@ with nav_session() as n:
         page.evaluate("new Promise(r => requestAnimationFrame(r))")
 
     def fit():
-        page.keyboard.press("f")
-        settle()
+        n.fit()  # records the panels the fit saw (fill_check compares them)
 
     def drag(button, x0, y0, dx, dy, steps):
         """a drag in steps with a frame between them. A big jump inside one frame
@@ -151,7 +153,8 @@ with nav_session() as n:
         page.wait_for_timeout(400)
         v1 = view()
         assert close(v1["target"], P, 1e-6 * R_MOLD), (mode, "N7 target", v1["target"], P)
-        assert math.dist(project(P), centre()) <= 0.5, (mode, "N7 centre", project(P), centre())
+        # the view centre: where a fit puts the target (the free area's centre)
+        assert math.dist(project(P), n.view_centre()) <= 0.5, (mode, "N7 centre", project(P), n.view_centre())
         assert abs(kscale(v1) / k0 - 1) <= 1e-9, (mode, "N7 zoom changed", kscale(v1), k0)
         same_dir(v0, v1)
         print("N7", mode, "ok")

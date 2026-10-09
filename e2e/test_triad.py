@@ -22,7 +22,10 @@ import re
 import numpy as np
 from PIL import Image
 
-from nav_common import DXF, STEP, add, close, mul, nav_session
+from nav_common import DXF, STEP_SRC, add, close, mul, nav_session
+
+# the shared mini_mold.step: this script keeps sidecars in the page (stub_sidecar)
+STEP = str(STEP_SRC)
 
 CAV_TOP = (50, 30, 35)
 PLATE_TOP = (90, 10, 15)

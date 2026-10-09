@@ -25,9 +25,12 @@ import tempfile
 import numpy as np
 
 from nav_common import (
-    BG, DXF, HUGE, LOAD_DIR, MOLD, RUNNER, STEP, SURFACE, TINY,
+    BG, DXF, HUGE, LOAD_DIR, MOLD, RUNNER, STEP_SRC, SURFACE, TINY,
     add, boxes_stl, close, corners, cross, dot, length, mul, nav_session, norm, sub,
 )
+
+# the shared mini_mold.step: this script keeps sidecars in the page (stub_sidecar)
+STEP = str(STEP_SRC)
 
 # make_step_assembly.py: plate, cavity block, two core pins (r 4, z 15..40)
 PLATE = ((0, 0, 0), (100, 60, 15))
@@ -151,8 +154,7 @@ try:
         set_rotate("ターンテーブル")
 
         # ---- T2b. switch at the perspective near stop -----------------------------
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         cur = n.project(SURFACE)
         page.mouse.move(*cur)
         for _ in range(30):
@@ -183,8 +185,7 @@ try:
         grid(False)
         set_projection("平行")
         click_button("等角")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         v = view()
         f = direction(v)
         da = dot(sub([15, 7.5, 5], v["position"]), f)
@@ -198,8 +199,7 @@ try:
         assert abs(wa - wb) <= 1 and abs(ha - hb) <= 1, ("T3 sizes", wa, ha, wb, hb)
         assert iou >= 0.95, ("T3 shapes", iou)
         set_projection("透視")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         (ra, ma), (rb, mb) = two_blobs()
         area_a = (ra[2] - ra[0]) * (ra[3] - ra[1])
         area_b = (rb[2] - rb[0]) * (rb[3] - rb[1])
@@ -209,8 +209,7 @@ try:
         # ---- T5. true proportions seen square-on (上) ------------------------------
         set_projection("平行")
         click_button("上")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         (ra, _), (rb, _) = two_blobs()
         cl, ct, cw, ch = canvas_rect()
         for tag, r, (lo, hi) in (("A", ra, BOX_A), ("B", rb, BOX_B)):
@@ -222,8 +221,7 @@ try:
         assert abs((ra[2] - ra[0]) - (rb[2] - rb[0])) <= 2, ("T5 widths", ra, rb)
         print("T5 ortho", [round(x, 1) for x in ra], [round(x, 1) for x in rb])
         set_projection("透視")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         (ra, _), (rb, _) = two_blobs()
         print("T5 persp widths", round(ra[2] - ra[0], 1), round(rb[2] - rb[0], 1))
         assert (rb[2] - rb[0]) > 1.05 * (ra[2] - ra[0]), ("T5 control", ra, rb)
@@ -231,8 +229,7 @@ try:
         load(STEP)
         set_projection("平行")
         click_button("等角")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         vecs = []
         for x, y in ((0, 0), (100, 0), (100, 60), (0, 60)):
             a, b = project((x, y, 0)), project((x, y, 15))
@@ -259,19 +256,14 @@ try:
                 page.keyboard.press("Shift+ArrowRight")
             v0 = view()
             trig = triggers[i % len(triggers)]
-            if trig == "button":
-                click_button("全体表示")
-            else:
-                page.keyboard.press(trig)
-            settle()
+            n.fit(trig)  # records the panels the fit saw
             v1 = view()
             same_dir(v0, v1)
             print("T4", preset, trig, fill_check(*RUNNER, preset))
             depth_check(*RUNNER)
         page.set_viewport_size({"width": 600, "height": 900})
         page.wait_for_timeout(300)
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         print("T4 narrow", fill_check(*RUNNER, "600x900"))
         page.set_viewport_size({"width": 1280, "height": 800})
         page.wait_for_timeout(300)
@@ -281,8 +273,7 @@ try:
         for _ in range(5):
             page.keyboard.press("ArrowRight")
         v0 = view()
-        page.keyboard.press("f")
-        settle()
+        n.fit()
         v1 = view()
         same_dir(v0, v1)
         assert abs(v1["up"][2]) < 0.9, ("T4 still rolled", v1["up"])
@@ -309,8 +300,7 @@ try:
         for mode, tol in (("自由回転", 1e-6), ("ターンテーブル", 1e-5)):
             set_rotate(mode)
             click_button("上")
-            page.keyboard.press("f")
-            settle()
+            n.fit()
             r = points_rect([[x, y, 15] for x in (0, 100) for y in (0, 60)])
             ratio = (r[2] - r[0]) / (r[3] - r[1])
             assert abs(ratio - 100 / 60) <= tol, ("T8 plate top", mode, ratio)
