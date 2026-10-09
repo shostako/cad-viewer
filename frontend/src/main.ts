@@ -22,13 +22,13 @@ import { fitRect, type ScreenRect } from './freearea'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
-import { Picker, type PickResult } from './picking'
+import { Picker, type FaceHit, type PickResult } from './picking'
 import { DiameterCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
-import { renderTree } from './tree'
+import { PartTree } from './tree'
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
@@ -44,10 +44,7 @@ app.innerHTML = `
     <div id="empty-formats">STEP / IGES / STL / 3MF / OBJ / PLY / DXF / DWG</div>
   </div>
   <div id="load-card" class="hidden"></div>
-  <div id="tree-panel" class="hidden">
-    <div id="tree-title">部品ツリー</div>
-    <div id="tree-body"></div>
-  </div>
+  <div id="tree-panel" class="hidden"></div>
   <div id="corner-br">
     <div id="measure-panel" class="hidden">
       <div id="measure-title">計測</div>
@@ -79,7 +76,6 @@ const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const thicknessLegend = document.querySelector<HTMLDivElement>('#thickness-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
-const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
 
 const cornerBr = document.querySelector<HTMLDivElement>('#corner-br')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
@@ -112,6 +108,18 @@ const sectionTool = new SectionTool(viewer)
 const drawing2d = new Drawing2D(viewport2d, (msg) => {
   hudInfo.textContent = msg
 })
+// the part tree (top left): shows / hides parts, highlights the part of the
+// row under the pointer, fits the view to one part
+const partTree = new PartTree(treePanel, {
+  setVisible: (changes) => {
+    for (const [id, on] of changes) viewer.setPartVisible(id, on)
+    propsPanel.refresh()
+    probe.refresh() // a part under a still cursor may have gone (its row mark, its value)
+  },
+  highlight: (ids) => viewer.setHighlight(ids),
+  zoomTo: (ids) => viewer.fitToParts(ids),
+  colorOf: (id) => `#${viewer.partColor(id)?.getHexString() ?? '8fb4d8'}`,
+})
 
 // how to move around, per view (HUD bottom left)
 const KEYS_3D = [
@@ -141,7 +149,7 @@ function show2D(on: boolean): void {
   is2D = on
   viewport2d.classList.toggle('hidden', !on)
   viewport.classList.toggle('hidden', on)
-  treePanel.classList.toggle('hidden', on || !treeBody.hasChildNodes())
+  treePanel.classList.toggle('hidden', on || !partTree.hasRows)
   for (const f of folders3D) f.show(!on)
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
@@ -240,9 +248,9 @@ const modeCtl = gui
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
     showModeHint()
-    // the highlight and the label follow the mode at once, also under a still
-    // cursor (a hover pick waiting after a slow one looks again now: its last
-    // label must not come back without its highlight)
+    // the highlight, the label and the tree's row mark follow the mode at
+    // once, also under a still cursor (a hover pick waiting after a slow one
+    // looks again now: its last label must not come back without its highlight)
     forgetHoverPick()
     probe.refresh()
   })
@@ -742,14 +750,16 @@ draftFolder
     updateDraft()
   })
 
-// ---- what is under the cursor (#cursor-tip, the preselection highlight)
-// In 計測 / 注記 (3D), what a click there would pick is highlighted and named
-// beside the cursor (pickUnderCursor). Otherwise, while the heatmap or the
+// ---- what is under the cursor (#cursor-tip, the preselection highlight, the part tree's row)
+// One look per frame at most (HoverProbe). In 計測 / 注記 (3D), what a click
+// there would pick is highlighted and named beside the cursor
+// (pickUnderCursor). Otherwise one ray serves two uses: in なし the part under
+// the cursor has its row marked in the part tree, and while the heatmap or the
 // draft colouring is on, the label says what the colour under the cursor
-// stands for (valueUnderCursor). Where a click would pick a B-rep entity in
-// 計測 / 注記, its name wins over the value: a measurement aims at an entity,
-// and one label stays readable. Where it would not (a mesh model, a
-// measurement in flight), the value shows as in なし.
+// stands for (valueAt). Where a click would pick a B-rep entity in 計測 /
+// 注記, its name wins over the value: a measurement aims at an entity, and one
+// label stays readable. Where it would not (a mesh model, a measurement in
+// flight), the value shows as in なし.
 const cursorTip = new CursorTip(document.body)
 const probe = new HoverProbe(viewport, cursorTip, underCursor)
 const preselect = new Preselect(viewer)
@@ -760,15 +770,24 @@ probe.onStop(() => {
   diameters.rest(null)
   lastPickTip = null
   clearTimeout(hoverPickTimer)
+  partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
   if (state.mode !== 'なし' && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
-    if (picked !== null) return picked
+    if (picked !== null) {
+      partTree.markFrom3D(null) // 計測 / 注記 point at faces, edges and vertices, not at parts
+      return picked
+    }
   } else lastPickTip = null
   preselect.hide()
   diameters.rest(null)
-  return valueUnderCursor(clientX, clientY)
+  // 計測 / 注記 point at faces, edges and vertices, not at parts: the row mark is for なし
+  const markRow = !is2D && state.mode === 'なし' && partTree.hasRows
+  const giveValue = !is2D && colorOwner !== 'none'
+  const hit = markRow || giveValue ? picker.faceHit(toNdc(clientX, clientY)) : null
+  partTree.markFrom3D(markRow && hit ? hit.partId : null)
+  return giveValue ? valueAt(hit) : null
 }
 /**
  * In 半透明 / ワイヤーフレーム a pick scans every drawn edge and vertex
@@ -825,16 +844,12 @@ function pickTip(pick: PickResult | null): TipContent {
   const d = diameters.get(pick)
   return { text: measureTool.label(pick) + (d === null ? '' : ` ⌀${d.toFixed(3)}`), kind: 'pick' }
 }
-// While the heatmap or the draft colouring is on, the label beside the cursor
-// says what the colour under it stands for: the thickness, or the draft angle
-// and its class. Read from the triangle under the cursor by the rule that
-// coloured it (the same vertex values, the same normals), so the number says
-// what the colour says; where the colours blur across a triangle (a large
-// face between thin and thick vertices, a curved B-rep face), it gives the
-// value at that very point.
-function valueUnderCursor(clientX: number, clientY: number): string | null {
-  if (is2D || colorOwner === 'none') return null
-  const hit = picker.faceHit(toNdc(clientX, clientY))
+// The value: the thickness, or the draft angle and its class. Read from the
+// triangle under the cursor by the rule that coloured it (the same vertex
+// values, the same normals), so the number says what the colour says; where
+// the colours blur across a triangle (a large face between thin and thick
+// vertices, a curved B-rep face), it gives the value at that very point.
+function valueAt(hit: FaceHit | null): string | null {
   // off the model, or on a face the style does not draw (ワイヤーフレーム of a
   // B-rep part): faces stay pickable there, but no value for a blank spot
   if (!hit || !viewer.facesDrawn(hit.partId)) return null
@@ -1031,13 +1046,16 @@ gui.domElement.append(panelsHide)
 function setPanelsHidden(hidden: boolean): void {
   if (hidden === panelsHidden) return
   // a view the user has not moved since its fit is fitted again into the
-  // area the panels now leave; a moved view is left as it is
+  // area the panels now leave (the same parts: この部品へ寄る's stay framed);
+  // a moved view is left as it is
   const refit = !is2D && contentShown && viewer.atLastFit
+  // a tree row the keyboard is on would keep its part highlighted, unseen
+  if (hidden) partTree.releaseFocus()
   panelsHidden = hidden
   document.body.classList.toggle('panels-hidden', hidden)
   panelsShow.classList.toggle('hidden', !hidden)
   layoutCorner()
-  if (refit) viewer.fitToView()
+  if (refit) viewer.refit()
 }
 panelsHide.addEventListener('click', () => setPanelsHidden(true))
 panelsShow.addEventListener('click', () => setPanelsHidden(false))
@@ -1471,12 +1489,10 @@ viewport.addEventListener('dblclick', (e) => {
 /** the part tree (top left), for a model with more than one part or with B-rep faces */
 function showTree(model: ModelData): void {
   if (model.parts.length > 1 || model.parts[0]?.faceRanges.length) {
-    renderTree(treeBody, model.tree, (partId, visible) => {
-      viewer.setPartVisible(partId, visible)
-      propsPanel.refresh()
-    })
+    partTree.show(model.tree) // after viewer.setModel: the marks take the parts' colours from it
     treePanel.classList.remove('hidden')
   } else {
+    partTree.clear()
     treePanel.classList.add('hidden')
   }
 }
@@ -1555,7 +1571,7 @@ async function loadFile(file: File): Promise<void> {
       drawing2d.clear()
       setContentShown(false)
       picker.setModel([])
-      treeBody.replaceChildren()
+      partTree.clear()
       treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {

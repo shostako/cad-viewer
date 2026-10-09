@@ -64,8 +64,9 @@ export type TipContent = string | { text: string; kind: string } | null
  * and the touch of a finger is no hover), on a wheel turn, and when the cursor
  * leaves `target`; it comes back with the next move of the cursor. Call
  * refresh() when what is under a still cursor may have changed (the view
- * moved, the colouring changed). What `describe` draws besides the tip (the
- * preselection highlight) goes with it: onStop.
+ * moved, the colouring changed). What `describe` draws or marks besides the
+ * tip (the preselection highlight, the part tree's row of the part under the
+ * cursor) goes with it: onStop.
  */
 export class HoverProbe {
   /** client px of the last hover move; null while there is none to show for */
