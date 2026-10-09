@@ -907,15 +907,33 @@ function savePropsPrefs(): void {
 // has a max-height). Nothing in the stack ever sits under the GUI.
 const COLUMN_MARGIN = 12 // #corner-br's distance from the bottom (style.css --cv-edge)
 const COLUMN_GAP = 8
-const MEASURE_MIN_PX = 120 // the measure list's title and about three rows
-const GUI_MIN_PX = 240 // below this the GUI stops giving way
+/**
+ * The measure list's least height: its title and its first two rows whole
+ * (a row wraps to two lines within the column's one width: about the room
+ * three one-line rows took before). Measured, not a constant: the rows'
+ * height depends on the text and the font.
+ */
+function measureMinPx(): number {
+  const cs = getComputedStyle(measurePanel)
+  const frame =
+    parseFloat(cs.paddingTop) +
+    parseFloat(cs.paddingBottom) +
+    parseFloat(cs.borderTopWidth) +
+    parseFloat(cs.borderBottomWidth)
+  const title = measurePanel.querySelector<HTMLElement>('#measure-title')
+  const titleH = title ? title.offsetHeight + parseFloat(getComputedStyle(title).marginBottom) : 0
+  let rows = 0
+  for (const li of Array.from(measureList.children).slice(0, 2)) rows += (li as HTMLElement).offsetHeight
+  return Math.ceil(frame + titleH + rows)
+}
+const GUI_MIN_PX = 200 // below this the GUI stops giving way (its title and about seven rows)
 const HUD_MIN_PX = 200 // below this the HUD stops wrapping and may meet the stack
 function layoutCorner(): void {
   const h = window.innerHeight
   const measureShown = !measurePanel.classList.contains('hidden')
   // natural height: content and padding (scrollHeight) plus the border
   const measureNatural = measurePanel.scrollHeight + measurePanel.offsetHeight - measurePanel.clientHeight
-  const measureMin = measureShown ? Math.min(measureNatural, MEASURE_MIN_PX) : 0
+  const measureMin = measureShown ? Math.min(measureNatural, measureMinPx()) : 0
   const propsMin = propsPanel.minHeight()
   const stackMin = measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
   // the GUI sits COLUMN_MARGIN below the window's top, as the stack sits above its bottom

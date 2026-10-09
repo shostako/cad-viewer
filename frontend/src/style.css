@@ -968,9 +968,11 @@ body,
   --font-family: var(--cv-font);
   --font-size: 12px;
   --input-font-size: 12px;
-  --padding: 6px;
-  --spacing: 5px;
-  --widget-height: 22px;
+  /* lil-gui's own row metrics: a taller row costs the half-screen window
+     whole rows of the panel, and the measure list its room */
+  --padding: 5px;
+  --spacing: 4px;
+  --widget-height: 20px;
   --widget-border-radius: var(--cv-r-sm);
   --name-width: 40%;
   --folder-indent: 8px;
