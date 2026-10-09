@@ -69,6 +69,60 @@ export function draftClass(s: number, sinRequired: number): DraftClass {
   return 'short'
 }
 
+/** what each class is called, in the legend and in the value under the cursor */
+export const DRAFT_CLASS_NAMES: Record<DraftClass, string> = {
+  ok: '抜ける側',
+  short: '勾配不足',
+  opposite: '反対側',
+}
+
+/**
+ * Sine of the draft angle for the normal (x, y, z), of any length: n·d / |n|.
+ * A zero or NaN normal (degenerate triangle) has no direction: it counts as
+ * a vertical wall (0). `len > 0` is false for NaN too.
+ */
+export function draftSine(x: number, y: number, z: number, dir: readonly [number, number, number]): number {
+  const len = Math.sqrt(x * x + y * y + z * z)
+  return len > 0 ? (x * dir[0] + y * dir[1] + z * dir[2]) / len : 0
+}
+
+/**
+ * draftSine of the triangle at positions[o .. o + 8] (a, b, c), with the
+ * normal (b - a) x (c - a) from its winding times `sign` (-1 for a part wound
+ * inside out, see windingSign). The rule for mesh formats (draftColorsFlat).
+ */
+export function triangleDraftSine(
+  positions: ArrayLike<number>,
+  o: number,
+  sign: 1 | -1,
+  dir: readonly [number, number, number],
+): number {
+  const ux = positions[o + 3] - positions[o]
+  const uy = positions[o + 4] - positions[o + 1]
+  const uz = positions[o + 5] - positions[o + 2]
+  const vx = positions[o + 6] - positions[o]
+  const vy = positions[o + 7] - positions[o + 1]
+  const vz = positions[o + 8] - positions[o + 2]
+  const x = uy * vz - uz * vy
+  const y = uz * vx - ux * vz
+  const z = ux * vy - uy * vx
+  return draftSine(sign * x, sign * y, sign * z, dir)
+}
+
+/**
+ * The value under the cursor: the draft angle asin(s) to 0.1° and its class,
+ * e.g. 「勾配 2.0°（抜ける側）」. A face looking away from the pull direction
+ * gets a negative angle, with a real minus sign (U+2212, as the direction
+ * labels); a value that rounds to 0 has none.
+ */
+export function draftTipText(s: number, requiredDeg: number): string {
+  const deg = (Math.asin(Math.min(1, Math.max(-1, s))) * 180) / Math.PI
+  const cls = draftClass(s, Math.sin((requiredDeg * Math.PI) / 180))
+  const value = Math.abs(deg).toFixed(1)
+  const sign = deg < 0 && value !== '0.0' ? '−' : ''
+  return `勾配 ${sign}${value}°（${DRAFT_CLASS_NAMES[cls]}）`
+}
+
 /**
  * Fill `out` (3 floats per vertex, linear RGB) with the class colour of every
  * vertex. `normals` must be world normals: the part meshes carry no transform
@@ -85,13 +139,7 @@ export function draftColors(
   const rgb = classColours()
   const n = Math.min(normals.length, out.length) / 3
   for (let i = 0; i < n; i++) {
-    const x = normals[i * 3]
-    const y = normals[i * 3 + 1]
-    const z = normals[i * 3 + 2]
-    const len = Math.sqrt(x * x + y * y + z * z)
-    // a zero or NaN normal (degenerate triangle) has no direction: treat it as
-    // a vertical wall. `len > 0` is false for NaN too.
-    const s = len > 0 ? (x * dir[0] + y * dir[1] + z * dir[2]) / len : 0
+    const s = draftSine(normals[i * 3], normals[i * 3 + 1], normals[i * 3 + 2], dir)
     const c = rgb[draftClass(s, t)]
     out[i * 3] = c.r
     out[i * 3 + 1] = c.g
@@ -117,19 +165,7 @@ export function draftColorsFlat(
   const nTri = Math.floor(Math.min(positions.length, out.length) / 9)
   for (let k = 0; k < nTri; k++) {
     const o = k * 9
-    const ux = positions[o + 3] - positions[o]
-    const uy = positions[o + 4] - positions[o + 1]
-    const uz = positions[o + 5] - positions[o + 2]
-    const vx = positions[o + 6] - positions[o]
-    const vy = positions[o + 7] - positions[o + 1]
-    const vz = positions[o + 8] - positions[o + 2]
-    const x = uy * vz - uz * vy
-    const y = uz * vx - ux * vz
-    const z = ux * vy - uy * vx
-    const len = Math.sqrt(x * x + y * y + z * z)
-    // a degenerate triangle has no direction: a wall, as in draftColors
-    const s = len > 0 ? (sign * (x * dir[0] + y * dir[1] + z * dir[2])) / len : 0
-    const c = rgb[draftClass(s, t)]
+    const c = rgb[draftClass(triangleDraftSine(positions, o, sign, dir), t)]
     for (let v = 0; v < 3; v++) {
       out[o + v * 3] = c.r
       out[o + v * 3 + 1] = c.g
@@ -217,9 +253,12 @@ export function renderDraftLegend(
   // the other half, a wall on the pull side leaning the wrong way is a reverse
   // draft that neither half releases. Orientation cannot tell the two apart.
   const rows: [DraftClass, string][] = [
-    ['ok', `抜ける側（${r}° 以上）`],
-    ['short', `勾配不足（${r}° 未満${requiredDeg > 0 ? '。垂直な壁を含む' : ''}）`],
-    ['opposite', `反対側（逆向きに ${r}° 以上。パーティングより反対側の面なら抜ける。型開き側にあれば逆勾配）`],
+    ['ok', `${DRAFT_CLASS_NAMES.ok}（${r}° 以上）`],
+    ['short', `${DRAFT_CLASS_NAMES.short}（${r}° 未満${requiredDeg > 0 ? '。垂直な壁を含む' : ''}）`],
+    [
+      'opposite',
+      `${DRAFT_CLASS_NAMES.opposite}（逆向きに ${r}° 以上。パーティングより反対側の面なら抜ける。型開き側にあれば逆勾配）`,
+    ],
   ]
   const children: HTMLElement[] = [title]
   for (const [cls, text] of rows) {

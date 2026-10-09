@@ -15,7 +15,8 @@ import {
   type ModelMeta,
   type ModelProperties,
 } from './api'
-import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
+import { CursorTip, HoverProbe } from './cursortip'
+import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
 import { largestFreeRect, type ScreenRect } from './freearea'
 import { MeasureTool, type EntryData } from './measure'
@@ -24,6 +25,7 @@ import { Picker } from './picking'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
+import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { renderTree } from './tree'
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
@@ -54,6 +56,7 @@ app.innerHTML = `
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
     <div id="draft-legend" class="hidden"></div>
+    <div id="thickness-legend" class="hidden"></div>
     <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
     <div id="hud-keys"></div>
   </div>
@@ -69,6 +72,7 @@ const dropzone = document.querySelector<HTMLDivElement>('#dropzone')!
 const hud = document.querySelector<HTMLDivElement>('#hud')!
 const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
 const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
+const thicknessLegend = document.querySelector<HTMLDivElement>('#thickness-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const treeBody = document.querySelector<HTMLDivElement>('#tree-body')!
@@ -493,15 +497,24 @@ function saveDraftPrefs(): void {
 }
 
 // ---- thickness heatmap
-const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as 'ray' | 'ball' }
+const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as ThicknessMethod }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
+/** the values the heatmap on screen was painted from (part id -> one per display vertex) */
+let shownThickness: Map<number, Float32Array> | null = null
 const HEATMAP_HUD = '肉厚ヒートマップ表示中'
 function heatmapHud(): string {
-  const method = thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
   // B-rep faces are not drawn in ワイヤーフレーム, so their colours cannot show;
-  // a mesh model (STL, ...) draws its triangles' edges in the colours instead
+  // a mesh model (STL, ...) draws its triangles' edges in the colours instead.
+  // The colours and the threshold are on the legend just above.
   const note = viewer.facesHidden ? '。ワイヤーフレームでは面を描かないので、色は陰影か半透明で見る' : ''
-  return `${HEATMAP_HUD}（${method}、赤=閾値未満${note}）`
+  return `${HEATMAP_HUD}（${METHOD_NAMES[thicknessState.method]}${note}）`
+}
+/** the heatmap goes away: its colours, its legend and its status line */
+function clearThickness(): void {
+  releaseColors('thickness')
+  thicknessLegend.classList.add('hidden')
+  dropThicknessHud()
+  probe.refresh()
 }
 /** a style switch updates the note only while the HUD shows the heatmap message */
 function refreshHeatmapHud(): void {
@@ -512,8 +525,7 @@ function refreshHeatmapHud(): void {
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
-    releaseColors('thickness')
-    dropThicknessHud()
+    clearThickness()
     return
   }
   // Capture the request context: a slow fetch can resolve after the user has
@@ -538,15 +550,23 @@ async function updateThickness(): Promise<void> {
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
     colorOwner = 'thickness'
+    shownThickness = data
     // the method named is thicknessState.method, equal to requestedMethod here
     // (a fetch that a method change overtook returned above)
+    renderThicknessLegend(thicknessLegend, thicknessState.threshold, thicknessState.method)
+    thicknessLegend.classList.remove('hidden')
     setThicknessHud(heatmapHud())
+    probe.refresh() // other values under a cursor that stays where it is
   } catch (e) {
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
     // the user moved on (抜き勾配 took over, toggled off, other 方式): a late error is noise
     if (!thicknessState.enabled || requestedMethod !== thicknessState.method) return
     thicknessHud = ''
     thicknessState.enabled = false
+    // the colours of the 方式 shown before go with the box: no colours without their legend
+    releaseColors('thickness')
+    thicknessLegend.classList.add('hidden')
+    probe.refresh()
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
   }
 }
@@ -581,12 +601,14 @@ function updateDraft(): void {
   if (!draftState.enabled) {
     releaseColors('draft')
     draftLegend.classList.add('hidden')
+    probe.refresh()
     return
   }
   viewer.setDraftColors(PULL_DIRS[draftState.dir], draftState.required)
   colorOwner = 'draft'
   renderLegend()
   draftLegend.classList.remove('hidden')
+  probe.refresh()
 }
 function renderLegend(): void {
   // Parts with faces but no volume (open, mixed winding, ...): only closed
@@ -607,8 +629,7 @@ draftFolder
       // and is dropped. Clearing first keeps the meshes plain if the box snaps
       // back below (nothing to colour); otherwise updateDraft repaints them.
       thicknessState.enabled = false
-      releaseColors('thickness')
-      dropThicknessHud()
+      clearThickness()
     }
     updateDraft()
   })
@@ -627,6 +648,56 @@ draftFolder
     saveDraftPrefs()
     updateDraft()
   })
+
+// ---- the value under the cursor (#cursor-tip)
+// While the heatmap or the draft colouring is on, the label beside the cursor
+// says what the colour under it stands for: the thickness, or the draft angle
+// and its class. Read from the triangle under the cursor by the rule that
+// coloured it (the same vertex values, the same normals), so the number says
+// what the colour says; where the colours blur across a triangle (a large
+// face between thin and thick vertices, a curved B-rep face), it gives the
+// value at that very point.
+const cursorTip = new CursorTip(document.body)
+const probe = new HoverProbe(viewport, cursorTip, valueUnderCursor)
+function valueUnderCursor(clientX: number, clientY: number): string | null {
+  if (is2D || colorOwner === 'none') return null
+  const hit = picker.faceHit(toNdc(clientX, clientY))
+  if (!hit) return null // off the model
+  if (colorOwner === 'thickness') {
+    const values = shownThickness?.get(hit.partId)
+    return values ? thicknessTipText(thicknessAt(values, hit.vertices, hit.weights)) : null
+  }
+  const s = viewer.draftSineAt(hit.partId, hit.triangle, hit.weights, PULL_DIRS[draftState.dir])
+  return s === null ? null : draftTipText(s, draftState.required)
+}
+// A still cursor sees something else when the view moves under it (keys,
+// auto-rotate, the coast after a drag, a pivot slide): look again then. Not
+// on every frame: OrbitControls moves the camera by rounding noise each frame,
+// at rest too. "Moved" is measured from the camera of the last look, so a
+// slow drift still adds up to a look.
+const lookedCameraWorld = new THREE.Matrix4()
+const lookedCameraProjection = new THREE.Matrix4()
+viewer.onFrame(() => {
+  const cam = viewer.camera
+  if (nearlyEqual(cam.matrixWorld, lookedCameraWorld) && nearlyEqual(cam.projectionMatrix, lookedCameraProjection)) return
+  lookedCameraWorld.copy(cam.matrixWorld)
+  lookedCameraProjection.copy(cam.projectionMatrix)
+  probe.refresh()
+})
+/**
+ * Every element within 1e-9 of the larger magnitude (of 1 below that). The
+ * rounding noise is about 1e-15 of it per frame (measured); a turn of 1e-9 rad
+ * or a move of 1e-9 of the camera's distance from the origin is far under a
+ * pixel, also on a model placed thousands of mm away from the origin.
+ */
+function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
+  for (let i = 0; i < 16; i++) {
+    const x = a.elements[i]
+    const y = b.elements[i]
+    if (Math.abs(x - y) > 1e-9 * Math.max(1, Math.abs(x), Math.abs(y))) return false
+  }
+  return true
+}
 
 // ---- volume / area / weight
 // Resin and specific gravity survive a reload, like the view preferences.
@@ -1230,7 +1301,10 @@ async function loadFile(file: File): Promise<void> {
       draftState.enabled = false // direction and angle stay
       viewer.clearVertexColors()
       colorOwner = 'none'
+      shownThickness = null
       draftLegend.classList.add('hidden')
+      thicknessLegend.classList.add('hidden')
+      probe.stop()
       thicknessHud = ''
       modelSummary = ''
       modelProps = null

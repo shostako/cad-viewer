@@ -38,8 +38,8 @@ TINY_HI = [((40, 40, 40), (39.9, 40, 40), (40, 40, 39.9))]
 TINY_LO = [((0, 0, 0), (0.1, 0, 0), (0, 0, 0.1))]
 WALL_SAMPLES = {"正面": (12, 0, 28), "背面": (12, 40, 28)}
 # (g) a flat STL box, 2 mm thick: under the default threshold 1.5 the heatmap
-# colours it yellow-olive (2 / (2 x 1.5) = 0.67 on the scale), far from the
-# grey-blue of the part
+# colours it a third of the way from the pale grey-blue at the threshold to the
+# blue of 3 mm and more, much paler (redder) than the part's own grey-blue
 BOX = ((0, 0, 0), (100, 60, 2))
 BOX_DIAG = ((0, 0, 2), (100, 60, 2))  # a triangle edge of the top face
 BOX_I = (75, 15, 2)  # top face, clear of every triangle edge

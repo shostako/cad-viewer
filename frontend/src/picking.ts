@@ -24,6 +24,17 @@ export interface PickResult {
   point: THREE.Vector3
 }
 
+/** The display triangle under the cursor (no snapping): for values read off the per-vertex colours. */
+export interface FaceHit {
+  partId: number
+  /** triangle index in the part's display mesh, in its index order (the BVH is built indirect and keeps it) */
+  triangle: number
+  /** its three vertex indices */
+  vertices: [number, number, number]
+  /** barycentric weights of the hit point on it, in the order of `vertices` (each 0..1, sum 1) */
+  weights: [number, number, number]
+}
+
 const VERTEX_SNAP_PX = 14
 const EDGE_SNAP_PX = 10
 
@@ -85,6 +96,35 @@ export class Picker {
   /** Surface point under the cursor, without snapping: the wheel's zoom point and the rotation centre. */
   surfacePoint(ndc: THREE.Vector2): THREE.Vector3 | null {
     return this.firstVisibleHit(ndc)?.point.clone() ?? null
+  }
+
+  /**
+   * The triangle under the cursor and where on it the cursor is, without
+   * snapping: the first visible hit, as for surfacePoint. The values under
+   * the cursor (thickness, draft angle) are read from it.
+   */
+  faceHit(ndc: THREE.Vector2): FaceHit | null {
+    const hit = this.firstVisibleHit(ndc)
+    if (!hit?.face || hit.faceIndex === undefined || hit.faceIndex === null) return null
+    const { a, b, c } = hit.face
+    const pos = (hit.object as THREE.Mesh).geometry.getAttribute('position')
+    const w = THREE.Triangle.getBarycoord(
+      hit.point,
+      new THREE.Vector3().fromBufferAttribute(pos, a),
+      new THREE.Vector3().fromBufferAttribute(pos, b),
+      new THREE.Vector3().fromBufferAttribute(pos, c),
+      new THREE.Vector3(),
+    )
+    // the hit lies on the triangle: only float noise can take a weight below
+    // 0; a degenerate triangle (no weights) is never hit, but split it evenly
+    const ws = w ? [Math.max(w.x, 0), Math.max(w.y, 0), Math.max(w.z, 0)] : [1, 1, 1]
+    const sum = ws[0] + ws[1] + ws[2]
+    return {
+      partId: hit.object.userData.partId as number,
+      triangle: hit.faceIndex,
+      vertices: [a, b, c],
+      weights: [ws[0] / sum, ws[1] / sum, ws[2] / sum],
+    }
   }
 
   /** Pick at normalized device coords; returns null when nothing is hit. */
