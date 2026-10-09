@@ -1389,6 +1389,9 @@ export class Viewer {
    */
   setProjection(p: Projection): void {
     if (p === this._projection) return
+    // the switch keeps the view: a view still as the last fit left it stays so
+    // (atLastFit compares within one projection)
+    const wasAtFit = this.atLastFit
     this.finishViewAnim()
     this.stopInertia()
     const from = this.camera
@@ -1414,6 +1417,7 @@ export class Viewer {
     this.controls.object = to
     this.trackball.object = to
     this.setTarget(target)
+    if (wasAtFit) this.rememberFit()
   }
 
   /**

@@ -387,7 +387,8 @@ function onNavigationKey(e: KeyboardEvent): void {
     return
   }
   if (e.key === 'h' || e.key === 'H') {
-    setPanelsHidden(!panelsHidden)
+    // one toggle per press: a held key's auto-repeat would flash the panels
+    if (!e.repeat) setPanelsHidden(!panelsHidden)
     e.preventDefault()
     return
   }

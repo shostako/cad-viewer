@@ -9,7 +9,9 @@ left as it is. On half a screen (767 x 639) the model gets much larger.
 Oracles: nav_common's free rectangle computed from the panels' DOM rects (the
 same rule as the app, written separately), the projected corners of the
 mold's known box (window.__cadProject), the camera state (window.__cadView),
-element visibility, and the HUD status line's height (one line).
+element visibility, and the HUD status line's height (one line). Also: the
+refit still happens after a fit and a projection switch (the switch keeps the
+view), and a held H (keyboard auto-repeat) toggles once.
 """
 from nav_common import DXF, MOLD, close, nav_session
 
@@ -111,6 +113,33 @@ with nav_session() as n:
     assert page.locator(".note-input").input_value() == "h"
     page.keyboard.press("Escape")
     n.set_mode("なし")
+
+    # ---- 5b. a fit, then the other projection: the view is still the fit's
+    #     (the switch keeps it), so hiding fits again into the larger area
+    n.fit()
+    n.set_projection("平行")
+    w_par = width()
+    page.keyboard.press("h")
+    n.settle()
+    assert hidden(".lil-gui.lil-root")
+    refitted("parallel, hidden")
+    assert width() > 1.3 * w_par, ("5b no refit after a projection switch", w_par, width())
+    page.keyboard.press("h")
+    n.settle()
+    n.set_projection("透視")
+    n.fit()
+
+    # ---- 5c. a held H: the key's auto-repeat does not toggle again
+    page.keyboard.press("h")
+    n.settle()
+    assert hidden(".lil-gui.lil-root")
+    for _ in range(3):
+        page.evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key: 'h', code: 'KeyH', repeat: true }))")
+        n.settle()
+    assert hidden(".lil-gui.lil-root") and not hidden("#panels-show"), "5c auto-repeat toggled the panels"
+    page.keyboard.press("h")
+    n.settle()
+    assert not hidden(".lil-gui.lil-root")
 
     # ---- 6. a drawing: the toggle works there too
     n.load(DXF, wait_text="2D図面", props="live")
