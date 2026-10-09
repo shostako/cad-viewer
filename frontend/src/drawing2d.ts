@@ -26,6 +26,8 @@ export class Drawing2D {
   private vb = { x: 0, y: 0, w: 1, h: 1 }
   private baseVb = { x: 0, y: 0, w: 1, h: 1 }
   private pendingSnap: SnapPoint | null = null
+  /** the marker of pendingSnap, removed when the first point is cancelled */
+  private pendingMarker: SVGCircleElement | null = null
   measureMode = false
 
   constructor(container: HTMLElement, hud: (msg: string) => void) {
@@ -56,6 +58,7 @@ export class Drawing2D {
     this.svg.appendChild(this.overlayG)
     this.snaps = snaps
     this.pendingSnap = null
+    this.pendingMarker = null
   }
 
   /** drop the drawing (the next load starts from an empty viewer) */
@@ -65,11 +68,54 @@ export class Drawing2D {
     this.overlayG = null
     this.snaps = []
     this.pendingSnap = null
+    this.pendingMarker = null
   }
 
   clearMeasurements(): void {
     if (this.overlayG) this.overlayG.innerHTML = ''
     this.pendingSnap = null
+    this.pendingMarker = null
+  }
+
+  private changeListeners: (() => void)[] = []
+
+  /** called when a measurement is completed (main.ts ends a pending undo then) */
+  onMeasurement(fn: () => void): void {
+    this.changeListeners.push(fn)
+  }
+
+  /**
+   * The completed measurements as drawn (the overlay's markup) and how many
+   * they are, to put back after a clear; null when there are none. A chosen
+   * first point is not part of it: it is dropped here.
+   */
+  measurementsSnapshot(): { html: string; count: number } | null {
+    if (!this.overlayG) return null
+    const count = this.overlayG.querySelectorAll('text.dimtext2d').length
+    if (count === 0) return null
+    this.pendingMarker?.remove()
+    this.pendingMarker = null
+    this.pendingSnap = null
+    return { html: this.overlayG.innerHTML, count }
+  }
+
+  /** Put back measurements from measurementsSnapshot (undo of a clear). */
+  restoreMeasurements(html: string): void {
+    if (!this.overlayG) return
+    this.overlayG.innerHTML = html
+    this.pendingMarker = null
+    this.pendingSnap = null
+    this.updateOverlayScale() // sized for the zoom of now, not of the clear
+  }
+
+  /** Drop a chosen first point (Esc). Returns whether there was one. */
+  cancelPending(): boolean {
+    if (!this.pendingSnap) return false
+    this.pendingMarker?.remove()
+    this.pendingMarker = null
+    this.pendingSnap = null
+    this.hud('1 点目を取り消した（もう一度 Esc で計測をやめる）')
+    return true
   }
 
   private applyViewBox(): void {
@@ -215,18 +261,20 @@ export class Drawing2D {
     }
     if (!this.pendingSnap) {
       this.pendingSnap = snap
-      this.addMarker(snap)
+      this.pendingMarker = this.addMarker(snap)
       this.hud(`(${snap.dxf[0]}, ${snap.dxf[1]}) を選択 — 相手をクリック`)
       return
     }
     const a = this.pendingSnap
     this.pendingSnap = null
+    this.pendingMarker = null // part of the measurement now
     this.addMarker(snap)
     const dx = snap.dxf[0] - a.dxf[0]
     const dy = snap.dxf[1] - a.dxf[1]
     const dist = Math.hypot(dx, dy)
     this.addDimension(a, snap, dist)
     this.hud(`距離 ${dist.toFixed(3)} (ΔX ${Math.abs(dx).toFixed(3)}, ΔY ${Math.abs(dy).toFixed(3)})`)
+    for (const fn of this.changeListeners) fn()
   }
 
   private addMarker(s: SnapPoint): SVGCircleElement {

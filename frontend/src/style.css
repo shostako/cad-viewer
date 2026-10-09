@@ -515,3 +515,43 @@ body,
 #hud.beside-triad {
   left: 108px;
 }
+
+/* "N 件の計測を消した [元に戻す]": just above the HUD (placed from main.ts) */
+#undo-toast {
+  position: fixed;
+  z-index: 1002;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 12px;
+  color: #e6ebf1;
+  background: rgba(20, 24, 30, 0.94);
+  border: 1px solid #3a4250;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  font-size: 13px;
+}
+
+#undo-toast.hidden {
+  display: none;
+}
+
+#undo-btn {
+  padding: 3px 10px;
+  color: #8fb4d8;
+  background: rgba(143, 180, 216, 0.12);
+  border: 1px solid rgba(143, 180, 216, 0.35);
+  border-radius: 6px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#undo-btn:hover {
+  background: rgba(143, 180, 216, 0.22);
+}
+
+#undo-btn:focus-visible {
+  outline: 2px solid #8fb4d8;
+  outline-offset: 2px;
+}

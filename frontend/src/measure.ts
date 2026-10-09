@@ -79,6 +79,11 @@ export class MeasureTool {
     return this.entries
   }
 
+  /** a first point is chosen and waits for its partner (Esc cancels it) */
+  get hasPending(): boolean {
+    return this.pending !== null
+  }
+
   /** Handle a pick in measure mode. Returns a status message for the HUD. */
   async handlePick(pick: PickResult): Promise<string> {
     if (!this.modelId || this.busy) return ''
@@ -204,6 +209,20 @@ export class MeasureTool {
         console.warn('skipped a saved measurement that cannot be rebuilt', d, e)
       }
     }
+    return failed
+  }
+
+  /**
+   * Replace the list with saved entries (the undo of a deletion). Unlike
+   * clearAll + restore, a chosen first point and a measurement in flight
+   * stay: the user may have started the next one before undoing.
+   * Returns how many could not be rebuilt.
+   */
+  replaceAll(datas: EntryData[]): number {
+    for (const e of this.entries) for (const o of e.objects) this.viewer.disposeOverlayObject(o)
+    this.entries = []
+    const failed = this.restore(datas)
+    this.emit() // also when nothing could be rebuilt
     return failed
   }
 
