@@ -150,5 +150,33 @@ with nav_session() as n:
     n.settle()
     assert not hidden(".lil-gui.lil-root")
 
+    # ---- 7. an operation panel too tall for the window scrolls its list: its
+    #    title (with 隠す on it) keeps its height, as a folder's title has
+    page.set_viewport_size({"width": 767, "height": 420})
+    n.load(n.paths["step"])
+    for name in ("表示", "視点", "断面", "肉厚"):
+        title = page.locator(".lil-gui .lil-title", has_text=name).first
+        if title.get_attribute("aria-expanded") != "true":
+            title.click()
+    n.wait_gui_idle()
+    m = page.evaluate(
+        """(() => { const root = document.querySelector('.lil-gui.lil-root')
+             const list = root.querySelector(':scope > .lil-children')
+             const t = root.querySelector(':scope > .lil-title').getBoundingClientRect()
+             const f = root.querySelector('.lil-children .lil-gui > .lil-title').getBoundingClientRect()
+             const b = document.querySelector('#panels-hide').getBoundingClientRect()
+             return { scrolls: list.scrollHeight > list.clientHeight + 2, title: [t.top, t.bottom],
+                      folder: f.height, button: [b.top, b.bottom] } })()"""
+    )
+    print("7 low window", m)
+    assert m["scrolls"], ("7 the case needs a list that scrolls", m)
+    assert abs((m["title"][1] - m["title"][0]) - m["folder"]) <= 0.5, ("7 the title shrank", m)
+    assert m["title"][0] <= m["button"][0] and m["button"][1] <= m["title"][1], ("7 隠す sticks out of the title", m)
+    page.locator("#panels-hide").click()
+    n.settle()
+    assert hidden(".lil-gui.lil-root") and not hidden("#panels-show")
+    page.locator("#panels-show").click()
+    n.settle()
+
     page.screenshot(path="/tmp/cad_viewer_hide_panels.png")
     print("HIDE PANELS E2E OK")

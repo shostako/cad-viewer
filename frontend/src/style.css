@@ -627,6 +627,13 @@ body,
   outline-offset: 2px;
 }
 
+/* The column layout caps the operation panel's height (layoutCorner); its
+   root is a flex column, so the title would shrink first (to 14 px on a low
+   window, clipping 操作 and the 隠す button on it). The list scrolls instead. */
+.lil-gui.lil-root > .lil-title {
+  flex-shrink: 0;
+}
+
 /* panels hidden for a while (H): only the model, the status line and the triad */
 body.panels-hidden .lil-gui.lil-root,
 body.panels-hidden #tree-panel,
