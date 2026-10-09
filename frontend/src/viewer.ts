@@ -50,6 +50,16 @@ const GRID_DIVISIONS = 20
 const GRID_COLORS: [number, number] = [0x3a4250, 0x2a3038]
 /** the same grid on a white export: the dark one would print as heavy lines */
 const GRID_COLORS_ON_WHITE: [number, number] = [0xc0c6ce, 0xdde1e6]
+/**
+ * Parallel projection: the frustum half-height is this constant and the
+ * camera's zoom carries the scale (visible half-height h = ORTHO_TOP / zoom),
+ * so every size change, ours and the controls', is a zoom change.
+ */
+const ORTHO_TOP = 1
+/** the parallel camera's depth range covers the model's sphere enlarged by this */
+const DEPTH_PAD = 1.1
+/** TrackballControls pan speed (perspective; normalised per frame in parallel) */
+const TRACKBALL_PAN = 0.8
 
 /**
  * How the model is drawn (表示スタイル); see setDisplayStyle.
@@ -78,6 +88,13 @@ export type RotateMode = 'turntable' | 'free'
 
 export type ViewPreset = 'front' | 'back' | 'right' | 'left' | 'top' | 'bottom' | 'iso'
 
+/**
+ * - perspective: 透視 (nearer is larger)
+ * - orthographic: 平行 (parallel edges stay parallel, sizes do not depend on
+ *   depth: what a 2D drawing shows)
+ */
+export type Projection = 'perspective' | 'orthographic'
+
 /** camera direction (from target) and screen-up for each standard view (Z-up world) */
 const PRESETS: Record<ViewPreset, { dir: [number, number, number]; up: [number, number, number] }> = {
   front: { dir: [0, -1, 0], up: [0, 0, 1] },
@@ -92,7 +109,17 @@ const PRESETS: Record<ViewPreset, { dir: [number, number, number]; up: [number, 
 
 export class Viewer {
   readonly scene = new THREE.Scene()
-  readonly camera: THREE.PerspectiveCamera
+  private readonly persp: THREE.PerspectiveCamera
+  /** frustum ±aspect x ±ORTHO_TOP; its distance to the target means nothing (keepOrthoDepth) */
+  private readonly ortho = new THREE.OrthographicCamera(-1, 1, ORTHO_TOP, -ORTHO_TOP, 0.1, 1e6)
+  private _projection: Projection = 'perspective'
+  /**
+   * Everything the scene can draw (all parts, hidden ones and loose curves
+   * included, and the grid square), padded: the parallel camera keeps it all
+   * between its near and far planes.
+   */
+  private depthSphere = new THREE.Sphere(new THREE.Vector3(), 1)
+  private frameListeners: (() => void)[] = []
   readonly renderer: THREE.WebGLRenderer
   /** turntable controls (world Z up) */
   readonly controls: OrbitControls
@@ -152,10 +179,14 @@ export class Viewer {
   constructor(container: HTMLElement) {
     this.scene.background = new THREE.Color(0x1d2126)
 
-    this.camera = new THREE.PerspectiveCamera(50, 1, 0.1, 1e6)
+    this.persp = new THREE.PerspectiveCamera(50, 1, 0.1, 1e6)
     // CAD convention: Z-up. Keep world coordinates identical to server B-rep coords.
-    this.camera.up.set(0, 0, 1)
-    this.camera.position.set(80, -60, 50)
+    // Set before the controls are built: OrbitControls takes its Z-up frame
+    // from the camera it is made with, once (three r185), and keeps it when
+    // its camera is swapped for the parallel one.
+    this.persp.up.set(0, 0, 1)
+    this.ortho.up.set(0, 0, 1)
+    this.persp.position.set(80, -60, 50)
 
     // stencil: needed for section caps (three defaults stencil:false since r163)
     this.renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true })
@@ -168,15 +199,16 @@ export class Viewer {
     this.labelRenderer.domElement.style.pointerEvents = 'none'
     container.appendChild(this.labelRenderer.domElement)
 
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement)
+    this.controls = new OrbitControls(this.persp, this.renderer.domElement)
     this.controls.enableDamping = true
-    this.trackball = new TrackballControls(this.camera, this.renderer.domElement)
+    this.trackball = new TrackballControls(this.persp, this.renderer.domElement)
     // TrackballControls turns ~1 rad per half-width drag at speed 1; 4 roughly
     // matches the turntable's feel (one screen height = one turn)
     this.trackball.rotateSpeed = 4
     this.trackball.zoomSpeed = 1.2
-    this.trackball.panSpeed = 0.8
+    this.trackball.panSpeed = TRACKBALL_PAN
     this.trackball.enabled = false
+    this.applyOrthoZoomLimits()
     // Track held pointers ourselves rather than the controls' start/end:
     // TrackballControls (three r185) handles pointercancel without an 'end',
     // so a touch/pen gesture cancelled by the OS would leave auto-rotate
@@ -237,9 +269,47 @@ export class Viewer {
         this.rotateView((this.autoRotateSpeed * Math.PI / 180) * dt, 0)
       }
       this.activeControls().update()
+      this.prepareCamera()
       this.renderer.render(this.scene, this.camera)
       this.labelRenderer.render(this.scene, this.camera)
+      for (const fn of this.frameListeners) fn()
     })
+  }
+
+  /** the camera in use: perspective or parallel (setProjection) */
+  get camera(): THREE.PerspectiveCamera | THREE.OrthographicCamera {
+    return this._projection === 'orthographic' ? this.ortho : this.persp
+  }
+
+  get projection(): Projection {
+    return this._projection
+  }
+
+  /** Called after every rendered frame (the axis triad follows the camera). */
+  onFrame(fn: () => void): void {
+    this.frameListeners.push(fn)
+  }
+
+  /**
+   * Make the camera ready for a projection or a pick right now (straight
+   * after an event, before the next frame): the parallel camera put back
+   * behind everything (keepOrthoDepth), and the world matrices brought up to date.
+   */
+  prepareCamera(): void {
+    this.keepOrthoDepth()
+    this.camera.updateMatrixWorld()
+  }
+
+  /** World units per screen pixel at `at` (perspective: at that distance; parallel: everywhere). */
+  worldPerPixel(at: THREE.Vector3): number {
+    const h = this.halfHeight(this.camera.position.distanceTo(at))
+    return (2 * h) / (this.renderer.domElement.clientHeight || 1)
+  }
+
+  /** half the visible height (world units) at `dist` from the camera; parallel: the same at any distance */
+  private halfHeight(dist: number): number {
+    if (this._projection === 'orthographic') return ORTHO_TOP / this.ortho.zoom
+    return dist * Math.tan((this.persp.fov * Math.PI) / 360)
   }
 
   getPartMesh(partId: number): THREE.Mesh | undefined {
@@ -480,6 +550,22 @@ export class Viewer {
     this.clearModel()
     for (const part of model.parts) this.addPart(part)
     this.buildGrid(this.modelBBox())
+    this.updateDepthSphere()
+  }
+
+  /** depthSphere for the model just built (once per model: hiding parts must not move it) */
+  private updateDepthSphere(): void {
+    const box = new THREE.Box3().setFromObject(this.modelGroup)
+    const g = this.gridSpec
+    if (g) {
+      box.expandByPoint(new THREE.Vector3(g.x - g.size / 2, g.y - g.size / 2, g.z))
+      box.expandByPoint(new THREE.Vector3(g.x + g.size / 2, g.y + g.size / 2, g.z))
+    }
+    if (box.isEmpty()) this.depthSphere.set(new THREE.Vector3(), 1)
+    else {
+      box.getBoundingSphere(this.depthSphere)
+      this.depthSphere.radius = Math.max(this.depthSphere.radius * DEPTH_PAD, 1e-6)
+    }
   }
 
   private addPart(part: PartData): void {
@@ -733,16 +819,19 @@ export class Viewer {
     const H = this.cssSize.y
     let area: ScreenRect = { left: 0, top: 0, right: W, bottom: H }
     if (W > 0 && H > 0) area = this.fitArea() ?? area
-    // the target goes to the area's centre
+    // the target goes to the area's centre (both cameras carry the shift)
     this.viewShift.set(W / 2 - (area.left + area.right) / 2, H / 2 - (area.top + area.bottom) / 2)
     this.applyViewShift()
-    // With the offset the area is symmetric about the camera axis, and one px
-    // is the same slope both ways, so its half-size in slope is
-    // tan(fov/2) * size / H. For the whole canvas these are the old kV and
-    // kV * aspect.
-    const tanHalf = Math.tan((this.camera.fov * Math.PI) / 360)
-    const kV = H > 0 ? FIT_FILL * tanHalf * ((area.bottom - area.top) / H) : FIT_FILL * tanHalf
-    const kH = H > 0 ? FIT_FILL * tanHalf * ((area.right - area.left) / H) : kV * this.camera.aspect
+    // the area's size as a share of the canvas height: one px is the same
+    // length both ways on screen, in either projection
+    const areaH = H > 0 ? (area.bottom - area.top) / H : 1
+    const areaW = H > 0 ? (area.right - area.left) / H : this.persp.aspect
+    // With the offset the area is symmetric about the camera axis, so its
+    // half-size in slope is tan(fov/2) * size / H. For the whole canvas these
+    // are the old kV and kV * aspect.
+    const tanHalf = Math.tan((this.persp.fov * Math.PI) / 360)
+    const kV = FIT_FILL * tanHalf * areaH
+    const kH = FIT_FILL * tanHalf * areaW
     let mR = -Infinity
     let mL = -Infinity
     let mT = -Infinity
@@ -757,15 +846,49 @@ export class Viewer {
     let e = Math.min(-(mR + mL) / (2 * kH), -(mT + mB) / (2 * kV))
     // keep the nearest corner in front of the near plane (never binds for a real box)
     e = Math.min(e, Math.min(...zs) - MIN_ZOOM_NEARS * near)
+    // the perspective depth range, kept in both projections: it also sets the
+    // parallel zoom limits (orthoLimits)
+    this.persp.near = near
+    this.persp.far = Math.max(r * FAR_MUL, 2 * (-e + r))
+    this.persp.updateProjectionMatrix()
+    this.applyOrthoZoomLimits()
+    if (this._projection === 'orthographic') return this.placeOrthoFit(center, forward, xs, ys, areaW, areaH)
     const a = centredOffset(xs, zs, e)
     const b = centredOffset(ys, zs, e)
 
     const target = center.addScaledVector(right, a).addScaledVector(up, b)
-    this.camera.position.copy(target).addScaledVector(forward, e)
-    this.camera.near = near
-    this.camera.far = Math.max(r * FAR_MUL, 2 * (-e + r))
-    this.camera.updateProjectionMatrix() // keeps the view offset
+    this.persp.position.copy(target).addScaledVector(forward, e)
     this.setTarget(target)
+  }
+
+  /**
+   * frameBox for the parallel camera. The projected size of the box does not
+   * depend on where the camera is, and the 8 corners are symmetric about the
+   * centre, so the box is centred when the target is its centre and fills
+   * FIT_FILL of the limiting dimension when the visible half-height is the
+   * larger half-extent over FIT_FILL. xs / ys: corner offsets from the centre
+   * along screen right / up.
+   */
+  private placeOrthoFit(
+    center: THREE.Vector3,
+    forward: THREE.Vector3,
+    xs: number[],
+    ys: number[],
+    areaW: number,
+    areaH: number,
+  ): void {
+    const w = Math.max(...xs) - Math.min(...xs)
+    const h = Math.max(...ys) - Math.min(...ys)
+    const { hMin, hMax } = this.orthoLimits()
+    // half the canvas height in world units such that the box fills FIT_FILL
+    // of the fit area's limiting side (areaW / areaH: the area's size over the
+    // canvas height; the view offset centres the area on the camera axis)
+    const half = Math.max(h / (2 * areaH), w / (2 * areaW)) / FIT_FILL
+    this.ortho.zoom = ORTHO_TOP / THREE.MathUtils.clamp(half, hMin, hMax)
+    this.ortho.updateProjectionMatrix()
+    // any point behind the centre: setTarget puts the camera at its depth
+    this.ortho.position.copy(center).sub(forward)
+    this.setTarget(center)
   }
 
   /** ground grid sized to the loaded model (built once per model, not per fit) */
@@ -809,16 +932,29 @@ export class Viewer {
     if (!(scale > 0) || scale === 1) return
     // finish a pivot slide first, then look under the cursor in that final pose
     this.finishViewAnim()
-    this.camera.updateMatrixWorld()
+    this.prepareCamera()
     const p = pickSurface(ndc) ?? this.targetPlanePoint(ndc)
     const cam = this.camera.position
     const target = this.target.clone()
     let s = scale
-    if (s < 1) s = Math.min(1, Math.max(s, (this.camera.near * MIN_ZOOM_NEARS) / cam.distanceTo(p)))
-    else s = Math.max(1, Math.min(s, (this.camera.far * MAX_ZOOM_FAR) / cam.distanceTo(target)))
+    if (this._projection === 'orthographic') {
+      // the visible height scales by s: the same stops as perspective (orthoLimits)
+      const { hMin, hMax } = this.orthoLimits()
+      const h = ORTHO_TOP / this.ortho.zoom
+      if (s < 1) s = Math.min(1, Math.max(s, hMin / h))
+      else s = Math.max(1, Math.min(s, hMax / h))
+    } else if (s < 1) s = Math.min(1, Math.max(s, (this.persp.near * MIN_ZOOM_NEARS) / cam.distanceTo(p)))
+    else s = Math.max(1, Math.min(s, (this.persp.far * MAX_ZOOM_FAR) / cam.distanceTo(target)))
     if (s === 1) return
+    // Parallel too: the target's offset from p across the screen scales by s,
+    // as does the visible height, so p keeps its place on screen. The camera's
+    // depth is re-placed by setTarget.
     cam.sub(p).multiplyScalar(s).add(p)
     target.sub(p).multiplyScalar(s).add(p)
+    if (this._projection === 'orthographic') {
+      this.ortho.zoom /= s
+      this.ortho.updateProjectionMatrix()
+    }
     this.setTarget(target) // both schemes' targets + lookAt + update
   }
 
@@ -829,7 +965,16 @@ export class Viewer {
     return this.raycaster.ray.intersectPlane(plane, new THREE.Vector3()) ?? this.target.clone()
   }
 
-  /** Make `point` the rotation centre: slide the view sideways (no turn, no zoom) until it sits mid-screen. */
+  /**
+   * Make `point` the rotation centre: slide the view sideways (no turn, no
+   * zoom) until it sits mid-screen.
+   *
+   * Parallel projection needs nothing else: there the camera sits behind
+   * everything (near = half its depth margin, see keepOrthoDepth), so `depth`
+   * below is the point's own depth and `to` lies on the point's view axis. The
+   * camera-to-target vector stays along the view through the slide, the zoom
+   * is untouched, and every frame re-places the depth.
+   */
   orbitAround(point: THREE.Vector3): void {
     this.viewAnim = null // a second double-click starts from wherever the first one got to
     this.stopInertia()
@@ -902,8 +1047,14 @@ export class Viewer {
     const dpr = window.devicePixelRatio || 1
     if (this.renderer.getPixelRatio() !== dpr) this.renderer.setPixelRatio(dpr)
     this.cssSize.set(w, h)
-    this.camera.aspect = w / h
-    this.applyViewShift() // the offset is in px of this size: re-apply it with the new one
+    const aspect = w / h
+    this.persp.aspect = aspect
+    // the visible height stays, the width follows the window (as in perspective)
+    this.ortho.left = -aspect * ORTHO_TOP
+    this.ortho.right = aspect * ORTHO_TOP
+    // the offset is in px of this size: re-apply it with the new one (it
+    // updates both projection matrices)
+    this.applyViewShift()
     this.renderer.setSize(w, h)
     this.labelRenderer.setSize(w, h)
     for (const m of this.lineMaterials) m.resolution.set(w, h)
@@ -920,8 +1071,11 @@ export class Viewer {
     const { x: w, y: h } = this.cssSize
     const sx = THREE.MathUtils.clamp(this.viewShift.x, -MAX_VIEW_SHIFT * w, MAX_VIEW_SHIFT * w)
     const sy = THREE.MathUtils.clamp(this.viewShift.y, -MAX_VIEW_SHIFT * h, MAX_VIEW_SHIFT * h)
-    if (w > 0 && h > 0 && (sx !== 0 || sy !== 0)) this.camera.setViewOffset(w, h, sx, sy, w, h)
-    else this.camera.clearViewOffset()
+    // both cameras: a projection switch keeps the view where it is
+    for (const cam of [this.persp, this.ortho]) {
+      if (w > 0 && h > 0 && (sx !== 0 || sy !== 0)) cam.setViewOffset(w, h, sx, sy, w, h)
+      else cam.clearViewOffset()
+    }
   }
 
   /**
@@ -966,6 +1120,7 @@ export class Viewer {
     const ctx = out.getContext('2d')
     if (!ctx) throw new Error('画像を作れない')
     let restore = () => {}
+    this.prepareCamera()
     try {
       if (background === 'white') restore = this.applyWhiteBackground()
       this.renderer.render(this.scene, this.camera)
@@ -1098,18 +1253,27 @@ export class Viewer {
     this.finishViewAnim()
     const { right, up } = this.screenAxes()
     const dist = this.camera.position.distanceTo(this.target)
-    const viewHeight = 2 * dist * Math.tan((this.camera.fov * Math.PI) / 360)
+    const viewHeight = 2 * this.halfHeight(dist)
     const move = right.multiplyScalar(dx * viewHeight).add(up.multiplyScalar(dy * viewHeight))
     this.camera.position.add(move)
     this.setTarget(this.target.clone().add(move))
   }
 
-  /** factor < 1 moves closer, > 1 moves away */
+  /** factor < 1 moves closer, > 1 moves away (parallel: the visible height scales, the target stays) */
   zoom(factor: number): void {
     this.finishViewAnim()
+    if (this._projection === 'orthographic') {
+      // within the controls' own zoom limits, which OrbitControls re-applies
+      // every frame: a value outside would snap back a frame later
+      const { hMin, hMax } = this.orthoLimits()
+      const h = THREE.MathUtils.clamp((ORTHO_TOP / this.ortho.zoom) * factor, hMin, hMax)
+      this.ortho.zoom = ORTHO_TOP / h
+      this.ortho.updateProjectionMatrix()
+      return
+    }
     const offset = this.camera.position.clone().sub(this.target)
-    const minDist = this.camera.near * MIN_ZOOM_NEARS // same stop as the wheel
-    const maxDist = Math.max(this.camera.far * MAX_ZOOM_FAR, offset.length())
+    const minDist = this.persp.near * MIN_ZOOM_NEARS // same stop as the wheel
+    const maxDist = Math.max(this.persp.far * MAX_ZOOM_FAR, offset.length())
     offset.setLength(THREE.MathUtils.clamp(offset.length() * factor, minDist, maxDist))
     this.camera.position.copy(this.target).add(offset)
   }
@@ -1146,6 +1310,96 @@ export class Viewer {
     this.trackball.target.copy(t)
     this.camera.lookAt(t)
     this.activeControls().update()
+    this.keepOrthoDepth()
+  }
+
+  // ---- projection -----------------------------------------------------------
+
+  /**
+   * Switch between perspective and parallel projection, keeping the view:
+   * the same target, direction and up (roll included), and the model at the
+   * same size at the target. The parallel visible half-height is what
+   * perspective shows at the target's distance d (h = d * tan(fov / 2)), and
+   * back again the perspective camera goes to d = h / tan(fov / 2).
+   */
+  setProjection(p: Projection): void {
+    if (p === this._projection) return
+    this.finishViewAnim()
+    this.stopInertia()
+    const from = this.camera
+    const target = this.target.clone()
+    const offset = from.position.clone().sub(target)
+    const d = offset.length()
+    const dir = d > 0 ? offset.divideScalar(d) : LOAD_VIEW_DIR.clone()
+    const t = Math.tan((this.persp.fov * Math.PI) / 360)
+    const { hMin, hMax } = this.orthoLimits()
+    const to = p === 'orthographic' ? this.ortho : this.persp
+    if (p === 'orthographic') {
+      this.ortho.zoom = ORTHO_TOP / THREE.MathUtils.clamp(d * t, hMin, hMax)
+      this.ortho.updateProjectionMatrix()
+      this.ortho.position.copy(target).addScaledVector(dir, d) // its depth: keepOrthoDepth
+    } else {
+      this.persp.position.copy(target).addScaledVector(dir, ORTHO_TOP / this.ortho.zoom / t)
+      this.trackball.panSpeed = TRACKBALL_PAN
+    }
+    to.up.copy(from.up)
+    this._projection = p
+    // both controls drive the camera in use; neither keeps anything else of it
+    // (three r185: OrbitControls' Z-up frame comes from the first camera, same up)
+    this.controls.object = to
+    this.trackball.object = to
+    this.setTarget(target)
+  }
+
+  /**
+   * Parallel zoom limits: the visible half-heights perspective shows at its
+   * own wheel stops (MIN_ZOOM_NEARS near planes from the point, the far
+   * plane share MAX_ZOOM_FAR), so both projections magnify over the same range.
+   */
+  private orthoLimits(): { hMin: number; hMax: number } {
+    const t = Math.tan((this.persp.fov * Math.PI) / 360)
+    return { hMin: MIN_ZOOM_NEARS * this.persp.near * t, hMax: MAX_ZOOM_FAR * this.persp.far * t }
+  }
+
+  /** the same limits as zoom values for both controls (middle drag, pinch); perspective ignores them */
+  private applyOrthoZoomLimits(): void {
+    const { hMin, hMax } = this.orthoLimits()
+    for (const c of [this.controls, this.trackball]) {
+      c.minZoom = ORTHO_TOP / hMax
+      c.maxZoom = ORTHO_TOP / hMin
+    }
+  }
+
+  /**
+   * Parallel only: put the camera on its view axis behind everything the
+   * scene can draw, and size near / far to that. Required, not cosmetic: a
+   * parallel ray starts on the camera plane, so anything behind the camera
+   * would be neither drawn nor pickable. With ext = target distance from the
+   * depth sphere's centre + its radius, every drawable point lies 1..3 ext
+   * in front of the camera.
+   *
+   * It also normalises the trackball's pan: in parallel projection
+   * TrackballControls (three r185) moves the image by |eye| * panSpeed /
+   * clientWidth px per dragged px, and |eye| here is 2 ext, which has nothing
+   * to do with the scale on screen. This value gives the perspective
+   * trackball's vertical rate, TRACKBALL_PAN / (2 tan(fov / 2)), on both axes.
+   */
+  private keepOrthoDepth(): void {
+    if (this._projection !== 'orthographic') return
+    const cam = this.ortho
+    const target = this.target
+    const f = target.clone().sub(cam.position)
+    if (f.lengthSq() < 1e-20) cam.getWorldDirection(f)
+    else f.normalize()
+    const ext = target.distanceTo(this.depthSphere.center) + this.depthSphere.radius
+    cam.position.copy(target).addScaledVector(f, -2 * ext)
+    if (cam.near !== 0.5 * ext || cam.far !== 3.5 * ext) {
+      cam.near = 0.5 * ext
+      cam.far = 3.5 * ext
+      cam.updateProjectionMatrix()
+    }
+    const t = Math.tan((this.persp.fov * Math.PI) / 360)
+    this.trackball.panSpeed = (TRACKBALL_PAN * (this.renderer.domElement.clientWidth || 1)) / (2 * t * 2 * ext)
   }
 
   /** camera right / up directions on screen, orthonormal */

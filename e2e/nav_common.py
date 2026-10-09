@@ -54,7 +54,7 @@ TINY = ((0, 0, 0), (0.05, 0.03, 0.02))
 HUGE = ((0, 0, 0), (5000, 3000, 2000))
 BOXES = {"runner": RUNNER, "tiny": TINY, "huge": HUGE}
 # overlay panels a fit keeps the model clear of (frontend/src/main.ts FIT_PANELS)
-PANELS = (".lil-gui.lil-root", "#tree-panel", "#hud", "#measure-panel", "#props-panel")
+PANELS = (".lil-gui.lil-root", "#tree-panel", "#hud", "#measure-panel", "#props-panel", "#triad")
 MIN_FREE = 0.4
 
 
@@ -169,18 +169,24 @@ def would_fail(B, F, A):
 
 def box_stl(path, lo, hi):
     """12-triangle ASCII STL of an axis-aligned box, outward normals."""
-    x0, y0, z0 = lo
-    x1, y1, z1 = hi
-    v = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
-    quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6), (1, 2, 6, 5), (3, 0, 4, 7)]
+    boxes_stl(path, [(lo, hi)])
+
+
+def boxes_stl(path, boxes):
+    """ASCII STL of several axis-aligned boxes (one solid, 12 triangles each), outward normals."""
     lines = ["solid box"]
-    for a, b, c, d in quads:
-        for tri in ((a, b, c), (a, c, d)):
-            p = [v[i] for i in tri]
-            n = norm(cross(sub(p[1], p[0]), sub(p[2], p[0])))
-            lines.append(f"facet normal {n[0]} {n[1]} {n[2]}\n outer loop")
-            lines += [f"  vertex {q[0]} {q[1]} {q[2]}" for q in p]
-            lines.append(" endloop\nendfacet")
+    for lo, hi in boxes:
+        x0, y0, z0 = lo
+        x1, y1, z1 = hi
+        v = [(x0, y0, z0), (x1, y0, z0), (x1, y1, z0), (x0, y1, z0), (x0, y0, z1), (x1, y0, z1), (x1, y1, z1), (x0, y1, z1)]
+        quads = [(0, 3, 2, 1), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6), (1, 2, 6, 5), (3, 0, 4, 7)]
+        for a, b, c, d in quads:
+            for tri in ((a, b, c), (a, c, d)):
+                p = [v[i] for i in tri]
+                n = norm(cross(sub(p[1], p[0]), sub(p[2], p[0])))
+                lines.append(f"facet normal {n[0]} {n[1]} {n[2]}\n outer loop")
+                lines += [f"  vertex {q[0]} {q[1]} {q[2]}" for q in p]
+                lines.append(" endloop\nendfacet")
     lines.append("endsolid box")
     Path(path).write_text("\n".join(lines))
 
@@ -284,6 +290,10 @@ class Nav:
         r = self.page.evaluate("([x, y, z]) => window.__cadProject(x, y, z)", list(xyz))
         return (r["x"], r["y"])
 
+    def project_many(self, pts):
+        r = self.page.evaluate("pts => pts.map(([x, y, z]) => window.__cadProject(x, y, z))", [list(p) for p in pts])
+        return [(q["x"], q["y"]) for q in r]
+
     def pick(self, xy):
         return self.page.evaluate("([x, y]) => window.__cadPick(x, y)", list(xy))
 
@@ -314,6 +324,40 @@ class Nav:
         self.ctl("回転方式").locator("select").select_option(label=label)
         self.page.evaluate("document.activeElement && document.activeElement.blur()")
 
+    def set_projection(self, label):
+        """投影: 透視 or 平行"""
+        self.ctl("投影").locator("select").select_option(label=label)
+        self.page.evaluate("document.activeElement && document.activeElement.blur()")
+        self.settle()
+
+    def projection_label(self):
+        return self.ctl("投影").locator("select").evaluate("s => s.options[s.selectedIndex].text")
+
+    def stub_sidecar(self):
+        """Keep sidecars in the page: the shared backend may hold measures on
+        mini_mold from other scripts, whose orange markers would be drawn into
+        the canvas and whose rows would fill the measure list."""
+        self.page.route(
+            "**/sidecar",
+            lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
+        )
+
+    def kscale(self, v=None):
+        """screen px per world unit at the target, along screen-up (perspective:
+        at the target's depth; parallel: everywhere)"""
+        v = v or self.view()
+        t = v["target"]
+        f = self.direction(v)
+        r = norm(cross(f, v["up"]))
+        u = cross(r, f)
+        p0 = self.project(t)
+        p1 = self.project(add(t, u))
+        return math.dist(p0, p1)
+
+    def visible_half_height(self, v=None):
+        """world half-height of the canvas at the target, measured on screen"""
+        return self.canvas_rect()[3] / (2 * self.kscale(v))
+
     def direction(self, v=None):
         v = v or self.view()
         return norm(sub(v["target"], v["position"]))
@@ -333,7 +377,10 @@ class Nav:
 
         fallback: if given, whether the whole canvas must have been used.
         needs: panels this case depends on: a correct fit that ignored one of
-        them must fail these checks (otherwise the case cannot catch it).
+        them must fail these checks (otherwise the case cannot catch it). An
+        entry may be a tuple of panels that only set a side together, ignored
+        together: the HUD and the axis triad end about 3 px apart at the
+        bottom left, so leaving out just one of them hardly moves that side.
         """
         self.assert_panels_unchanged()
         cl, ct, cw, ch = self.canvas_rect()
@@ -351,8 +398,9 @@ class Nav:
         if fallback is not None:
             assert fell_back == fallback, ("fallback", fell_back, info)
         for sel in needs:
-            A, _ = self.free_area(exclude=(sel,))
-            assert would_fail(B, F, A), ("case no longer depends on", sel, A, info)
+            group = (sel,) if isinstance(sel, str) else tuple(sel)
+            A, _ = self.free_area(exclude=group)
+            assert would_fail(B, F, A), ("case no longer depends on", group, A, info)
         return info
 
     def depth_check(self, lo, hi):

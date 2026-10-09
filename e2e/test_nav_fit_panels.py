@@ -42,6 +42,8 @@ if not LOOSE_IGES.exists():
     subprocess.run([str(BACKEND_PY), str(TESTDATA / "make_iges_loose.py")], check=True)
 
 GUI = ".lil-gui.lil-root"
+# the HUD and the axis triad end about 3 px apart: they set the bottom left together
+BOTTOM_LEFT = ("#hud", "#triad")
 
 tmp = tempfile.mkdtemp(prefix="cad_fit_panels_")
 try:
@@ -134,7 +136,8 @@ try:
         g = panels()[GUI]
         assert g[3] - g[1] < 60, ("the GUI must be collapsed", g)
         assert F[2] == W and F[1] >= g[3] - 0.5, ("P3c: the band under the collapsed GUI", F, g)
-        print("P3c collapsed", fill_check(*RUNNER, "GUI collapsed", fallback=False, needs=(GUI, "#hud")))
+        # the band's bottom: the HUD and the axis triad together (BOTTOM_LEFT)
+        print("P3c collapsed", fill_check(*RUNNER, "GUI collapsed", fallback=False, needs=(GUI, BOTTOM_LEFT)))
         page.locator(".lil-gui.lil-root > .lil-title").click()
         n.wait_gui_idle()
 
@@ -221,7 +224,7 @@ try:
         F, _ = n.free_area()
         tree = panels()["#tree-panel"]
         assert F[0] == 0 and F[1] >= tree[3] - 0.5, ("P2 the band under the short tree", F, tree)
-        print("P2 late values", fill_check(*LOOSE_BOX, "IGES load", needs=("#tree-panel", "#hud")))
+        print("P2 late values", fill_check(*LOOSE_BOX, "IGES load", needs=("#tree-panel", BOTTOM_LEFT)))
 
         # P2b. values in time: the load fit already keeps clear of the panel
         # with them (a fit made while it showed 計算中… would be covered once
@@ -231,7 +234,7 @@ try:
         assert values_shown(), "P2b the values must be shown at the load fit"
         pr, g, hud = panels()["#props-panel"], panels()[GUI], panels()["#hud"]
         assert pr[0] <= g[0] - 60 and pr[1] <= hud[1] - 30, ("P2 the values panel must reach past the GUI and the HUD", pr, g, hud)
-        print("P2 values", fill_check(*LOOSE_BOX, "IGES values", needs=("#props-panel", "#tree-panel", "#hud")))
+        print("P2 values", fill_check(*LOOSE_BOX, "IGES values", needs=("#props-panel", "#tree-panel", BOTTOM_LEFT)))
 
         # P2c. the long runner with the GUI collapsed (to get more room): the
         # values panel is what bounds the free area from below

@@ -25,7 +25,8 @@ import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './prop
 import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { renderTree } from './tree'
-import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type RotateMode, type ViewPreset } from './viewer'
+import { AxisTriad } from './triad'
+import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
@@ -49,6 +50,7 @@ app.innerHTML = `
     </div>
     <div id="props-panel" class="hidden"></div>
   </div>
+  <div id="triad" class="hidden"></div>
   <div id="hud">
     <div id="hud-title">cad-viewer</div>
     <div id="draft-legend" class="hidden"></div>
@@ -78,6 +80,10 @@ document.querySelector('#empty-open')!.addEventListener('click', () => fileInput
 const propsEl = document.querySelector<HTMLDivElement>('#props-panel')!
 
 const viewer = new Viewer(viewport)
+// bottom left, outside #viewport: its clicks never reach the canvas (pick, pivot, controls)
+const triadEl = document.querySelector<HTMLDivElement>('#triad')!
+const triad = new AxisTriad(triadEl, (v) => viewer.setView(v))
+viewer.onFrame(() => triad.update(viewer.camera.quaternion))
 const picker = new Picker(viewer)
 const measureTool = new MeasureTool(viewer)
 const sectionTool = new SectionTool(viewer)
@@ -119,6 +125,7 @@ function show2D(on: boolean): void {
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
   setKeys(on ? KEYS_2D : KEYS_3D)
+  updateTriad()
 }
 
 /** whether a model or drawing is on screen, and its file name (for the PNG export) */
@@ -126,6 +133,21 @@ function setContentShown(on: boolean, fileName = ''): void {
   contentShown = on
   shownFileName = on ? fileName : ''
   savePngCtl.enable(on)
+  updateTriad()
+}
+
+/**
+ * The axis triad is shown with a 3D model only (not on the empty screen,
+ * during a load, or on a drawing). While it is, the HUD moves right of it.
+ */
+function updateTriad(): void {
+  const on = contentShown && !is2D
+  triad.show(on)
+  if (on) triad.update(viewer.camera.quaternion) // drawn now, not a frame later
+  hud.classList.toggle('beside-triad', on)
+  // now, not on the next frame: until then the HUD would keep the width it
+  // had at its old left edge and reach under the right-hand column
+  layoutCorner()
 }
 
 /** the "open / drop a file" card in the middle of an empty screen */
@@ -230,6 +252,7 @@ const viewPrefs = {
   speed: 30,
   rotateMode: 'turntable' as RotateMode,
   style: 'shaded-edges' as DisplayStyle,
+  projection: 'perspective' as Projection,
 }
 try {
   const saved = JSON.parse(localStorage.getItem(VIEW_PREFS_KEY) ?? '{}')
@@ -237,6 +260,7 @@ try {
   if (typeof saved.speed === 'number') viewPrefs.speed = saved.speed
   if (saved.rotateMode === 'turntable' || saved.rotateMode === 'free') viewPrefs.rotateMode = saved.rotateMode
   if ((DISPLAY_STYLES as readonly string[]).includes(saved.style)) viewPrefs.style = saved.style
+  if (saved.projection === 'perspective' || saved.projection === 'orthographic') viewPrefs.projection = saved.projection
 } catch {
   /* defaults */
 }
@@ -244,8 +268,8 @@ function saveViewPrefs(): void {
   try {
     // auto-rotate is deliberately not remembered: a model that starts spinning
     // on open is a surprise, not a preference
-    const { grid, speed, rotateMode, style } = viewPrefs
-    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode, style }))
+    const { grid, speed, rotateMode, style, projection } = viewPrefs
+    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode, style, projection }))
   } catch {
     /* best-effort */
   }
@@ -255,6 +279,7 @@ viewer.autoRotateSpeed = viewPrefs.speed
 viewer.setRotateMode(viewPrefs.rotateMode)
 // before any model loads: addPart applies the current style to every new part
 viewer.setDisplayStyle(viewPrefs.style)
+viewer.setProjection(viewPrefs.projection)
 
 const viewFolder = gui.addFolder('表示')
 // "Pick a style, then turn the model to look" works without blurring the
@@ -291,6 +316,16 @@ viewFolder
   .name('回転方式')
   .onChange((v: RotateMode) => {
     viewer.setRotateMode(v)
+    saveViewPrefs()
+  })
+// one row (the column is tight on half a screen), before the 視点 sub-folder:
+// lil-gui keeps the order things were added in. A select, so グリッド stays
+// the panel's first checkbox.
+viewFolder
+  .add(viewPrefs, 'projection', { 透視: 'perspective', 平行: 'orthographic' })
+  .name('投影')
+  .onChange((v: Projection) => {
+    viewer.setProjection(v)
     saveViewPrefs()
   })
 const presetFolder = viewFolder.addFolder('視点')
@@ -697,7 +732,7 @@ gui.onOpenClose((changed) => {
  * zone and the note box (both transient).
  * A new overlay panel goes here and in e2e/nav_common.py PANELS.
  */
-const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl]
+const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl]
 viewer.fitArea = () => {
   // The right-hand column sizes its panels from ResizeObservers, a frame
   // after a change (a folder opened, a load filled the lists); a fit reads
@@ -920,18 +955,19 @@ function wheelScale(e: WheelEvent): number {
   d = THREE.MathUtils.clamp(d, -300, 300) // one event never jumps more than ~3 notches
   return Math.pow(WHEEL_STEP, -d / 100)
 }
-viewport.addEventListener(
-  'wheel',
-  (e) => {
-    e.preventDefault()
-    e.stopPropagation()
-    const scale = wheelScale(e)
-    if (scale === 1) return
-    // zoomAt picks after finishing a running pivot slide, in the pose it zooms from
-    viewer.zoomAt(toNdc(e.clientX, e.clientY), scale, (ndc) => picker.surfacePoint(ndc))
-  },
-  { capture: true, passive: false },
-)
+function onViewportWheel(e: WheelEvent): void {
+  e.preventDefault()
+  e.stopPropagation()
+  const scale = wheelScale(e)
+  if (scale === 1) return
+  // zoomAt picks after finishing a running pivot slide, in the pose it zooms from
+  viewer.zoomAt(toNdc(e.clientX, e.clientY), scale, (ndc) => picker.surfacePoint(ndc))
+}
+viewport.addEventListener('wheel', onViewportWheel, { capture: true, passive: false })
+// The triad's discs sit over the model: a wheel (or a trackpad pinch, which
+// would zoom the whole page) there zooms at the cursor as over the canvas.
+// Between the discs the triad lets events through to the canvas.
+triadEl.addEventListener('wheel', onViewportWheel, { passive: false })
 
 // click-to-pick (suppress when the user is orbiting)
 let downAt: [number, number] | null = null
@@ -986,7 +1022,7 @@ viewport.addEventListener('pointerup', (e) => {
 viewport.addEventListener('dblclick', (e) => {
   if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > DRAG_PX) return
   const ndc = toNdc(e.clientX, e.clientY)
-  viewer.camera.updateMatrixWorld()
+  viewer.prepareCamera()
   const p = picker.surfacePoint(ndc)
   if (p) viewer.orbitAround(p)
 })
@@ -1169,7 +1205,7 @@ window.addEventListener('drop', (e) => {
 // E2E test hooks
 const testHooks = window as unknown as Record<string, unknown>
 testHooks.__cadProject = (x: number, y: number, z: number) => {
-  viewer.camera.updateMatrixWorld() // correct straight after an event, before the next frame
+  viewer.prepareCamera() // correct straight after an event, before the next frame
   const v = new THREE.Vector3(x, y, z).project(viewer.camera)
   const rect = viewer.renderer.domElement.getBoundingClientRect()
   return {
@@ -1178,16 +1214,23 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
   }
 }
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
-testHooks.__cadView = () => ({
-  position: viewer.camera.position.toArray(),
-  up: viewer.camera.up.toArray(),
-  target: viewer.target.toArray(),
-  rotateMode: viewer.rotateMode,
-  gridVisible: viewer.gridVisible,
-  near: viewer.camera.near,
-  far: viewer.camera.far,
-  displayStyle: viewer.displayStyle,
-})
+testHooks.__cadView = () => {
+  viewer.prepareCamera() // the pose the next frame draws (parallel: the camera's depth)
+  return {
+    position: viewer.camera.position.toArray(),
+    up: viewer.camera.up.toArray(),
+    target: viewer.target.toArray(),
+    rotateMode: viewer.rotateMode,
+    gridVisible: viewer.gridVisible,
+    // of the camera in use
+    near: viewer.camera.near,
+    far: viewer.camera.far,
+    displayStyle: viewer.displayStyle,
+    projection: viewer.projection,
+    // parallel: visible half-height = 1 / zoom (perspective: always 1)
+    zoom: viewer.camera.zoom,
+  }
+}
 // WebGL resource counters of the last frame: a style switch must build no geometry
 testHooks.__cadRenderInfo = () => {
   const info = viewer.renderer.info
@@ -1200,7 +1243,7 @@ testHooks.__cadPropsWait = (ms?: number) => {
   propsWaitMs = ms ?? PROPS_WAIT_MS
 }
 testHooks.__cadPick = (clientX: number, clientY: number) => {
-  viewer.camera.updateMatrixWorld()
+  viewer.prepareCamera()
   const r = picker.pick(toNdc(clientX, clientY))
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }

@@ -67,6 +67,9 @@ export class Picker {
    * sectioned view never select (measure/annotate/zoom to) what is hidden.
    */
   private firstVisibleHit(ndc: THREE.Vector2): THREE.Intersection | null {
+    // a parallel ray starts on the camera plane: the camera must be behind
+    // everything, with up-to-date matrices, before the ray is made
+    this.viewer.prepareCamera()
     this.raycaster.setFromCamera(ndc, this.viewer.camera)
     const visible = this.meshes.filter((m) => m.parent?.visible)
     const hits = this.raycaster.intersectObjects(visible, false)
@@ -230,11 +233,8 @@ export class Picker {
   }
 
   private pxScale(at: THREE.Vector3): number {
-    // world units per screen pixel at the given depth (perspective camera)
-    const cam = this.viewer.camera
-    const dist = cam.position.distanceTo(at)
-    const height = 2 * dist * Math.tan((cam.fov * Math.PI) / 360)
-    return height / this.viewer.renderer.domElement.clientHeight
+    // world units per screen pixel at the hit (perspective: depends on its distance)
+    return this.viewer.worldPerPixel(at)
   }
 
   private snapVertex(
