@@ -359,6 +359,37 @@ def run(page, nav, infos):
         tried.append("skipped: no frame came within 140 ms (a loaded machine)")
     print("(f) passing over an edge:", tried)
 
+    # ---- (f2) a request that fails is no answer: the next rest asks again
+    rim1_xy = on((PIN1[0], PIN1[1] - PIN_R, 40), tol=0.5)
+    h1 = pick(rim1_xy)
+    assert h1["kind"] == "edge", ("pin 1's top circle", h1)
+    key1 = (h1["partId"], "edge", h1["id"])
+    assert not [q for q in infos if q[1:] == key1], "pin 1's rim asked before"
+    failed = []
+
+    def fail_first(route):
+        body = json.loads(route.request.post_data or "{}")
+        ref = body.get("ref", {})
+        if not failed and body.get("type") == "edge_info" and (ref.get("partId"), ref.get("kind"), ref.get("id")) == key1:
+            failed.append(1)
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route("**/measure", fail_first)
+    hover(rim1_xy)
+    page.wait_for_timeout(700)
+    assert failed, "(f2) the rim was not asked about"
+    assert not tip_text("(f2) after the failure").endswith("⌀8.000")
+    hover(a_xy)  # away: the block's top (known, asks nothing)
+    hover(rim1_xy)  # back: a new rest
+    t = wait_dia("(f2) asked again")
+    page.unroute("**/measure")
+    assert [q[0] for q in infos if q[1:] == key1] == ["edge_info", "edge_info"], ("(f2)", infos[-4:])
+    # the aborted request's console line
+    nav.errors[:] = [e for e in nav.errors if "Failed to load resource" not in e]
+    print("(f2) asked again after a failure:", t)
+
     # ================= (g) the pick a click makes; the dotted line; status lines =====
     # before any first point: no dotted line toward the plate
     hover(on(PLATE_TOP))
@@ -611,6 +642,7 @@ def run(page, nav, infos):
     nav.ctl("表示スタイル").locator("select").select_option(label="半透明")
     page.evaluate("document.activeElement && document.activeElement.blur()")
     set_mode("計測")
+    plain_xray = plain_frame()
     page.evaluate(
         """async () => {
              const P = (await import('/src/picking.ts')).Picker.prototype
@@ -646,6 +678,22 @@ def run(page, nav, infos):
     page.wait_for_timeout(150)  # its pick (100 ms) has run; the hover now waits 400 ms
     page.mouse.move(*a)
     page.wait_for_timeout(900)
+    t = tip_text("(n2) where the cursor stopped")
+    ha = pick(a)
+    # the block's top face (the plate's top has the same number: the part tells them apart)
+    assert ha and ha["kind"] == "face", ha
+    assert t == name_of(ha, "cavity_block"), ("(n2) the last place was not looked at", t, ha)
+    # a mode change inside a wait: the label and the highlight come back together
+    # (a pick of 200 ms, then a wait of 800 ms; the mode changes inside it)
+    page.evaluate("window.__scanMs = 200")
+    page.mouse.move(a[0] + 3, a[1])
+    page.wait_for_timeout(350)
+    set_mode("注記")
+    settle()
+    shown, text = tip()
+    lit = changed(frame(), plain_xray, [a, (a[0] + 3, a[1]), (a[0], a[1] + 3), (a[0] - 3, a[1])])
+    print("(n2) after a mode change inside a wait:", shown, text, "highlight", round(lit, 2))
+    assert shown and text == t and lit >= 0.75, ("(n2) the label without its highlight", shown, text, lit)
     page.evaluate(
         """async () => {
              const P = (await import('/src/picking.ts')).Picker.prototype
@@ -657,11 +705,6 @@ def run(page, nav, infos):
     print("(n2) hover picks", len(log), "wait / pick time", [round(r, 1) for r in ratios])
     assert len(log) >= 3, ("(n2) the case needs several picks", log)
     assert min(ratios) >= 3.6, ("(n2) a hover pick right after a slow one", ratios)
-    t = tip_text("(n2) where the cursor stopped")
-    ha = pick(a)
-    # the block's top face (the plate's top has the same number: the part tells them apart)
-    assert ha and ha["kind"] == "face", ha
-    assert t == name_of(ha, "cavity_block"), ("(n2) the last place was not looked at", t, ha)
     set_mode("なし")
     nav.ctl("表示スタイル").locator("select").select_option(label="陰影＋稜線")
     page.evaluate("document.activeElement && document.activeElement.blur()")

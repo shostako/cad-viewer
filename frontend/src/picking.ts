@@ -178,8 +178,9 @@ export class Picker {
    * priority as pick()). The nearest on screen wins; on a tie the one nearer
    * the camera. Clipped-away points (section) never win. A pass over the edge
    * segments of the visible parts: it runs once per click, and for the hover
-   * preselection of 計測 / 注記 at most once per frame (HoverProbe looks once
-   * per animation frame and not at all during a drag).
+   * preselection of 計測 / 注記 at most once per frame and, after a scan that
+   * took a while, only after four times that long (main.ts pickUnderCursor;
+   * not at all during a drag).
    */
   private snapDrawnLines(ndc: THREE.Vector2): PickResult | null {
     const cam = this.viewer.camera

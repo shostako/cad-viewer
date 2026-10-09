@@ -43,6 +43,14 @@ export class Preselect {
   /** the entity drawn now ("partId:kind:id"); null: none */
   private key: string | null = null
   private face: THREE.Mesh | null = null
+  /**
+   * Per part, a geometry over the part mesh's own vertex, normal and index
+   * buffers (already on the GPU); a face is drawn as its range of the index
+   * (faceRanges), so nothing is copied. Never disposed: dispose() would free
+   * those shared buffers under the part mesh. The viewer disposes them with
+   * its meshes on the next model; setModel only drops these wrappers.
+   */
+  private faceGeometries = new Map<number, THREE.BufferGeometry>()
   private edge: LineSegments2 | null = null
   private readonly ring: THREE.Mesh
   private readonly dash: LineSegments2
@@ -134,6 +142,7 @@ export class Preselect {
     // the same ids on the next model (the same file again) must build anew
     this.clearEntity()
     this.parts = new Map(parts.map((p) => [p.id, p]))
+    this.faceGeometries = new Map()
   }
 
   get shown(): boolean {
@@ -194,35 +203,43 @@ export class Preselect {
       this.group.add(this.edge)
       return true
     }
-    // a face: a copy of its triangles (and normals, for the light)
+    // a face: its range of the part's triangles, drawn from the part's own
+    // buffers (the picker's BVH is indirect: the index keeps the face order)
     const r = part.faceRanges.find((f) => f.faceId === pick.id)
     if (!r || r.triCount <= 0) return false
-    const pos = new Float32Array(r.triCount * 9)
-    const nrm = new Float32Array(r.triCount * 9)
-    for (let k = 0; k < r.triCount * 3; k++) {
-      const v = part.indices[r.triStart * 3 + k] * 3
-      for (let c = 0; c < 3; c++) {
-        pos[k * 3 + c] = part.positions[v + c]
-        nrm[k * 3 + c] = part.normals[v + c]
-      }
-    }
-    const geo = new THREE.BufferGeometry()
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3))
-    geo.setAttribute('normal', new THREE.BufferAttribute(nrm, 3))
+    const geo = this.faceGeometry(pick.partId)
+    if (!geo) return false
+    geo.setDrawRange(r.triStart * 3, r.triCount * 3)
     this.face = new THREE.Mesh(geo, this.faceMaterial)
     this.face.renderOrder = ORDER
     this.group.add(this.face)
     return true
   }
 
-  /** Dispose the entity's own geometry (the materials are kept for the next one). */
+  /** the geometry a face of this part is drawn with (see faceGeometries) */
+  private faceGeometry(partId: number): THREE.BufferGeometry | null {
+    let geo = this.faceGeometries.get(partId) ?? null
+    if (geo) return geo
+    const src = this.viewer.getPartMesh(partId)?.geometry
+    const position = src?.getAttribute('position')
+    const normal = src?.getAttribute('normal')
+    if (!src?.index || !position || !normal) return null
+    geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', position)
+    geo.setAttribute('normal', normal)
+    geo.setIndex(src.index)
+    this.faceGeometries.set(partId, geo)
+    return geo
+  }
+
+  /** Drop the entity: the edge's own geometry is disposed (a face's is the part's, kept); the materials stay. */
   private clearEntity(): void {
     this.key = null
     this.ring.visible = false
-    for (const o of [this.face, this.edge]) {
-      if (!o) continue
-      this.group.remove(o)
-      o.geometry.dispose()
+    if (this.face) this.group.remove(this.face)
+    if (this.edge) {
+      this.group.remove(this.edge)
+      this.edge.geometry.dispose()
     }
     this.face = null
     this.edge = null
@@ -288,12 +305,17 @@ export class DiameterCache {
         ref.kind === 'edge'
           ? measureEdgeInfo(modelId, ref).then((i) => (i.curve === 'circle' ? (i.diameter ?? null) : null))
           : measureFaceInfo(modelId, ref).then((i) => (i.surface === 'cylinder' ? (i.diameter ?? null) : null))
-      void answer
-        .catch(() => null) // best-effort, as the diameter entry of a click
-        .then((d) => {
+      void answer.then(
+        (d) => {
           known.set(key, d)
           if (known === this.known && this.restKey === key) this.learned()
-        })
+        },
+        // a failed request is no answer (the backend may be back): ask again
+        // the next time the cursor rests on it
+        () => {
+          if (known === this.known) this.asked.delete(key)
+        },
+      )
     }, DIAMETER_REST_MS)
   }
 }

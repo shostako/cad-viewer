@@ -240,8 +240,10 @@ const modeCtl = gui
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
     showModeHint()
-    // the highlight and the label follow the mode at once, also under a still cursor
-    preselect.hide()
+    // the highlight and the label follow the mode at once, also under a still
+    // cursor (a hover pick waiting after a slow one looks again now: its last
+    // label must not come back without its highlight)
+    forgetHoverPick()
     probe.refresh()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
@@ -584,8 +586,10 @@ const NOTE_HINT = '注記: クリックした点に注記を付ける（Esc で�
 let modeHud = ''
 /** the line the hint was added to (a load's summary), to go back to; '' for the usual one */
 let modeBase = ''
-function setModeHud(text: string): void {
+/** base: the line the hint was added to, to go back to ('' for the usual one) */
+function setModeHud(text: string, base = ''): void {
   modeHud = text
+  modeBase = base
   hudInfo.textContent = text
 }
 /** what the mode asks the next click for ('' in なし) */
@@ -780,6 +784,13 @@ let hoverPickReady = 0
 let hoverPickTimer: ReturnType<typeof setTimeout> | undefined
 /** what the last hover pick showed (kept on screen while the next one waits) */
 let lastPickTip: TipContent = null
+/** the highlight goes, and the next hover looks at once (no wait, no last label) */
+function forgetHoverPick(): void {
+  preselect.hide()
+  lastPickTip = null
+  hoverPickReady = 0
+  clearTimeout(hoverPickTimer)
+}
 /**
  * 計測 / 注記: the pick a click here would make (the click's own call,
  * picker.pick at this point with the same snap radii), highlighted, and its
@@ -1620,10 +1631,7 @@ async function loadFile(file: File): Promise<void> {
         // a mode chosen before the load (or kept from the last model) says what
         // to click on this one, after the summary (E2E waits for the summary)
         const hint = modeHint()
-        if (hint) {
-          modeBase = hudInfo.textContent
-          setModeHud(`${modeBase} — ${hint}`)
-        }
+        if (hint) setModeHud(`${hudInfo.textContent} — ${hint}`, hudInfo.textContent)
         loadCard.hide()
       } finally {
         // Every panel of this load is on screen (the HUD text too: it sets
