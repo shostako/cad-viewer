@@ -139,7 +139,7 @@ body,
   border: 1px solid var(--cv-border);
   border-radius: var(--cv-r-lg);
   box-shadow: var(--cv-shadow);
-  padding: 8px 12px;
+  padding: 6px 6px 6px 12px;
   font-size: var(--cv-fs-md);
   line-height: 1.45;
   font-variant-numeric: tabular-nums;
@@ -147,8 +147,49 @@ body,
   user-select: none;
 }
 
+/* the status line and, at its end, the ? that opens the key list. The text
+   wraps rather than being cut: a cut would hide the end of a long hint (相手を
+   クリックで 2 点目) on half a screen */
+#hud-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+#hud-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 1px 0;
+}
+
+#help-open {
+  flex: none;
+  pointer-events: auto; /* the HUD lets the pointer through to the model */
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border-strong);
+  border-radius: 50%;
+  font: inherit;
+  font-size: var(--cv-fs-sm);
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+#help-open:hover,
+#help-open[aria-expanded='true'] {
+  color: var(--cv-text);
+  background: var(--cv-accent-weak);
+  border-color: var(--cv-accent-line);
+}
+
 /* one heading style for every panel: small, bold, grey; no spacing, no capitals */
-#hud-title,
 #tree-title,
 #measure-title,
 #props-head {
@@ -157,10 +198,6 @@ body,
   color: var(--cv-text-2);
   letter-spacing: 0;
   text-transform: none;
-}
-
-#hud-title {
-  margin-bottom: 2px;
 }
 
 /* draft-angle legend (抜き勾配), shown while the colouring is on */
@@ -276,10 +313,132 @@ body,
   border-color: var(--cv-pick);
 }
 
-#hud-keys {
-  margin-top: 4px;
-  font-size: var(--cv-fs-xs);
+/* the key list (? ): above the status line, placed and capped from main.ts */
+#help-card {
+  position: absolute;
+  left: var(--cv-edge);
+  z-index: 1003; /* over the panels (lil-gui 1001) and the undo toast */
+  width: 520px;
+  overflow-y: auto;
+  color: var(--cv-text);
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: 10px 14px 12px;
+  font-size: var(--cv-fs-md);
+  scrollbar-width: thin;
+  scrollbar-color: var(--cv-border-strong) transparent;
+}
+
+#help-card.hidden {
+  display: none;
+}
+
+#help-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+#help-title {
+  font-size: var(--cv-fs-lg);
+  font-weight: 600;
+}
+
+#help-hint {
+  margin-left: auto;
   color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
+#help-close {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  color: var(--cv-text-2);
+  background: none;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#help-close:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+/* two columns when they fit (視点 | 道具), else one */
+#help-keys {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px 20px;
+}
+
+.help-group-title {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--cv-text-2);
+  font-size: var(--cv-fs-sm);
+  font-weight: 600;
+}
+
+.help-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 0;
+  border-top: 1px solid var(--cv-border);
+}
+
+.help-group-title + .help-row {
+  border-top: none;
+}
+
+.help-keys {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+#help-card kbd {
+  min-width: 20px;
+  padding: 1px 5px;
+  color: var(--cv-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--cv-r-sm);
+  font-family: var(--cv-font);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.3;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.help-or,
+.help-plus {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
+.help-note {
+  display: block;
+  margin-top: 4px;
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
+#help-foot {
+  margin-top: 10px;
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
 }
 
 #dropzone {
@@ -714,7 +873,47 @@ body,
 
 #props-parts-wrap {
   overflow-y: auto;
-  margin-bottom: 6px;
+  margin-top: 4px;
+}
+
+/* 部品ごとの値（N 部品）: under the total, opens the parts table */
+#props-parts-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 6px;
+  padding: 5px 0 0;
+  color: var(--cv-text-2);
+  background: none;
+  border: none;
+  border-top: 1px solid var(--cv-border);
+  font: inherit;
+  font-size: var(--cv-fs-sm);
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
+}
+
+#props-parts-toggle:hover {
+  color: var(--cv-text);
+}
+
+/* a chevron: right while folded, down while open */
+#props-parts-toggle::before {
+  content: '';
+  flex: none;
+  width: 5px;
+  height: 5px;
+  margin: 0 2px 0 1px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+#props-parts-toggle[aria-expanded='true']::before {
+  transform: rotate(45deg);
 }
 
 #props-parts {
@@ -1199,6 +1398,33 @@ body,
   font-weight: 600;
 }
 
+/* 視点: the seven buttons in rows of four, not one row each. Full width (no
+   nested folder's indent): 4 short names in a 264 px column. A grid only while
+   open or animating: lil-gui hides a closed folder's children with display:
+   none, which a plain (more specific) display: grid here would undo */
+.lil-gui .lil-gui .lil-gui.cv-views:not(.lil-closed) > .lil-children,
+.lil-gui .lil-gui .lil-gui.cv-views.lil-transition > .lil-children {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--spacing);
+}
+
+.lil-gui .lil-gui .lil-gui.cv-views > .lil-children {
+  margin-left: 0;
+  border-left: none;
+  padding: var(--spacing) var(--padding);
+}
+
+.lil-gui.cv-views > .lil-children > .lil-controller {
+  margin: 0;
+  padding: 0;
+}
+
+.lil-gui.cv-views > .lil-children > .lil-controller .lil-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .lil-gui button {
   transition: background-color 0.12s;
 }
@@ -1213,9 +1439,7 @@ body,
 /* panels hidden for a while (H): only the model, the status line and the triad */
 body.panels-hidden .lil-gui.lil-root,
 body.panels-hidden #tree-panel,
-body.panels-hidden #corner-br,
-body.panels-hidden #hud-title,
-body.panels-hidden #hud-keys {
+body.panels-hidden #corner-br {
   display: none !important;
 }
 

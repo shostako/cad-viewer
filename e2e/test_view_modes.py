@@ -62,7 +62,9 @@ with sync_playwright() as p:
         return mode_select().evaluate("s => [...s.options].find(o => o.text === '注記').disabled")
 
     def keys():
-        return page.inner_text("#hud-keys")
+        """the key list (? ): its text also while it is closed (innerText of an
+        element not rendered is its textContent)"""
+        return page.inner_text("#help-keys")
 
     def check_3d():
         for f in FOLDERS_3D:
@@ -78,7 +80,7 @@ with sync_playwright() as p:
         assert note_disabled(), "注記 must be disabled on a drawing"
         k = keys()
         assert "回転" not in k and "ダブルクリック" not in k, k
-        assert "ドラッグ: 移動" in k and "スナップ" in k, k
+        assert "ドラッグ" in k and "移動" in k and "スナップ" in k, k
         assert not visible("#empty-hint")
         assert not visible("#tree-panel")
 
