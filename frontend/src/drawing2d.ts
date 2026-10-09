@@ -57,12 +57,13 @@ export class Drawing2D {
   private hud: (msg: string) => void
   private svg: SVGSVGElement | null = null
   /**
-   * The drawing as loaded, before its page colour became the 3D background:
-   * the white export starts from it. On screen a line drawn in the 3D
+   * The drawing's SVG as loaded, before its page colour became the 3D
+   * background: the white export parses it again (text, not a second DOM: a
+   * large drawing would be held twice). On screen a line drawn in the 3D
    * background's own colour (#1d2126) cannot be told from the swapped page
    * colour any more; here the page still has ezdxf's colour.
    */
-  private pristine: SVGSVGElement | null = null
+  private sourceText: string | null = null
   /** the measurement layer over the drawing (screen px) and the group it draws in */
   private layer: SVGSVGElement | null = null
   private overlayG: SVGGElement | null = null
@@ -105,9 +106,12 @@ export class Drawing2D {
     // becomes it. The lines keep the drawing's colours: ezdxf draws them for a
     // dark page, colour 7 (white / black) in white, and the page is still dark.
     const page = this.svg.querySelector(':scope > rect')?.getAttribute('fill') ?? null
-    this.pristine = this.svg.cloneNode(true) as SVGSVGElement
+    this.sourceText = svgText
     recolour(this.svg, (css) => swapPageColour(css, page, PAGE_COLOUR))
 
+    // The layer's look (colours, widths, paint order) is in its elements'
+    // attributes, not in style.css: the PNG export serialises a copy of the
+    // layer on its own, and a stylesheet rule would not come along.
     this.layer = svgEl('svg', { class: 'overlay2d-layer' })
     this.overlayG = svgEl('g', { class: 'overlay2d' })
     this.layer.appendChild(this.overlayG)
@@ -122,7 +126,7 @@ export class Drawing2D {
   clear(): void {
     this.container.replaceChildren()
     this.svg = null
-    this.pristine = null
+    this.sourceText = null
     this.layer = null
     this.overlayG = null
     this.snaps = []
@@ -264,6 +268,13 @@ export class Drawing2D {
    * gives a white page with the drawing colours made to read on it
    * (whitenDrawing); the measurements keep their colours on either page.
    */
+  /** the drawing as loaded (its own page colour), as a new element; null if it cannot be read */
+  private parseSource(): SVGSVGElement | null {
+    if (!this.sourceText) return null
+    const root = new DOMParser().parseFromString(this.sourceText, 'image/svg+xml').documentElement
+    return root instanceof SVGSVGElement ? root : null
+  }
+
   async snapshot(background: ExportBackground): Promise<HTMLCanvasElement> {
     const svg = this.svg
     const layer = this.layer
@@ -274,11 +285,11 @@ export class Drawing2D {
     const h = Math.max(1, Math.round(rect.height * dpr))
     const k = w / rect.width
     // clone at the click: a load that starts during the async decode can't change it.
-    // White starts from the drawing as loaded (its own page colour, see pristine),
+    // White starts from the drawing as loaded (its own page colour, see sourceText),
     // at the screen's pan and zoom.
-    const source = background === 'white' && this.pristine ? this.pristine : svg
-    const clone = source.cloneNode(true) as SVGSVGElement
+    const clone = (background === 'white' && this.parseSource()) || (svg.cloneNode(true) as SVGSVGElement)
     clone.setAttribute('viewBox', svg.getAttribute('viewBox') ?? '')
+    clone.setAttribute('preserveAspectRatio', svg.getAttribute('preserveAspectRatio') ?? 'xMidYMid meet')
     clone.removeAttribute('style')
     // the viewBox and preserveAspectRatio come along, so the mapping is the screen's
     clone.setAttribute('width', String(w))
