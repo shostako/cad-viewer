@@ -17,7 +17,7 @@ import {
 } from './api'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
-import { largestFreeRect, type ScreenRect } from './freearea'
+import { fitRect, type ScreenRect } from './freearea'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
 import { Picker } from './picking'
@@ -745,7 +745,7 @@ gui.onOpenClose((changed) => {
  * A new overlay panel goes here and in e2e/nav_common.py PANELS.
  */
 const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl]
-viewer.fitArea = () => {
+viewer.fitArea = (modelW, modelH) => {
   // The right-hand column sizes its panels from ResizeObservers, a frame
   // after a change (a folder opened, a load filled the lists); a fit reads
   // the panels now, so it lays the column out for what is in it first.
@@ -759,7 +759,7 @@ viewer.fitArea = () => {
       panels.push({ left: r.left - c.left, top: r.top - c.top, right: r.right - c.left, bottom: r.bottom - c.top })
     }
   }
-  return largestFreeRect(c.width, c.height, panels)
+  return fitRect(c.width, c.height, panels, modelW, modelH)
 }
 
 const propsFolder = gui.addFolder('体積・重量')
