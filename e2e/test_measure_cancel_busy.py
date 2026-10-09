@@ -14,6 +14,7 @@ import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -22,7 +23,7 @@ STEP = str(TESTDATA / "mini_mold.step")
 
 
 def select_mode(page, mode):
-    page.locator(".lil-gui select").first.select_option(mode)
+    gui_common.ctl(page, "モード").locator("select").select_option(mode)
 
 
 with sync_playwright() as p:

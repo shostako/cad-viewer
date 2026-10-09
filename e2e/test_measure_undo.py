@@ -24,6 +24,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -55,8 +56,7 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
 
     def ctl(name):
-        label = page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-        return page.locator(".lil-gui .lil-controller").filter(has=label).first
+        return gui_common.ctl(page, name)
 
     def set_mode(label):
         ctl("モード").locator("select").select_option(label)

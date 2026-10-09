@@ -40,6 +40,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from nav_common import BASE_URL, BG, TESTDATA, box_stl, cross, dot, sub  # noqa: F401 (BG, box_stl: re-exported)
+import gui_common
 
 MOLD_SRC = TESTDATA / "mini_mold.step"
 PLATE = ((0, 0, 0), (100, 60, 15))
@@ -220,8 +221,7 @@ class Disp:
         return self.page.evaluate("window.__cadRenderInfo()")
 
     def ctl(self, name):
-        label = self.page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-        return self.page.locator(".lil-gui .lil-controller").filter(has=label).first
+        return gui_common.ctl(self.page, name)
 
     def style_select(self):
         return self.ctl("表示スタイル").locator("select")
@@ -252,10 +252,7 @@ class Disp:
         self.settle()
 
     def open_folder(self, name):
-        title = self.page.locator(".lil-gui .lil-title", has_text=re.compile("^" + re.escape(name) + "$")).first
-        folder = title.locator("xpath=..")
-        if "lil-closed" in (folder.get_attribute("class") or ""):
-            title.click()
+        gui_common.open_folder(self.page, name)
 
     def check(self, name, on):
         box = self.ctl(name).locator("input")

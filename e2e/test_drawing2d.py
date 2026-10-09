@@ -3,6 +3,7 @@ from playwright.sync_api import sync_playwright
 
 import os
 from pathlib import Path
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -29,7 +30,7 @@ with sync_playwright() as p:
     page.screenshot(path="/tmp/cad_viewer_dxf.png")
 
     # measure mode: click the two hole centers (dxf (50,50) and (150,50))
-    page.locator(".lil-gui select").first.select_option("計測")
+    gui_common.ctl(page, "モード").locator("select").select_option("計測")
 
     def svg_click(dxf_x, dxf_y):
         # snap points carry svg coords; convert via the svg CTM in-page

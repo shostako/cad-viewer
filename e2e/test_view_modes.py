@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -55,8 +56,7 @@ with sync_playwright() as p:
         assert not card.is_visible()
 
     def mode_select():
-        label = page.locator(".lil-name", has_text=re.compile("^モード"))
-        return page.locator(".lil-gui .lil-controller").filter(has=label).first.locator("select")
+        return gui_common.ctl(page, "モード").locator("select")
 
     def note_disabled():
         return mode_select().evaluate("s => [...s.options].find(o => o.text === '注記').disabled")

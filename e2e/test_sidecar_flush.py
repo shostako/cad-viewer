@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -44,7 +45,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(300)
 
     # add an annotation
-    page.locator(".lil-gui select").first.select_option("注記")
+    gui_common.ctl(page, "モード").locator("select").select_option("注記")
     pt = page.evaluate("window.__cadProject(50, 30, 15)")
     page.mouse.click(pt["x"], pt["y"])
     page.wait_for_selector(".note-input", timeout=5000)
