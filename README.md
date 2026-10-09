@@ -2,6 +2,8 @@
 
 自作CADビューア。STEP/IGES・STL/3MF・DXF/DWG の閲覧＋計測・注記・断面（形状編集はしない）。
 
+版ごとの変更は [CHANGELOG.md](CHANGELOG.md) にある。
+
 ## アーキテクチャ
 
 ```

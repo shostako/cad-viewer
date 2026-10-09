@@ -18,14 +18,14 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import cache, measure, properties
+from . import __version__, cache, measure, properties
 from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
 from .store import ModelEntry, new_model_id, store
 from .tessellation import BrepLoadError, load_brep
 
-app = FastAPI(title="cad-viewer backend")
+app = FastAPI(title="cad-viewer backend", version=__version__)
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
 SIDECAR_DIR = Path(__file__).resolve().parent.parent / ".sidecars"
@@ -33,7 +33,7 @@ SIDECAR_DIR = Path(__file__).resolve().parent.parent / ".sidecars"
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": __version__}
 
 
 @app.get("/api/models")
