@@ -492,8 +492,13 @@ class Disp:
 
 @contextmanager
 def display_session():
-    """A fresh context (1280 x 800, devicePixelRatio 1, downloads) on the app,
+    """A fresh context (1700 x 1050, devicePixelRatio 1, downloads) on the app,
     with cleared view preferences and a private copy of mini_mold.step.
+
+    1700 x 1050: the fit frames the model in the part of the canvas the panels
+    leave free (A5), about as large as a whole 1280 x 800 canvas here. The
+    sample points keep their clearances from the drawn lines in px (they are
+    checked at run time); at 1280 x 800 the mold came out too small for them.
     The page must log no errors; the temp files are removed afterwards."""
     tmp = tempfile.mkdtemp(prefix="cad_display_")
     try:
@@ -501,7 +506,7 @@ def display_session():
         Path(mold).write_bytes(MOLD_SRC.read_bytes() + b"\n" * 11)
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
-            context = browser.new_context(viewport={"width": 1280, "height": 800}, device_scale_factor=1, accept_downloads=True)
+            context = browser.new_context(viewport={"width": 1700, "height": 1050}, device_scale_factor=1, accept_downloads=True)
             page = context.new_page()
             d = Disp(page, tmp, mold)
             page.on("pageerror", lambda e: d.errors.append(str(e)))
