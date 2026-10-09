@@ -981,7 +981,7 @@ let undoOwnChange = false
  */
 function pressOnce(btn: HTMLButtonElement, act: () => void): void {
   btn.addEventListener('mousedown', (ev) => {
-    if (ev.button !== 0) return
+    if (ev.button !== 0) return // the middle and right buttons do nothing here
     ev.preventDefault() // no focus change: a note being typed stays open
     act()
   })

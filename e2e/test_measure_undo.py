@@ -4,7 +4,7 @@
   Ctrl+Z puts the list back as it was (same entries, same order), and the
   autosave then writes the restored list again
 - the undo lapses: after the toast's time, after another change to the list,
-  and on a model switch
+  and on a model switch (3D, and reopening the same drawing)
 - Esc in 計測 drops a chosen first point (3D and 2D); a second Esc leaves the mode
 - on a drawing, 計測クリア can be undone too (its measurements are the drawing's own)
 - a note being typed is kept when the user clicks elsewhere; only Esc discards it;
@@ -20,6 +20,7 @@ import json
 import math
 import os
 import re
+import time
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
@@ -376,6 +377,21 @@ with sync_playwright() as p:
     assert dims() == ["100.000"], ("9 Ctrl+Z after a new 2D measurement", dims())
     set_mode("なし")
     print("9 2D clear + undo ok")
+
+    # ---- 9b. opening the same drawing again (the same model id) ends the 2D undo
+    ctl("計測クリア").locator("button").click()
+    assert dims() == [] and toast_shown()
+    t0 = time.monotonic()
+    with page.expect_response(lambda r: r.url.endswith("/api/models") and r.request.method == "POST"):
+        page.set_input_files("#file-input", DXF)
+    page.wait_for_function("document.querySelector('#undo-toast').classList.contains('hidden')", timeout=5000)
+    # well inside the toast's time: the reload ended the undo, not its timer
+    assert time.monotonic() - t0 < UNDO_S / 2, ("9b", time.monotonic() - t0)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D図面')", timeout=30000)
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(300)
+    assert dims() == [], ("9b the measurements of the drawing before the reload came back", dims())
+    print("9b same drawing reopened ok")
 
     page.screenshot(path="/tmp/cad_viewer_measure_undo.png")
     if errors:
