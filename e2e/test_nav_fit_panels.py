@@ -33,7 +33,7 @@ from pathlib import Path
 
 from nav_common import (
     LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, SURFACE, TESTDATA,
-    close, empty_sidecar, free_rect, nav_session, norm, overlaps, put_sidecar, sub,
+    close, empty_sidecar, free_rect, model_size, nav_session, norm, overlaps, put_sidecar, sub,
 )
 
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
@@ -78,8 +78,11 @@ try:
         load(n.paths["runner"])
         F, _ = n.free_area()
         print("P1 free area", F, "panels", panels())
-        # the GUI column (right) and the HUD (bottom left) both bound it
-        print("P1", fill_check(*RUNNER, "runner load", fallback=False, needs=(GUI, "#hud")))
+        # the GUI column (right) and the HUD with the axis triad (bottom left)
+        # both bound it. Without the HUD alone, the triad still ends the band
+        # 3 px lower, and the runner (as wide as the band) is shown larger in it
+        # than right of the triad, down to the bottom
+        print("P1", fill_check(*RUNNER, "runner load", fallback=False, needs=(GUI, BOTTOM_LEFT)))
         v = view()
         assert close(norm(sub(v["position"], v["target"])), LOAD_DIR, 1e-9), v
         assert close(v["up"], [0, 0, 1], 1e-12), v["up"]
@@ -192,7 +195,7 @@ try:
         resize(400, 900)
         fit()
         _, _, W, H = canvas_rect()
-        part, _ = free_rect(W, H, list(panels().values()), min_free=0)
+        part, _ = free_rect(W, H, list(panels().values()), model_size(*RUNNER, view()), min_free=0)
         assert part != (0, 0, W, H), ("P5 the panels must cover part of the canvas", part)
         print("P5 400x900", fill_check(*RUNNER, "400x900", fallback=True))
         cl, ct, _, _ = canvas_rect()
@@ -223,7 +226,9 @@ try:
         assert page.inner_text("#props-status") == "計算中…" and not values_shown(), "P2a the values must be held"
         F, _ = n.free_area()
         tree = panels()["#tree-panel"]
-        assert F[0] == 0 and F[1] >= tree[3] - 0.5, ("P2 the band under the short tree", F, tree)
+        # the box stands tall on screen: the column beside the short tree shows
+        # it larger (by more than SWITCH_GAIN) than the wider band under it
+        assert F[0] >= tree[2] - 0.5 and F[1] == 0, ("P2 the column beside the short tree", F, tree)
         print("P2 late values", fill_check(*LOOSE_BOX, "IGES load", needs=("#tree-panel", BOTTOM_LEFT)))
 
         # P2b. values in time: the load fit already keeps clear of the panel

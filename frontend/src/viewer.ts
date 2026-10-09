@@ -162,9 +162,11 @@ export class Viewer {
   private container: HTMLElement
   /**
    * The part of the canvas (canvas CSS px) a fit frames the model in, or null
-   * for the whole canvas. Read once per fit: later panel changes do not re-fit.
+   * for the whole canvas. modelW x modelH: the model's bounding box as seen
+   * from the fit's direction (world units along the screen's right and up).
+   * Read once per fit: later panel changes do not re-fit.
    */
-  fitArea: () => ScreenRect | null = () => null
+  fitArea: (modelW: number, modelH: number) => ScreenRect | null = () => null
   /**
    * Canvas centre minus view centre (CSS px), set by each fit. The projection
    * is shifted by this (setViewOffset) so the orbit target, which stays on the
@@ -818,7 +820,9 @@ export class Viewer {
     const W = this.cssSize.x
     const H = this.cssSize.y
     let area: ScreenRect = { left: 0, top: 0, right: W, bottom: H }
-    if (W > 0 && H > 0) area = this.fitArea() ?? area
+    const boxW = Math.max(...xs) - Math.min(...xs)
+    const boxH = Math.max(...ys) - Math.min(...ys)
+    if (W > 0 && H > 0) area = this.fitArea(boxW, boxH) ?? area
     // the target goes to the area's centre (both cameras carry the shift)
     this.viewShift.set(W / 2 - (area.left + area.right) / 2, H / 2 - (area.top + area.bottom) / 2)
     this.applyViewShift()

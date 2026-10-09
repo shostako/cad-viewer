@@ -3,17 +3,21 @@
 Expected values never come from the code under test: they are known box
 corners projected through window.__cadProject, picker hits (__cadPick), the
 camera state (__cadView, including near/far), constants of the specification
-(load direction (1,-1,0.7), Z up, fill 0.88, MIN_FREE 0.4), the panels'
-getBoundingClientRect and canvas pixels.
+(load direction (1,-1,0.7), Z up, fill 0.88, MIN_FREE 0.4, SWITCH_GAIN 1.1),
+the panels' getBoundingClientRect and canvas pixels.
 
-全体表示 (fit) frames the model in the free area: the largest axis-aligned
-rectangle of the canvas that no visible overlay panel (PANELS) overlaps, at
-least MIN_FREE of the canvas width and height (ties: centre nearest the canvas
-centre, then smaller left, then smaller top); the whole canvas when there is
-none. free_rect() below is an independent copy of that rule (the app's is
-frontend/src/freearea.ts). The fit reads the panels once, when it runs, so the
-oracle uses the panel rects recorded at the fit (Nav.fit / Nav.load) and fails
-if they change before the check (a lil-gui folder animates for 300 ms; the HUD
+全体表示 (fit) frames the model in the free area. The candidates are the
+axis-aligned rectangles of the canvas that no visible overlay panel (PANELS)
+overlaps, at least MIN_FREE of the canvas width and height. The free area is
+the largest of them (ties: centre nearest the canvas centre, then smaller
+left, then smaller top), unless another shows the model at least SWITCH_GAIN
+times as large; then the one that shows it largest (ties: the same keys after
+the size). A rectangle shows the model at min(width / w, height / h), w x h
+being the model's bounding box seen from the fit's direction. The whole canvas
+when there is no candidate. free_rect() below is an independent copy of that
+rule (the app's is frontend/src/freearea.ts). The fit reads the panels once,
+when it runs, so the oracle uses the panel rects recorded at the fit (Nav.fit /
+Nav.load) and fails if they change before the check (a lil-gui folder animates for 300 ms; the HUD
 text changes after measurements). A load waits a little for the 体積・重量
 values before its fit, so that the fit sees the panel's final size; Nav.load
 takes timing out of that (props=): by default it holds the values
@@ -56,6 +60,15 @@ BOXES = {"runner": RUNNER, "tiny": TINY, "huge": HUGE}
 # overlay panels a fit keeps the model clear of (frontend/src/main.ts FIT_PANELS)
 PANELS = (".lil-gui.lil-root", "#tree-panel", "#hud", "#measure-panel", "#props-panel", "#triad")
 MIN_FREE = 0.4
+SWITCH_GAIN = 1.1
+# the model's box by file name, for the checks that need it without being given one (view_centre)
+KNOWN_BOXES = {
+    "mini_mold.step": MOLD,
+    "runner.stl": RUNNER,
+    "tiny.stl": TINY,
+    "huge.stl": HUGE,
+    LOOSE_IGES.name: LOOSE_BOX,
+}
 
 
 # ---- vector helpers -----------------------------------------------------------
@@ -99,11 +112,14 @@ def corners(lo, hi):
     return [[(hi if i & 1 else lo)[0], (hi if i & 2 else lo)[1], (hi if i & 4 else lo)[2]] for i in range(8)]
 
 
-def free_rect(w, h, panels, min_free=MIN_FREE):
+def free_rect(w, h, panels, size, min_free=MIN_FREE, gain=SWITCH_GAIN):
     """((l, t, r, b), fallback): the free area of a w x h canvas (rule above).
 
-    panels: canvas-local (l, t, r, b). fallback is True when no rectangle
-    qualifies and the whole canvas is used.
+    panels: canvas-local (l, t, r, b). size: (w, h) of the model's box seen
+    from the fit's direction (any unit). fallback is True when no rectangle
+    qualifies and the whole canvas is used. gain: the rule's SWITCH_GAIN;
+    other values give what other rules would choose (1: always the rectangle
+    that shows the model largest; size (0, 0): always the largest one).
     """
     clipped = []
     for l, t, r, b in panels:
@@ -114,7 +130,16 @@ def free_rect(w, h, panels, min_free=MIN_FREE):
     rights = [w] + [p[0] for p in clipped]
     tops = [0] + [p[3] for p in clipped]
     bottoms = [h] + [p[1] for p in clipped]
-    best, best_key = None, None
+    mw, mh = size
+
+    def shows(c):
+        return min((c[2] - c[0]) / mw if mw > 0 else math.inf, (c[3] - c[1]) / mh if mh > 0 else math.inf)
+
+    def place(c):
+        dx, dy = (c[0] + c[2] - w) / 2, (c[1] + c[3] - h) / 2
+        return ((c[2] - c[0]) * (c[3] - c[1]), -(dx * dx + dy * dy), -c[0], -c[1])
+
+    cands = []
     for l in lefts:
         for r in rights:
             if r - l < min_free * w:
@@ -125,11 +150,23 @@ def free_rect(w, h, panels, min_free=MIN_FREE):
                         continue
                     if any(p[0] < r and p[2] > l and p[1] < b and p[3] > t for p in clipped):
                         continue
-                    dx, dy = (l + r - w) / 2, (t + b - h) / 2
-                    key = ((r - l) * (b - t), -(dx * dx + dy * dy), -l, -t)
-                    if best_key is None or key > best_key:
-                        best, best_key = (l, t, r, b), key
-    return (best, False) if best else ((0, 0, w, h), True)
+                    cands.append((l, t, r, b))
+    if not cands:
+        return (0, 0, w, h), True
+    largest = max(cands, key=place)
+    biggest = max(cands, key=lambda c: (shows(c),) + place(c))
+    return (biggest if shows(biggest) >= gain * shows(largest) else largest), False
+
+
+def model_size(lo, hi, v):
+    """(w, h): the box's extent along the screen's right and up, seen from view v"""
+    f = norm(sub(v["target"], v["position"]))
+    right = norm(cross(f, v["up"]))
+    up = norm(cross(right, f))
+    pts = corners(lo, hi)
+    xs = [dot(c, right) for c in pts]
+    ys = [dot(c, up) for c in pts]
+    return max(xs) - min(xs), max(ys) - min(ys)
 
 
 def overlaps(a, b):
@@ -198,10 +235,15 @@ class Nav:
         self.page = page
         self.paths = paths
         self.errors = []
-        self.fit_panels = None  # panel rects at the last fit (fit / load)
+        self.fit_panels = None  # panel rects at the last fit (fit / load / mark_fit)
+        self.fit_view = None  # the camera at the last fit: the free area depends on its direction
+        self.box = None  # the loaded model's box (KNOWN_BOXES, or given to load)
 
-    def load(self, path, wait_text="tris", props="frozen"):
+    def load(self, path, wait_text="tris", props="frozen", box=None):
         """Open a file and wait for its HUD text (set in the same task as the load fit).
+
+        box: the model's (lo, hi), for the checks that are not given one;
+        by default from KNOWN_BOXES by the file's name.
 
         props: the 体積・重量 values.
         - "frozen": held for good, and the load does not wait for them: the
@@ -226,7 +268,13 @@ class Nav:
             timeout=60000,
         )
         self.settle()
+        self.box = box if box is not None else KNOWN_BOXES.get(Path(path).name)
+        self.mark_fit()
+
+    def mark_fit(self):
+        """record the panels and the camera of a fit that has just run"""
         self.fit_panels = self.panel_rects()
+        self.fit_view = self.view()
 
     def wait_gui_idle(self):
         """until no lil-gui folder is opening or closing (it animates for 300 ms)"""
@@ -242,7 +290,7 @@ class Nav:
         else:
             self.page.keyboard.press(trigger)
         self.settle()
-        self.fit_panels = self.panel_rects()
+        self.mark_fit()
 
     def panel_rects(self, exclude=()):
         """{selector: canvas-local (l, t, r, b)} of the visible panels"""
@@ -268,16 +316,23 @@ class Nav:
         )
         assert same, ("panels changed between the fit and the check", then, now)
 
-    def free_area(self, exclude=(), min_free=MIN_FREE):
-        """((l, t, r, b) canvas-local, fallback) from the panels on screen"""
+    def free_area(self, box=None, exclude=(), min_free=MIN_FREE, v=None):
+        """((l, t, r, b) canvas-local, fallback) from the panels on screen, for
+        the model's box (default: the loaded one) seen from view v (default:
+        the camera now)"""
+        box = box or self.box
+        assert box is not None, "the model's box is not known: pass it (or box= to load)"
         _, _, cw, ch = self.canvas_rect()
-        return free_rect(cw, ch, list(self.panel_rects(exclude).values()), min_free)
+        size = model_size(*box, v or self.view())
+        return free_rect(cw, ch, list(self.panel_rects(exclude).values()), size, min_free)
 
-    def view_centre(self):
-        """page coordinates of the free area's centre (where a fit puts the target)"""
+    def view_centre(self, box=None):
+        """page coordinates of the free area's centre at the last fit (where it
+        put the target; turns and view presets since do not move it)"""
         self.assert_panels_unchanged()
+        assert self.fit_view is not None, "no fit recorded (use Nav.fit / Nav.load / Nav.mark_fit)"
         cl, ct, _, _ = self.canvas_rect()
-        (l, t, r, b), _ = self.free_area()
+        (l, t, r, b), _ = self.free_area(box, v=self.fit_view)
         return [cl + (l + r) / 2, ct + (t + b) / 2]
 
     def settle(self):
@@ -384,7 +439,7 @@ class Nav:
         """
         self.assert_panels_unchanged()
         cl, ct, cw, ch = self.canvas_rect()
-        F, fell_back = self.free_area()
+        F, fell_back = self.free_area((lo, hi))
         x0, y0, x1, y1 = self.rect(lo, hi)
         B = (x0 - cl, y0 - ct, x1 - cl, y1 - ct)
         fill, ex, ey, inside = fit_metrics(B, F)
@@ -399,7 +454,7 @@ class Nav:
             assert fell_back == fallback, ("fallback", fell_back, info)
         for sel in needs:
             group = (sel,) if isinstance(sel, str) else tuple(sel)
-            A, _ = self.free_area(exclude=group)
+            A, _ = self.free_area((lo, hi), exclude=group)
             assert would_fail(B, F, A), ("case no longer depends on", group, A, info)
         return info
 

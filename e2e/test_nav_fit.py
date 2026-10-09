@@ -159,7 +159,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
            }"""
     )
     settle()
-    n.fit_panels = n.panel_rects()  # as at the fit: nothing changed them since
+    n.mark_fit()  # the fit ran in the evaluate: nothing changed the panels or the view since
     _, _, cw, ch = canvas_rect()
     assert (cw, ch) == (960, 680), ("A12 the canvas follows its box", cw, ch)
     print("A12", fill_check(*MOLD, "fit before the resize is reported"))
