@@ -6,6 +6,7 @@
 - the undo lapses: after the toast's time, after another change to the list,
   and on a model switch
 - Esc in 計測 drops a chosen first point (3D and 2D); a second Esc leaves the mode
+- on a drawing, 計測クリア can be undone too (its measurements are the drawing's own)
 - a note being typed is kept when the user clicks elsewhere; only Esc discards it;
   opening another file saves it to its own model first
 
@@ -281,6 +282,35 @@ with sync_playwright() as p:
     page.keyboard.press("Escape")
     assert mode() == "なし"
     print("8 2D Esc ok")
+
+    # ---- 9. 2D: 計測クリア can be undone too (the drawing's own measurements)
+    def dims():
+        return page.evaluate(
+            "[...document.querySelectorAll('#viewport2d svg .overlay2d text.dimtext2d')].map(t => t.textContent)"
+        )
+
+    set_mode("計測")
+    svg_click(50, 50)
+    svg_click(150, 50)
+    assert "100.000" in hud() and dims() == ["100.000"] and circles() == 2, (hud(), dims(), circles())
+    ctl("計測クリア").locator("button").click()
+    assert dims() == [] and circles() == 0
+    assert toast_shown() and "1 件" in page.inner_text("#undo-toast"), page.inner_text("#undo-toast")
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(200)
+    assert dims() == ["100.000"] and circles() == 2, ("9 2D undo", dims(), circles())
+    assert not toast_shown()
+    # a new 2D measurement ends the undo
+    ctl("計測クリア").locator("button").click()
+    assert toast_shown()
+    svg_click(50, 50)
+    svg_click(150, 50)
+    assert not toast_shown(), "9 a new 2D measurement must end the undo"
+    page.keyboard.press("Control+z")
+    page.wait_for_timeout(200)
+    assert dims() == ["100.000"], ("9 Ctrl+Z after a new 2D measurement", dims())
+    set_mode("なし")
+    print("9 2D clear + undo ok")
 
     page.screenshot(path="/tmp/cad_viewer_measure_undo.png")
     if errors:

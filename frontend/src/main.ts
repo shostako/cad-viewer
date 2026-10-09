@@ -178,10 +178,8 @@ const actions = {
   open: () => fileInput.click(),
   // 3D keeps the view direction and fits the visible parts; 2D fits the whole drawing
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
-  clearMeasure: () => {
-    deleteWithUndo(() => measureTool.clearAll())
-    drawing2d.clearMeasurements()
-  },
+  // both can be undone: the 3D list, or a drawing's measurements
+  clearMeasure: () => (is2D ? clearDrawingWithUndo() : deleteWithUndo(() => measureTool.clearAll())),
   // a function declaration below, so it is hoisted
   savePng: () => void savePng(),
 }
@@ -967,7 +965,8 @@ const UNDO_MS = 8000
 const undoToast = document.querySelector<HTMLDivElement>('#undo-toast')!
 const undoText = document.querySelector<HTMLSpanElement>('#undo-text')!
 const undoBtn = document.querySelector<HTMLButtonElement>('#undo-btn')!
-let undoState: { modelId: string; entries: EntryData[] } | null = null
+/** entries: the 3D list before the deletion; drawing: a drawing's measurements (markup) */
+let undoState: { modelId: string; entries?: EntryData[]; drawing?: string } | null = null
 let undoTimer: ReturnType<typeof setTimeout> | undefined
 /** set while this code changes the list itself: those changes keep the undo */
 let undoOwnChange = false
@@ -989,7 +988,19 @@ function deleteWithUndo(run: () => void): void {
   }
   const removed = before.length - measureTool.list().length
   if (removed <= 0 || !currentModelId) return
-  undoState = { modelId: currentModelId, entries: before }
+  armUndo({ modelId: currentModelId, entries: before }, removed)
+}
+
+/** 計測クリア on a drawing: its measurements live in the drawing's overlay */
+function clearDrawingWithUndo(): void {
+  const snap = drawing2d.measurementsSnapshot()
+  drawing2d.clearMeasurements()
+  if (!snap || !currentModelId) return
+  armUndo({ modelId: currentModelId, drawing: snap.html }, snap.count)
+}
+
+function armUndo(state: NonNullable<typeof undoState>, removed: number): void {
+  undoState = state
   undoText.textContent = `${removed} 件の計測を消した`
   undoToast.classList.remove('hidden')
   placeUndoToast()
@@ -1002,6 +1013,12 @@ function undoDelete(): boolean {
   const u = undoState
   if (!u || u.modelId !== currentModelId) return false
   dropUndo()
+  if (u.drawing !== undefined) {
+    drawing2d.restoreMeasurements(u.drawing)
+    hudInfo.textContent = '計測を元に戻した'
+    return true
+  }
+  if (!u.entries) return false
   undoOwnChange = true
   try {
     measureTool.clearAll()
@@ -1026,6 +1043,8 @@ undoBtn.addEventListener('click', () => void undoDelete())
 measureTool.onChange(() => {
   if (!undoOwnChange) dropUndo()
 })
+// a new measurement on a drawing ends its undo too (as in 3D)
+drawing2d.onMeasurement(dropUndo)
 
 /**
  * Esc in 計測 / 注記: first drop a chosen first point, then leave the mode.
