@@ -508,6 +508,16 @@ def run(page, nav, TAPER, FRUSTUM, INSIDE_OUT):
     got = {"TOP": draft(TOP), "FRONT": draft(FRONT)}
     print("(d) mini_mold +Z:", got)
     assert got["TOP"] == (90.0, "抜ける側") and got["FRONT"] == (0.0, "勾配不足"), got
+    # ワイヤーフレーム does not draw a B-rep part's faces (only its edges): no
+    # value over a blank spot, though the face there is still pickable
+    open_folder("表示")
+    set_select("表示スタイル", "ワイヤーフレーム")
+    shown, text, _ = hover(on_face(TOP))
+    assert not shown, ("(d) a value over a face ワイヤーフレーム does not draw", text)
+    set_select("表示スタイル", "陰影＋稜線")
+    nav.page.mouse.move(*[c + 1 for c in on_face(TOP)])
+    settle()
+    assert draft(TOP) == (90.0, "抜ける側"), "(d) the value is back with the faces"
     set_select("型開き方向", "+X")
     a, cls = draft(PIN)
     print("(d) mini_mold +X, pin at", PIN_DEG, "deg:", a, cls, "want", round(PIN_DRAFT_X, 2))

@@ -731,6 +731,19 @@ export class Viewer {
     }
   }
 
+  /**
+   * Whether the display style draws the part's faces: not in ワイヤーフレーム
+   * when the part has edge lines (a B-rep), which are drawn instead. The faces
+   * stay pickable either way (applyStyle); what is read off them for the eye
+   * (the values under the cursor) should come only from faces on screen.
+   */
+  facesDrawn(partId: number): boolean {
+    const mesh = this.partMeshes.get(partId)
+    if (!mesh) return false
+    // the draft colouring's per-triangle copy is what is drawn while it exists
+    return this.flatCopies.get(partId)?.visible ?? mesh.visible
+  }
+
   isPartVisible(partId: number): boolean {
     return this.partGroups.get(partId)?.visible ?? false
   }

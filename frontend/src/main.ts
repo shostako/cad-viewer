@@ -662,7 +662,9 @@ const probe = new HoverProbe(viewport, cursorTip, valueUnderCursor)
 function valueUnderCursor(clientX: number, clientY: number): string | null {
   if (is2D || colorOwner === 'none') return null
   const hit = picker.faceHit(toNdc(clientX, clientY))
-  if (!hit) return null // off the model
+  // off the model, or on a face the style does not draw (ワイヤーフレーム of a
+  // B-rep part): faces stay pickable there, but no value for a blank spot
+  if (!hit || !viewer.facesDrawn(hit.partId)) return null
   if (colorOwner === 'thickness') {
     const values = shownThickness?.get(hit.partId)
     return values ? thicknessTipText(thicknessAt(values, hit.vertices, hit.weights)) : null
