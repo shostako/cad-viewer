@@ -24,6 +24,8 @@
   --cv-on-accent: #0b1220;
   /* meaning */
   --cv-measure: #ffd060;
+  --cv-pick: #55d6ff; /* what the cursor is on: preselect.ts PRESELECT_COLOR */
+  --cv-pick-weak: rgba(85, 214, 255, 0.16);
   --cv-on-measure: #1d2126; /* text on a dimension's yellow label */
   --cv-note: #4a9e6e;
   --cv-note-bg: rgba(40, 90, 60, 0.92);
@@ -271,7 +273,7 @@ body,
 /* 計測 / 注記: the name of what a click would pick, framed in the colour of
    its highlight (preselect.ts PRESELECT_COLOR) */
 #cursor-tip[data-kind='pick'] {
-  border-color: #55d6ff;
+  border-color: var(--cv-pick);
 }
 
 #hud-keys {
@@ -394,12 +396,6 @@ body,
   background: var(--cv-hover);
 }
 
-/* every part shown: nothing to do */
-#tree-show-all:disabled {
-  opacity: 0.4;
-  cursor: default;
-}
-
 #tree-body {
   flex: 1 1 auto;
   min-height: 0;
@@ -425,17 +421,17 @@ body,
   align-items: center;
   gap: 4px;
   padding-right: 2px;
-  border-radius: 4px;
+  border-radius: var(--cv-r-sm);
 }
 
 .tree-row:hover {
-  background: rgba(143, 180, 216, 0.1);
+  background: var(--cv-hover);
 }
 
 /* the part under the cursor in the 3D view (mode なし) */
 .tree-row.under-cursor {
-  background: rgba(85, 214, 255, 0.16);
-  box-shadow: inset 2px 0 0 #55d6ff;
+  background: var(--cv-pick-weak);
+  box-shadow: inset 2px 0 0 var(--cv-pick);
 }
 
 #tree-panel label {
@@ -452,10 +448,6 @@ body,
 #tree-panel label span {
   overflow: hidden;
   text-overflow: ellipsis;
-}
-
-#tree-panel label:hover {
-  color: #fff;
 }
 
 #tree-panel input[type='checkbox'] {
@@ -477,16 +469,16 @@ body,
   flex: none;
   padding: 0 4px;
   border-radius: 6px;
-  color: #cfd8e3;
-  background: rgba(143, 180, 216, 0.16);
-  font-size: 11px;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  font-size: var(--cv-fs-xs);
   font-variant-numeric: tabular-nums;
 }
 
 /* a hidden part (a group with nothing shown) */
 .tree-row.off label span,
 .tree-row.off .tree-num {
-  color: #7f8b99;
+  color: var(--cv-text-3);
 }
 
 .tree-row.off .tree-mark {
@@ -521,28 +513,27 @@ body,
   width: 20px;
   height: 18px;
   padding: 0;
-  color: #b5c2d0;
+  color: var(--cv-text-2);
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 4px;
+  border-radius: var(--cv-r-sm);
   cursor: pointer;
 }
 
 .tree-btn:hover:not(:disabled) {
-  color: #fff;
-  background: rgba(76, 154, 255, 0.2);
-  border-color: rgba(76, 154, 255, 0.5);
+  color: var(--cv-text);
+  background: var(--cv-accent-weak);
+  border-color: var(--cv-accent-line);
 }
 
-.tree-btn:disabled {
+/* a hidden part's 寄る: fainter than the app's disabled (its icon is light) */
+#tree-panel .tree-btn:disabled {
   opacity: 0.3;
-  cursor: default;
 }
 
-.tree-btn:focus-visible,
-#tree-fold:focus-visible,
-#tree-show-all:focus-visible {
-  outline: 2px solid #4c9aff;
+/* the rows scroll in #tree-body, which clips: the app's ring sits on the control */
+#tree-body button:focus-visible,
+#tree-body input:focus-visible {
   outline-offset: 0;
 }
 
