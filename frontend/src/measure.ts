@@ -111,7 +111,14 @@ export class MeasureTool {
     const requestedModelId = this.modelId
     const requestedSession = this.session
     try {
-      const res = await measureDistance(requestedModelId, toRef(a.pick), toRef(pick))
+      // the clicked points: the line stands where the user clicked (parallel faces)
+      const res = await measureDistance(
+        requestedModelId,
+        toRef(a.pick),
+        toRef(pick),
+        a.pick.point.toArray() as [number, number, number],
+        pick.point.toArray() as [number, number, number],
+      )
       if (this.modelId !== requestedModelId || this.session !== requestedSession) {
         this.viewer.disposeOverlayObject(a.marker)
         return '' // stale: model switched mid-flight
