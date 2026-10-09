@@ -3,6 +3,12 @@ name: test
 # Backend pytest, frontend type check + build, and every E2E script, on each
 # PR and on master. Cloud sessions cannot push workflow files (the Claude
 # GitHub App has no workflows permission), so this file is maintained locally.
+#
+# The E2E scripts run in E2E_SHARDS parallel jobs: one job running all of them
+# took about 32 minutes in October 2026, close to its 40-minute limit. Each
+# shard runs every E2E_SHARDS-th script of the sorted list, so scripts with
+# neighbouring names (test_display_styles*, test_nav_*, test_ortho*), which
+# tend to be the long ones, land in different shards.
 
 on:
   pull_request:
@@ -17,10 +23,58 @@ concurrency:
   # cancel superseded PR runs only: every master commit keeps its own result
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+env:
+  E2E_SHARDS: 4
+
 jobs:
-  ci:
+  unit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # backend/.venv: the test-data generators need OCP from it
+      - name: Backend venv
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/bin/pip install -q -r backend/requirements.lock
+
+      - name: Test data
+        run: |
+          set -e
+          for g in make_testdata make_step_assembly make_dxf make_iges_loose; do
+            backend/.venv/bin/python "testdata/$g.py"
+          done
+
+      - name: Backend tests
+        working-directory: backend
+        run: .venv/bin/pytest -q -p no:cacheprovider
+
+      - name: Frontend type check and build
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build
+
+  e2e:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        # 0 .. E2E_SHARDS-1 (env is not available here: keep the two in step)
+        shard: [0, 1, 2, 3]
+    name: e2e (${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v6
 
@@ -51,17 +105,13 @@ jobs:
             backend/.venv/bin/python "testdata/$g.py"
           done
 
-      - name: Backend tests
-        working-directory: backend
-        run: .venv/bin/pytest -q -p no:cacheprovider
-
-      - name: Frontend type check and build
+      - name: Frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build
+        run: npm ci
 
       - name: E2E
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           (cd backend && nohup .venv/bin/uvicorn app.main:app --port 8008 > /tmp/uvicorn.log 2>&1 &)
           # --host: Vite's default "localhost" resolves to ::1 on the runner, and
@@ -76,19 +126,24 @@ jobs:
             echo "::error title=E2E servers::uvicorn :8008 or Vite :5183 did not come up"
             exit 1
           fi
+          mapfile -t all < <(ls e2e/test_*.py | sort)
           total=0
           passed=0
-          for t in e2e/test_*.py; do
+          for i in "${!all[@]}"; do
+            [ $((i % E2E_SHARDS)) -eq "$SHARD" ] || continue
+            t=${all[$i]}
             total=$((total + 1))
             echo "::group::$t"
+            start=$(date +%s)
             if timeout 300 backend/.venv/bin/python "$t"; then
               passed=$((passed + 1))
             else
               echo "::error title=E2E failed::$t"
             fi
+            echo "$t took $(( $(date +%s) - start )) s"
             echo "::endgroup::"
           done
-          echo "E2E: ${passed} / ${total} passed"
+          echo "E2E shard ${SHARD}/${E2E_SHARDS}: ${passed} / ${total} passed (of ${#all[@]} scripts)"
           [ "$total" -gt 0 ] && [ "$passed" -eq "$total" ]
 
       - name: Server logs
@@ -101,7 +156,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-artifacts
+          name: e2e-artifacts-shard-${{ matrix.shard }}
           path: |
             /tmp/cad_viewer_*.png
             /tmp/uvicorn.log

@@ -48,7 +48,7 @@ kill %1 %2    # 止める
 rm -rf backend/.sidecars
 ```
 
-CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。
+CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。
 
 ### 手元（WSL2 ＋ Windows）だけのもの
 
