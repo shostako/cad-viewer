@@ -60,6 +60,7 @@ app.innerHTML = `
     <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
     <div id="hud-keys"></div>
   </div>
+  <button id="panels-show" class="hidden" type="button" title="パネルを出す（H）">パネルを出す</button>
   <div id="undo-toast" class="hidden" role="status">
     <span id="undo-text"></span>
     <button id="undo-btn" type="button">元に戻す</button>
@@ -383,6 +384,11 @@ function onNavigationKey(e: KeyboardEvent): void {
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
     if (escapeMeasure()) e.preventDefault()
+    return
+  }
+  if (e.key === 'h' || e.key === 'H') {
+    setPanelsHidden(!panelsHidden)
+    e.preventDefault()
     return
   }
   if (e.key === 'f' || e.key === 'F' || e.key === 'Home') {
@@ -757,7 +763,9 @@ function layoutCorner(): void {
   // at the stack, whichever reaches further left (the stack is as wide as its
   // widest panel)
   const hudLeft = hud.getBoundingClientRect().left
-  const columnLeft = Math.min(gui.domElement.getBoundingClientRect().left, cornerBr.getBoundingClientRect().left)
+  // (a hidden GUI or stack measures 0 x 0 at the origin: not a left edge)
+  const lefts = [gui.domElement, cornerBr].map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0)
+  const columnLeft = lefts.length ? Math.min(...lefts.map((r) => r.left)) : window.innerWidth - COLUMN_MARGIN
   hud.style.maxWidth = `${Math.max(columnLeft - COLUMN_GAP - hudLeft, HUD_MIN_PX)}px`
 }
 // From a ResizeObserver, lay out on the next frame: changing an observed
@@ -818,7 +826,8 @@ gui.onOpenClose((changed) => {
  * zone and the note box (both transient).
  * A new overlay panel goes here and in e2e/nav_common.py PANELS.
  */
-const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl]
+const panelsShow = document.querySelector<HTMLButtonElement>('#panels-show')!
+const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl, panelsShow]
 viewer.fitArea = (modelW, modelH) => {
   // The right-hand column sizes its panels from ResizeObservers, a frame
   // after a change (a folder opened, a load filled the lists); a fit reads
@@ -835,6 +844,34 @@ viewer.fitArea = (modelW, modelH) => {
   }
   return fitRect(c.width, c.height, panels, modelW, modelH)
 }
+
+// ---- hide the panels for a while (H, or the button in the GUI's title bar)
+// On half a screen the panels cover about half the canvas; hidden, the model
+// gets the whole of it. Hidden: the GUI, the part tree, the measure list and
+// the volume panel, the HUD's title and key help (its status line, the draft
+// legend and the axis triad stay). Not remembered: a reload shows them again.
+let panelsHidden = false
+const panelsHide = document.createElement('button')
+panelsHide.type = 'button'
+panelsHide.id = 'panels-hide'
+panelsHide.textContent = '隠す'
+panelsHide.title = 'パネルを隠してモデルを大きく見る（H）'
+// a child of the GUI's root, not of its title (a button inside the title
+// button would fold the GUI too); placed over the title's right end by CSS
+gui.domElement.append(panelsHide)
+function setPanelsHidden(hidden: boolean): void {
+  if (hidden === panelsHidden) return
+  // a view the user has not moved since its fit is fitted again into the
+  // area the panels now leave; a moved view is left as it is
+  const refit = !is2D && contentShown && viewer.atLastFit
+  panelsHidden = hidden
+  document.body.classList.toggle('panels-hidden', hidden)
+  panelsShow.classList.toggle('hidden', !hidden)
+  layoutCorner()
+  if (refit) viewer.fitToView()
+}
+panelsHide.addEventListener('click', () => setPanelsHidden(true))
+panelsShow.addEventListener('click', () => setPanelsHidden(false))
 
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
