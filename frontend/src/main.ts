@@ -17,11 +17,12 @@ import {
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
-import { Drawing2D, measurementText, type Measurement2D } from './drawing2d'
+import { Drawing2D, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
+import { ICONS, copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickResult } from './picking'
 import { DiameterCache, Preselect } from './preselect'
@@ -50,7 +51,11 @@ app.innerHTML = `
   <div id="tree-panel" class="hidden"></div>
   <div id="corner-br">
     <div id="measure-panel" class="hidden">
-      <div id="measure-title">計測</div>
+      <div id="measure-head">
+        <span id="measure-title">計測</span>
+        <span id="measure-count"></span>
+        <button id="measure-copy-all" type="button" title="すべてコピー（Excel に貼れる形: 種類・値・単位・対象 A・対象 B）"></button>
+      </div>
       <ul id="measure-list"></ul>
     </div>
     <div id="props-panel" class="hidden"></div>
@@ -944,8 +949,9 @@ function measureMinPx(): number {
     parseFloat(cs.paddingBottom) +
     parseFloat(cs.borderTopWidth) +
     parseFloat(cs.borderBottomWidth)
-  const title = measurePanel.querySelector<HTMLElement>('#measure-title')
-  const titleH = title ? title.offsetHeight + parseFloat(getComputedStyle(title).marginBottom) : 0
+  // the head: 計測, the count and すべてコピー
+  const head = measurePanel.querySelector<HTMLElement>('#measure-head')
+  const titleH = head ? head.offsetHeight + parseFloat(getComputedStyle(head).marginBottom) : 0
   let rows = 0
   for (const li of Array.from(measureList.children).slice(0, 2)) rows += (li as HTMLElement).offsetHeight
   return Math.ceil(frame + titleH + rows)
@@ -1348,26 +1354,73 @@ function renderMeasureList(): void {
   const dims = drawing2d.measurements()
   measurePanel.classList.toggle('hidden', entries.length + dims.length === 0)
   measureList.replaceChildren()
+  listRows = []
+  setHotEntry(null)
   for (const e of entries) {
-    measureList.appendChild(measureRow(e.label, () => deleteWithUndo(() => measureTool.remove(e.id))))
+    const row = entryRow(e.data)
+    listRows.push(row)
+    const li = rowElement(row, () => deleteWithUndo(() => measureTool.remove(e.id)), pressOnce)
+    li.dataset.entryId = String(e.id)
+    // the row under the pointer lights its label, line and points in 3D
+    li.addEventListener('pointerenter', () => setHotEntry(e.id))
+    li.addEventListener('pointerleave', () => setHotEntry(null))
+    measureList.appendChild(li)
   }
   for (const m of dims) {
-    const li = measureRow(measurementText(m), () => deleteDrawingWithUndo(() => drawing2d.removeMeasurement(m.id)))
+    const row = drawingRow(m)
+    listRows.push(row)
+    const li = rowElement(row, () => deleteDrawingWithUndo(() => drawing2d.removeMeasurement(m.id)), pressOnce)
     li.classList.add('m2d')
     measureList.appendChild(li)
   }
+  measureCount.textContent = String(listRows.length)
 }
-/** a row: its text (selectable, to copy the values) and its × */
-function measureRow(text: string, remove: () => void): HTMLLIElement {
-  const li = document.createElement('li')
-  const span = document.createElement('span')
-  span.textContent = text
-  const del = document.createElement('button')
-  del.textContent = '×'
-  pressOnce(del, remove)
-  li.append(span, del)
-  return li
+/** the rows on show, for すべてコピー */
+let listRows: RowView[] = []
+const measureCount = document.querySelector<HTMLSpanElement>('#measure-count')!
+const copyAll = document.querySelector<HTMLButtonElement>('#measure-copy-all')!
+const COPY_ALL_LABEL = `${ICONS.copy}<span>すべてコピー</span>`
+copyAll.innerHTML = COPY_ALL_LABEL
+let copyAllTimer: ReturnType<typeof setTimeout> | undefined
+copyAll.addEventListener('click', async () => {
+  if (!listRows.length || !(await copyText(listText(listRows)))) return
+  copyAll.innerHTML = `${ICONS.done}<span>コピーした</span>`
+  copyAll.classList.add('done')
+  clearTimeout(copyAllTimer)
+  copyAllTimer = setTimeout(() => {
+    copyAll.innerHTML = COPY_ALL_LABEL
+    copyAll.classList.remove('done')
+  }, 1500)
+})
+/**
+ * One measurement lit at a time: its 3D label, line and points, and its row
+ * (the pointer is on the row, or on the label in 3D). null: none.
+ */
+let hotEntry: number | null = null
+function setHotEntry(id: number | null): void {
+  if (id === hotEntry) return
+  hotEntry = id
+  measureTool.setHot(id)
+  for (const li of measureList.querySelectorAll<HTMLElement>('li.hot')) li.classList.remove('hot')
+  if (id !== null) measureList.querySelector(`li[data-entry-id="${id}"]`)?.classList.add('hot')
 }
+// a label under the pointer lights its row (labels take no clicks: a click
+// there still reaches the model, to measure or to turn the view)
+let labelHoverQueued = false
+let labelHoverAt: [number, number] | null = null
+viewport.addEventListener('pointermove', (e) => {
+  labelHoverAt = [e.clientX, e.clientY]
+  if (labelHoverQueued) return
+  labelHoverQueued = true
+  requestAnimationFrame(() => {
+    labelHoverQueued = false
+    if (labelHoverAt && !is2D) setHotEntry(measureTool.entryAt(...labelHoverAt))
+  })
+})
+viewport.addEventListener('pointerleave', () => {
+  labelHoverAt = null
+  setHotEntry(null)
+})
 measureTool.onChange(renderMeasureList)
 drawing2d.onChange(renderMeasureList)
 

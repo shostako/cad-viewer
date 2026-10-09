@@ -154,10 +154,11 @@ with display_session() as d:
     d.set_mode("計測")
     page.mouse.click(*side_xy)
     page.wait_for_function("document.querySelectorAll('#measure-list li').length === 1", timeout=10000)
-    entry = page.locator("#measure-list li").first.inner_text()
+    row = page.locator("#measure-list li").first
+    entry = (row.locator(".m-value").inner_text(), row.locator(".m-what").inner_text())
     d.set_mode("なし")
     print("(b3) entry:", entry)
-    assert entry.startswith("core_pin 円筒面 ⌀8.000"), ("the diameter entry must name the part", entry)
+    assert entry == ("⌀8.000 mm", "core_pin 円筒面"), ("the diameter entry must name the part", entry)
     page.locator("#measure-list li button").first.click()
     page.wait_for_function("document.querySelectorAll('#measure-list li').length === 0", timeout=5000)
     d.settle()

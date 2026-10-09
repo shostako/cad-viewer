@@ -255,7 +255,8 @@ with sync_playwright() as p:
     wait_count(n)
     click_world(PLATE_TOP)  # the partner of the first point chosen before the undo
     wait_count(n + 1)
-    assert texts()[-1].endswith("20.000"), ("6d the first point was dropped by the undo", texts())
+    # (a row reads its value first, with its unit: "20.000 mm", then what was measured)
+    assert texts()[-1].startswith("20.000 mm\n"), ("6d the first point was dropped by the undo", texts())
     set_mode("なし")
     print("6d undo keeps the first point ok")
 
