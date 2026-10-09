@@ -22,7 +22,8 @@ for t in e2e/test_*.py; do python3 "$t" || echo "FAILED: $t"; done
 
 注意:
 - ヘッドレスChromium(SwiftShader)ではlil-gui付近に白矩形のWebGL合成アーティファクトが出る（実ブラウザでは出ない）
-- 計測・注記・サイドカー系のテストはサイドカーに書き込むため、`backend/.sidecars/` を消せばクリーンに戻る
+- 計測・注記・サイドカー系のテストは共有の backend のサイドカー（`backend/.sidecars/`）に書き込む。そこには手元で開いた実データの計測・注記も入るので、ディレクトリを丸ごと消さない。後片付けはテストデータの分だけにする（ファイル名は中身の sha256 の先頭 32 文字）:
+  `for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do rm -f "backend/.sidecars/$(sha256sum "$f" | cut -c1-32).json"; done`
 - テストは `window.__cadProject` / `__cadPick` / `__cadView` フック（main.ts）でワールド座標からクリック位置を決定論的に導出し、カメラの状態を読む（`__cadView` は near / far と、投影 `projection`（`'perspective'` / `'orthographic'`）・`zoom`（平行投影では見えている高さの半分が 1 / zoom、透視では常に 1）も返す。near / far と位置は使っている方のカメラのもの）
 - `test_nav_fit.py`（全体表示）・`test_nav_fit_panels.py`（全体表示がパネルを避ける）・`test_nav_wheel.py`（ホイールの拡大縮小）・`test_nav_pivot.py`（ダブルクリックの回転の中心）は、共通の部品を `nav_common.py` から使う。検査用の箱の STL は一時ディレクトリに書いて使い、最後に消す。mini_mold.step は末尾に改行 3 つを足した自分専用のコピーを一時ディレクトリに作り、始めに API でそのサイドカーを空にする（ほかのテストが共有の mini_mold.step に残した注記は計測の一覧として戻り、全体表示はそれを避けるので、モデルの大きさと位置が変わってしまう）。1 本にまとめると CI の 1 本あたりの打ち切り（300 秒）を超えたので分けてある。1 本は目安 2 分以内に収める
 - 全体表示の検査の基準（`nav_common.py` の `free_rect`）: パネル（`PANELS`: 操作パネル・部品ツリー・左下の案内・計測の一覧・体積・重量・左下の座標軸）の `getBoundingClientRect` から、どのパネルにも重ならないいちばん広い長方形（幅と高さが canvas の 4 割以上。同じ広さなら中心が canvas の中心に近いもの、次に左、次に上が小さいもの）を出し、無ければ canvas 全体とする。箱の角の投影がその長方形の 0.86〜0.90 を占め、真ん中にあり、どのパネルにも重ならないことを確かめる。アプリの実装（`frontend/src/freearea.ts`）とは別に書いた同じ規則で、期待値をアプリから取らない
