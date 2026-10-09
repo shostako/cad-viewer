@@ -56,6 +56,13 @@ export class Drawing2D {
   private container: HTMLElement
   private hud: (msg: string) => void
   private svg: SVGSVGElement | null = null
+  /**
+   * The drawing as loaded, before its page colour became the 3D background:
+   * the white export starts from it. On screen a line drawn in the 3D
+   * background's own colour (#1d2126) cannot be told from the swapped page
+   * colour any more; here the page still has ezdxf's colour.
+   */
+  private pristine: SVGSVGElement | null = null
   /** the measurement layer over the drawing (screen px) and the group it draws in */
   private layer: SVGSVGElement | null = null
   private overlayG: SVGGElement | null = null
@@ -98,6 +105,7 @@ export class Drawing2D {
     // becomes it. The lines keep the drawing's colours: ezdxf draws them for a
     // dark page, colour 7 (white / black) in white, and the page is still dark.
     const page = this.svg.querySelector(':scope > rect')?.getAttribute('fill') ?? null
+    this.pristine = this.svg.cloneNode(true) as SVGSVGElement
     recolour(this.svg, (css) => swapPageColour(css, page, PAGE_COLOUR))
 
     this.layer = svgEl('svg', { class: 'overlay2d-layer' })
@@ -114,6 +122,7 @@ export class Drawing2D {
   clear(): void {
     this.container.replaceChildren()
     this.svg = null
+    this.pristine = null
     this.layer = null
     this.overlayG = null
     this.snaps = []
@@ -264,8 +273,12 @@ export class Drawing2D {
     const w = Math.max(1, Math.round(rect.width * dpr))
     const h = Math.max(1, Math.round(rect.height * dpr))
     const k = w / rect.width
-    // clone at the click: a load that starts during the async decode can't change it
-    const clone = svg.cloneNode(true) as SVGSVGElement
+    // clone at the click: a load that starts during the async decode can't change it.
+    // White starts from the drawing as loaded (its own page colour, see pristine),
+    // at the screen's pan and zoom.
+    const source = background === 'white' && this.pristine ? this.pristine : svg
+    const clone = source.cloneNode(true) as SVGSVGElement
+    clone.setAttribute('viewBox', svg.getAttribute('viewBox') ?? '')
     clone.removeAttribute('style')
     // the viewBox and preserveAspectRatio come along, so the mapping is the screen's
     clone.setAttribute('width', String(w))
