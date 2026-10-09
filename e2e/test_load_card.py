@@ -236,9 +236,36 @@ with sync_playwright() as p:
         route=lambda r: r.fulfill(status=422, json={"detail": "図面に描画エンティティが無い"}),
     )
     assert card()["reason"] == "図面に描画エンティティが無い"
+    # Esc closes a failed card too
+    fail_with(broken, "STL として読めない")
+    page.keyboard.press("Escape")
+    assert not card()["shown"], "4 Esc must close the failed card"
+    # a connection lost after the whole file went up: the backend was there
+    # (simulated by hand: the browser cannot be made to drop it mid-conversion)
+    lost = page.evaluate(
+        """async () => {
+             const api = await import('/src/api.ts')
+             const lc = await import('/src/loadcard.ts')
+             const e = new api.UploadError('no answer from the backend (network error)', 0)
+             return [lc.failureReason(e, 'a.step', 'send'), lc.failureReason(e, 'a.step', 'convert')]
+           }"""
+    )
+    print("4 connection lost:", lost)
+    assert "つながらない" in lost[0] and "変換の途中で通信が切れた" in lost[1], lost
     # the model of section 3 is still on screen under the card (the axis
     # triad shows only with a 3D model on screen)
     assert visible("#triad") and not visible("#empty-hint")
+
+    # ---- 4b. the cards follow the operation panel's left edge when only the
+    #     panel changes (a wider panel here; hiding it does the same)
+    page.set_input_files("#file-input", broken)
+    wait_until("document.querySelector('#load-card').classList.contains('failed')")
+    page.evaluate("document.querySelector('.lil-gui.lil-root').style.setProperty('--width', '330px')")
+    page.wait_for_timeout(200)
+    assert centred_left_of_panel("#load-card"), "4b the card did not follow the panel"
+    page.evaluate("document.querySelector('.lil-gui.lil-root').style.removeProperty('--width')")
+    page.wait_for_timeout(200)
+    centred_left_of_panel("#load-card")
 
     # ---- 5. 別のファイルを選ぶ: the file dialog, and the next load replaces the card
     with page.expect_file_chooser() as fc:

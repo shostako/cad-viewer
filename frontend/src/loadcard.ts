@@ -45,6 +45,7 @@ export class LoadCard {
   private readonly more: HTMLButtonElement
 
   private readonly place: () => void
+  private readonly onClose: () => void
 
   /**
    * el: the card's element (filled here). onAnother: 別のファイルを選ぶ
@@ -83,10 +84,8 @@ export class LoadCard {
       this.steps.appendChild(li)
     }
     q('#load-another').addEventListener('click', onAnother)
-    q('#load-close').addEventListener('click', () => {
-      this.hide()
-      onClose()
-    })
+    this.onClose = onClose
+    q('#load-close').addEventListener('click', () => this.close())
     this.more.addEventListener('click', () => {
       const open = this.detail.classList.toggle('hidden') === false
       this.more.textContent = open ? '詳細を隠す' : '詳細を見る'
@@ -108,6 +107,7 @@ export class LoadCard {
     this.detail.textContent = ''
     this.detail.classList.add('hidden')
     this.more.textContent = '詳細を見る'
+    this.more.hidden = false
     this.step('send')
     this.sent(0)
     this.place()
@@ -149,6 +149,12 @@ export class LoadCard {
     this.el.classList.add('hidden')
     this.el.classList.remove('failed', 'indeterminate')
   }
+
+  /** the failed card goes away by the user's hand (閉じる, Esc) */
+  close(): void {
+    this.hide()
+    this.onClose()
+  }
 }
 
 const FORMAT_NAMES: Record<string, string> = {
@@ -175,6 +181,8 @@ export function failureReason(e: unknown, fileName: string, step: LoadStep): str
   if (e instanceof UploadError) {
     switch (e.status) {
       case 0:
+        // all of the file was up: the backend was there, and went away while converting
+        if (step !== 'send') return '形状の変換の途中で通信が切れた。backend が止まった可能性がある'
         return 'backend につながらない。backend が動いているか確かめる'
       case 400:
         return 'ファイルが空（0 バイト）'

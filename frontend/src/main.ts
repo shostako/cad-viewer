@@ -418,7 +418,11 @@ function onNavigationKey(e: KeyboardEvent): void {
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
-    if (escapeMeasure()) e.preventDefault()
+    // a failed load's card first: it is what the eye is on
+    if (loadCard.failed) {
+      loadCard.close()
+      e.preventDefault()
+    } else if (escapeMeasure()) e.preventDefault()
     return
   }
   if (e.key === 'h' || e.key === 'H') {
@@ -821,6 +825,8 @@ const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id)
 // fitHeight resizes the panel's table, and the panel reports its own changes.
 // The list (ul) too: once the panel is capped, new entries only grow the list.
 new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
+// the panel's left edge sets where the centre cards go (also when it hides)
+new ResizeObserver(() => placeCentreCards()).observe(gui.domElement)
 new ResizeObserver(queueLayoutCorner).observe(measurePanel)
 new ResizeObserver(queueLayoutCorner).observe(measureList)
 window.addEventListener('resize', layoutCorner)
