@@ -26,6 +26,8 @@ export class Drawing2D {
   private vb = { x: 0, y: 0, w: 1, h: 1 }
   private baseVb = { x: 0, y: 0, w: 1, h: 1 }
   private pendingSnap: SnapPoint | null = null
+  /** the marker of pendingSnap, removed when the first point is cancelled */
+  private pendingMarker: SVGCircleElement | null = null
   measureMode = false
 
   constructor(container: HTMLElement, hud: (msg: string) => void) {
@@ -56,6 +58,7 @@ export class Drawing2D {
     this.svg.appendChild(this.overlayG)
     this.snaps = snaps
     this.pendingSnap = null
+    this.pendingMarker = null
   }
 
   /** drop the drawing (the next load starts from an empty viewer) */
@@ -65,11 +68,23 @@ export class Drawing2D {
     this.overlayG = null
     this.snaps = []
     this.pendingSnap = null
+    this.pendingMarker = null
   }
 
   clearMeasurements(): void {
     if (this.overlayG) this.overlayG.innerHTML = ''
     this.pendingSnap = null
+    this.pendingMarker = null
+  }
+
+  /** Drop a chosen first point (Esc). Returns whether there was one. */
+  cancelPending(): boolean {
+    if (!this.pendingSnap) return false
+    this.pendingMarker?.remove()
+    this.pendingMarker = null
+    this.pendingSnap = null
+    this.hud('1 点目を取り消した（もう一度 Esc で計測をやめる）')
+    return true
   }
 
   private applyViewBox(): void {
@@ -215,12 +230,13 @@ export class Drawing2D {
     }
     if (!this.pendingSnap) {
       this.pendingSnap = snap
-      this.addMarker(snap)
+      this.pendingMarker = this.addMarker(snap)
       this.hud(`(${snap.dxf[0]}, ${snap.dxf[1]}) を選択 — 相手をクリック`)
       return
     }
     const a = this.pendingSnap
     this.pendingSnap = null
+    this.pendingMarker = null // part of the measurement now
     this.addMarker(snap)
     const dx = snap.dxf[0] - a.dxf[0]
     const dy = snap.dxf[1] - a.dxf[1]

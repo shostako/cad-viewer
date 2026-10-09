@@ -79,6 +79,11 @@ export class MeasureTool {
     return this.entries
   }
 
+  /** a first point is chosen and waits for its partner (Esc cancels it) */
+  get hasPending(): boolean {
+    return this.pending !== null
+  }
+
   /** Handle a pick in measure mode. Returns a status message for the HUD. */
   async handlePick(pick: PickResult): Promise<string> {
     if (!this.modelId || this.busy) return ''

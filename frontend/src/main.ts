@@ -57,6 +57,10 @@ app.innerHTML = `
     <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
     <div id="hud-keys"></div>
   </div>
+  <div id="undo-toast" class="hidden" role="status">
+    <span id="undo-text"></span>
+    <button id="undo-btn" type="button">元に戻す</button>
+  </div>
   <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
 `
 
@@ -175,7 +179,7 @@ const actions = {
   // 3D keeps the view direction and fits the visible parts; 2D fits the whole drawing
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
   clearMeasure: () => {
-    measureTool.clearAll()
+    deleteWithUndo(() => measureTool.clearAll())
     drawing2d.clearMeasurements()
   },
   // a function declaration below, so it is hoisted
@@ -368,7 +372,17 @@ function isTextEntry(el: EventTarget | null): boolean {
 // clicking a view button the arrows would never reach a bubbling listener
 window.addEventListener('keydown', onNavigationKey, { capture: true })
 function onNavigationKey(e: KeyboardEvent): void {
-  if (isTextEntry(e.target) || e.ctrlKey || e.metaKey || e.altKey) return
+  if (isTextEntry(e.target)) return
+  // Ctrl+Z (Cmd+Z): put back the measurements just deleted, while that can be undone
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'z' || e.key === 'Z')) {
+    if (undoDelete()) e.preventDefault()
+    return
+  }
+  if (e.ctrlKey || e.metaKey || e.altKey) return
+  if (e.key === 'Escape') {
+    if (escapeMeasure()) e.preventDefault()
+    return
+  }
   if (e.key === 'f' || e.key === 'F' || e.key === 'Home') {
     actions.fit() // 2D too: fits the drawing
     e.preventDefault() // Home would scroll
@@ -894,7 +908,11 @@ measureTool.onChange(() => {
 })
 
 // ---- annotation input (small floating text box at the click point)
+/** the note being typed, if any: a new load commits it first (to its own model) */
+let openNote: { commit: () => void } | null = null
 function promptAnnotation(screenX: number, screenY: number, at: THREE.Vector3): void {
+  openNote?.commit()
+  const modelAtPrompt = currentModelId
   const input = document.createElement('input')
   input.type = 'text'
   input.className = 'note-input'
@@ -907,15 +925,21 @@ function promptAnnotation(screenX: number, screenY: number, at: THREE.Vector3): 
   const done = (commit: boolean) => {
     if (closed) return
     closed = true
+    if (openNote === handle) openNote = null
     const text = input.value.trim()
     input.remove() // fires blur synchronously — guarded by `closed`
-    if (commit && text) measureTool.addAnnotation(text, at)
+    // the point belongs to the model clicked: never put it on another one
+    if (commit && text && currentModelId === modelAtPrompt) measureTool.addAnnotation(text, at)
   }
+  const handle = { commit: () => done(true) }
+  openNote = handle
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') done(true)
     else if (e.key === 'Escape') done(false)
   })
-  input.addEventListener('blur', () => done(false))
+  // A click elsewhere keeps what was typed (it used to throw it away
+  // silently); only Esc discards it.
+  input.addEventListener('blur', () => done(true))
 }
 
 measureTool.onChange(() => {
@@ -928,11 +952,100 @@ measureTool.onChange(() => {
     span.textContent = e.label
     const del = document.createElement('button')
     del.textContent = '×'
-    del.addEventListener('click', () => measureTool.remove(e.id))
+    del.addEventListener('click', () => deleteWithUndo(() => measureTool.remove(e.id)))
     li.append(span, del)
     measureList.appendChild(li)
   }
 })
+
+// ---- undo the last deletion (× or 計測クリア)
+// One step back: the list as it was before the deletion, for UNDO_MS or until
+// the list changes otherwise (a new measurement, a model switch). A dialog
+// would stop the hand on every delete; an undo keeps the work safe without it.
+// Putting the list back makes the autosave write it again.
+const UNDO_MS = 8000
+const undoToast = document.querySelector<HTMLDivElement>('#undo-toast')!
+const undoText = document.querySelector<HTMLSpanElement>('#undo-text')!
+const undoBtn = document.querySelector<HTMLButtonElement>('#undo-btn')!
+let undoState: { modelId: string; entries: EntryData[] } | null = null
+let undoTimer: ReturnType<typeof setTimeout> | undefined
+/** set while this code changes the list itself: those changes keep the undo */
+let undoOwnChange = false
+
+function dropUndo(): void {
+  undoState = null
+  clearTimeout(undoTimer)
+  undoToast.classList.add('hidden')
+}
+
+/** Run a deletion; afterwards offer to put back what it removed. */
+function deleteWithUndo(run: () => void): void {
+  const before = measureTool.toJSON()
+  undoOwnChange = true
+  try {
+    run()
+  } finally {
+    undoOwnChange = false
+  }
+  const removed = before.length - measureTool.list().length
+  if (removed <= 0 || !currentModelId) return
+  undoState = { modelId: currentModelId, entries: before }
+  undoText.textContent = `${removed} 件の計測を消した`
+  undoToast.classList.remove('hidden')
+  placeUndoToast()
+  clearTimeout(undoTimer)
+  undoTimer = setTimeout(dropUndo, UNDO_MS)
+}
+
+/** Put the list back as it was before the last deletion. Returns whether it did. */
+function undoDelete(): boolean {
+  const u = undoState
+  if (!u || u.modelId !== currentModelId) return false
+  dropUndo()
+  undoOwnChange = true
+  try {
+    measureTool.clearAll()
+    measureTool.restore(u.entries)
+  } finally {
+    undoOwnChange = false
+  }
+  hudInfo.textContent = `計測を元に戻した（${u.entries.length} 件）`
+  return true
+}
+
+// Just above the HUD, from its left edge: clear of the panels at the top and
+// of the right-hand column, also on half a screen.
+function placeUndoToast(): void {
+  if (undoToast.classList.contains('hidden')) return
+  const r = hud.getBoundingClientRect()
+  undoToast.style.left = `${r.left}px`
+  undoToast.style.bottom = `${window.innerHeight - r.top + 8}px`
+}
+window.addEventListener('resize', placeUndoToast)
+undoBtn.addEventListener('click', () => void undoDelete())
+measureTool.onChange(() => {
+  if (!undoOwnChange) dropUndo()
+})
+
+/**
+ * Esc in 計測 / 注記: first drop a chosen first point, then leave the mode.
+ * Returns whether it did anything (the key is then consumed).
+ */
+function escapeMeasure(): boolean {
+  if (state.mode === '計測') {
+    if (is2D) {
+      if (drawing2d.cancelPending()) return true
+    } else if (measureTool.hasPending) {
+      measureTool.cancelPending()
+      hudInfo.textContent = '1 点目を取り消した（もう一度 Esc で計測をやめる）'
+      return true
+    }
+  }
+  if (state.mode === 'なし') return false
+  modeCtl.setValue('なし')
+  hudInfo.textContent = thicknessHud || modelSummary
+  return true
+}
 
 /** client (page) pixel -> normalized device coords of the 3D canvas */
 function toNdc(clientX: number, clientY: number): THREE.Vector2 {
@@ -1049,6 +1162,7 @@ function fmtBBox(meta: ModelMeta): string {
 let loadGen = 0
 
 async function loadFile(file: File): Promise<void> {
+  openNote?.commit() // the old model is still current: the flush below saves it
   const gen = ++loadGen
   hudInfo.textContent = `読み込み中: ${file.name} ...`
 
