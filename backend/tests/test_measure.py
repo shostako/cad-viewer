@@ -208,3 +208,103 @@ def test_raw_bytes_released_after_lazy_reparse(fresh_state):
     assert res.status_code == 200
     assert "raw" not in entry.extra, "upload bytes must be dropped after reparse"
     assert entry.brep is not None
+
+
+# ---- the dimension line where the user clicked (nearA / nearB) ----------------
+
+
+@pytest.fixture(scope="module")
+def part_ids(model):
+    """part name -> ids (the same file again: the store answers with the same model)"""
+    client, _, _ = model
+    r = client.post("/api/models", files={"file": ("mini_mold.step", STEP.read_bytes(), "x")})
+    out: dict[str, list[int]] = {}
+    for p in r.json()["parts"]:
+        out.setdefault(p["name"], []).append(p["id"])
+    return out
+
+
+def _planar_face(model, part_id, axis, probe):
+    """the planar face of a part square to `axis` (0, 1, 2), nearest the probe point"""
+    best = None
+    for fid in range(1, 7):
+        ref = {"partId": part_id, "kind": "face", "id": fid}
+        info = _measure(model, {"type": "face_info", "ref": ref})
+        if info.get("surface") != "plane" or abs(abs(info["normal"][axis]) - 1) > 1e-9:
+            continue
+        d = _measure(model, {"type": "distance", "a": ref, "b": {"kind": "point", "xyz": probe}})["value"]
+        if best is None or d < best[1]:
+            best = (fid, d)
+    assert best, ("no planar face", part_id, axis)
+    return best[0]
+
+
+def _tops(model, part_ids):
+    plate, block = part_ids["plate"][0], part_ids["cavity_block"][0]
+    a = {"partId": plate, "kind": "face", "id": _planar_face(model, plate, 2, [50, 30, 100])}
+    b = {"partId": block, "kind": "face", "id": _planar_face(model, block, 2, [50, 30, 100])}
+    return a, b
+
+
+def test_parallel_faces_line_through_the_click(model, part_ids):
+    """plate top (z 15) and block top (z 35): 20 wherever they overlap; the line
+    goes through the clicked point, square to both faces"""
+    a, b = _tops(model, part_ids)
+    res = _measure(model, {"type": "distance", "a": a, "b": b, "nearA": [60, 20, 15], "nearB": [40, 40, 35]})
+    assert res["value"] == pytest.approx(20.0, abs=1e-9)
+    assert res["pointA"] == pytest.approx([60, 20, 15], abs=1e-9)
+    assert res["pointB"] == pytest.approx([60, 20, 35], abs=1e-9)
+    # only the second click given: the line goes through it
+    res = _measure(model, {"type": "distance", "a": a, "b": b, "nearB": [40, 40, 35]})
+    assert res["pointA"] == pytest.approx([40, 40, 15], abs=1e-9)
+    assert res["pointB"] == pytest.approx([40, 40, 35], abs=1e-9)
+    # a click off the mesh's exact plane (display tessellation) is dropped onto it
+    res = _measure(model, {"type": "distance", "a": a, "b": b, "nearA": [55, 25, 15.0004]})
+    assert res["pointA"] == pytest.approx([55, 25, 15], abs=1e-9)
+
+
+def test_parallel_faces_value_does_not_depend_on_the_click(model, part_ids):
+    a, b = _tops(model, part_ids)
+    plain = _measure(model, {"type": "distance", "a": a, "b": b})
+    near = _measure(model, {"type": "distance", "a": a, "b": b, "nearA": [35, 18, 15]})
+    assert plain["value"] == near["value"] == pytest.approx(20.0, abs=1e-9)
+
+
+def test_parallel_faces_not_facing_keep_brepextrema(model, part_ids):
+    """plate front (y 0, z 0..15) and block front (y 15, z 15..35) face each other
+    only along z 15: a click elsewhere is not projected through, the line is one
+    of BRepExtrema's (on that edge), the one nearest the clicks"""
+    plate, block = part_ids["plate"][0], part_ids["cavity_block"][0]
+    a = {"partId": plate, "kind": "face", "id": _planar_face(model, plate, 1, [50, -100, 7])}
+    b = {"partId": block, "kind": "face", "id": _planar_face(model, block, 1, [50, -100, 25])}
+    res = _measure(model, {"type": "distance", "a": a, "b": b, "nearA": [50, 0, 7], "nearB": [50, 15, 25]})
+    assert res["value"] == pytest.approx(15.0, abs=1e-9)
+    pa, pb = res["pointA"], res["pointB"]
+    assert pa[1] == pytest.approx(0, abs=1e-9) and pb[1] == pytest.approx(15, abs=1e-9), (pa, pb)
+    assert pa[2] == pytest.approx(15, abs=1e-6) and pb[2] == pytest.approx(15, abs=1e-6), (pa, pb)
+    assert 30 - 1e-6 <= pa[0] <= 70 + 1e-6, pa
+
+
+def test_nearest_of_brepextrema_solutions(model):
+    """two pins' cylinders: the gap is 42 along the line through both axes; with
+    the clicks given, the reported line is one of the solutions, near the clicks"""
+    _, _, pin_ids = model
+    fa, _ = _cylinder_face_id(model, pin_ids[0])
+    fb, _ = _cylinder_face_id(model, pin_ids[1])
+    req = {
+        "type": "distance",
+        "a": {"partId": pin_ids[0], "kind": "face", "id": fa},
+        "b": {"partId": pin_ids[1], "kind": "face", "id": fb},
+        "nearA": [29, 30, 20],
+        "nearB": [71, 30, 20],
+    }
+    res = _measure(model, req)
+    assert res["value"] == pytest.approx(42.0, abs=1e-9)
+    # on the line through both axes (y 30), at the pins' facing sides
+    assert res["pointA"][0] == pytest.approx(29, abs=1e-6) and res["pointB"][0] == pytest.approx(71, abs=1e-6)
+    assert res["pointA"][1] == pytest.approx(30, abs=1e-6) and res["pointB"][1] == pytest.approx(30, abs=1e-6)
+    # BRepExtrema gives this gap at the pins' two ends (z 15 and z 40): the one
+    # nearer the clicks, whichever it lists first
+    assert res["pointA"][2] == pytest.approx(15, abs=1e-6) and res["pointB"][2] == pytest.approx(15, abs=1e-6)
+    res = _measure(model, {**req, "nearA": [29, 30, 38], "nearB": [71, 30, 38]})
+    assert res["pointA"][2] == pytest.approx(40, abs=1e-6) and res["pointB"][2] == pytest.approx(40, abs=1e-6)

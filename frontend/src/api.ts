@@ -125,13 +125,24 @@ export function __stallNextMeasure(ms: number): void {
   _stallNextMeasureMs = ms
 }
 
-export async function measureDistance(modelId: string, a: EntityRef, b: EntityRef) {
+/**
+ * Exact distance between two entities. nearA / nearB: the clicked points; they
+ * choose where the dimension line is drawn when it could stand in many places
+ * (two parallel faces), never the value.
+ */
+export async function measureDistance(
+  modelId: string,
+  a: EntityRef,
+  b: EntityRef,
+  nearA?: [number, number, number],
+  nearB?: [number, number, number],
+) {
   if (_stallNextMeasureMs > 0) {
     const ms = _stallNextMeasureMs
     _stallNextMeasureMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b })
+  return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b, nearA, nearB })
 }
 
 export function measureEdgeInfo(modelId: string, ref: EntityRef) {
