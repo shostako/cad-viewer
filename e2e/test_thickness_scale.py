@@ -518,6 +518,33 @@ def run(page, nav, TAPER, FRUSTUM, INSIDE_OUT):
     nav.page.mouse.move(*[c + 1 for c in on_face(TOP)])
     settle()
     assert draft(TOP) == (90.0, "抜ける側"), "(d) the value is back with the faces"
+
+    # only what is on screen gives a value: not a hidden part, not the side a
+    # section cuts away (TOP is on the plate at x 90; nothing else is behind it)
+    def rehover(xy):
+        page.mouse.move(xy[0] + 3, xy[1] + 3)
+        return hover(xy)
+
+    def tree_toggle(name):
+        page.evaluate(
+            "n => [...document.querySelectorAll('#tree-panel label')]"
+            ".find(l => l.textContent.trim() === n).querySelector('input').click()",
+            name,
+        )
+        settle()
+
+    top_xy = project(TOP)
+    tree_toggle("plate")
+    shown, text, _ = rehover(top_xy)
+    assert not shown, ("(d) a value over a hidden part", text)
+    tree_toggle("plate")
+    assert rehover(top_xy)[0], "(d) the value is back with the part"
+    open_folder("断面")
+    toggle("有効", True)  # axis X at 0.5: keeps x <= 50
+    shown, text, _ = rehover(top_xy)
+    assert not shown, ("(d) a value on the side the section cuts away", text)
+    assert draft((10, 8, 15)) == (90.0, "抜ける側"), "(d) the kept side still gives its value"
+    toggle("有効", False)
     set_select("型開き方向", "+X")
     a, cls = draft(PIN)
     print("(d) mini_mold +X, pin at", PIN_DEG, "deg:", a, cls, "want", round(PIN_DRAFT_X, 2))

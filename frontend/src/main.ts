@@ -565,6 +565,7 @@ async function updateThickness(): Promise<void> {
     thicknessState.enabled = false
     // the colours of the 方式 shown before go with the box: no colours without their legend
     releaseColors('thickness')
+    shownThickness = null
     thicknessLegend.classList.add('hidden')
     probe.refresh()
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
