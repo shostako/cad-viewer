@@ -34,6 +34,7 @@ BORDER = "rgb(48, 56, 69)"
 RADIUS = "10px"
 HEADING = {"fontSize": "12px", "fontWeight": "600", "color": "rgb(170, 180, 193)", "letterSpacing": "normal", "textTransform": "none"}
 ACCENT = "rgb(76, 154, 255)"
+ON_ACCENT = "rgb(11, 18, 32)"
 SCENE = (0x1D, 0x21, 0x26)
 
 with sync_playwright() as p:
@@ -74,6 +75,18 @@ with sync_playwright() as p:
     assert style(gui, ["backgroundColor"])["backgroundColor"] == SURFACE_SOLID, style(gui, ["backgroundColor"])
     g = rect(gui)
     assert abs((g[2] - g[0]) - COLUMN) <= 0.5 and abs(1280 - g[2] - EDGE) <= 0.5 and abs(g[1] - EDGE) <= 0.5, ("GUI", g)
+    # the main button is the one interactive colour, its text dark on it
+    st = style("#empty-open", ["backgroundColor", "color"])
+    assert st == {"backgroundColor": ACCENT, "color": ON_ACCENT}, st
+    # and the keyboard focus shows the ring there too
+    page.locator("#empty-open").focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    st = page.evaluate(
+        "(() => { const e = document.activeElement; const c = getComputedStyle(e);"
+        " return [e.id, c.outlineStyle, c.outlineWidth, c.outlineColor] })()"
+    )
+    assert st == ["empty-open", "solid", "2px", ACCENT], ("focus ring on the main button", st)
     print("empty screen ok", g)
 
     # ---- a model with six measurements: the right-hand column is one width
@@ -120,6 +133,18 @@ with sync_playwright() as p:
     )
     print("focus", st)
     assert st == [True, "solid", "2px", ACCENT], st
+    # パネルを出す (the panels hidden with H): the same ring
+    page.keyboard.press("h")
+    page.wait_for_function("!document.querySelector('#panels-show').classList.contains('hidden')", timeout=5000)
+    page.locator("#panels-show").focus()
+    page.keyboard.press("Shift+Tab")
+    page.keyboard.press("Tab")
+    st = page.evaluate(
+        "(() => { const e = document.activeElement; const c = getComputedStyle(e);"
+        " return [e.id, c.outlineStyle, c.outlineWidth, c.outlineColor] })()"
+    )
+    assert st == ["panels-show", "solid", "2px", ACCENT], ("focus ring on パネルを出す", st)
+    page.locator("#panels-show").click()
 
     # ---- the 3D background is untouched
     url = page.evaluate(

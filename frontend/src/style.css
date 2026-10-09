@@ -24,7 +24,10 @@
   --cv-on-accent: #0b1220;
   /* meaning */
   --cv-measure: #ffd060;
+  --cv-on-measure: #1d2126; /* text on a dimension's yellow label */
   --cv-note: #4a9e6e;
+  --cv-note-bg: rgba(40, 90, 60, 0.92);
+  --cv-note-text: #e8eef5;
   --cv-ok: #3ccf5a;
   --cv-danger: #ff6b6b;
   --cv-danger-text: #ff8f8f;
@@ -68,8 +71,7 @@ body,
 /* the keyboard focus: one ring for every control of the app's own */
 #app button:focus-visible,
 #app input:focus-visible,
-#panels-hide:focus-visible,
-#cursor-tip:focus-visible {
+#panels-hide:focus-visible {
   outline: 2px solid var(--cv-accent);
   outline-offset: 2px;
 }
@@ -398,8 +400,8 @@ body,
 }
 
 .note-label {
-  color: #e8eef5;
-  background: rgba(40, 90, 60, 0.92);
+  color: var(--cv-note-text);
+  background: var(--cv-note-bg);
   border: 1px solid var(--cv-note);
   border-radius: var(--cv-r-sm);
   padding: 2px 8px;
@@ -427,7 +429,7 @@ body,
 }
 
 .dim-label {
-  color: #1d2126;
+  color: var(--cv-on-measure);
   background: var(--cv-measure);
   border-radius: var(--cv-r-sm);
   padding: 1px 6px;
