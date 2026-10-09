@@ -1,7 +1,8 @@
 /**
  * The small label that follows the cursor over the 3D view (#cursor-tip), and
  * the hover logic that fills it: the value under the cursor while the
- * thickness heatmap or the draft colouring is on.
+ * thickness heatmap or the draft colouring is on, and in 計測 / 注記 what a
+ * click would pick (preselect.ts).
  *
  * The label never takes the pointer (pointer-events: none), so it is never in
  * the way of a click, a drag or the wheel. It lives outside the canvas and
@@ -27,9 +28,14 @@ export class CursorTip {
     return !this.el.classList.contains('hidden')
   }
 
-  /** Show `text` beside the cursor at client (x, y), kept inside the window. */
-  show(text: string, x: number, y: number): void {
+  /**
+   * Show `text` beside the cursor at client (x, y), kept inside the window.
+   * kind: a class for the label's look ('pick': the name of what a click
+   * would pick, framed in the highlight's colour); none for a value.
+   */
+  show(text: string, x: number, y: number, kind = ''): void {
     if (this.el.textContent !== text) this.el.textContent = text
+    if (this.el.dataset.kind !== kind) this.el.dataset.kind = kind
     this.el.classList.remove('hidden')
     const w = this.el.offsetWidth
     const h = this.el.offsetHeight
@@ -46,6 +52,9 @@ export class CursorTip {
   }
 }
 
+/** What the tip says: a value, or text with a CursorTip kind; null: nothing (the tip hides) */
+export type TipContent = string | { text: string; kind: string } | null
+
 /**
  * Shows in a CursorTip what `describe` says is under the cursor over `target`
  * (null: nothing to say, the tip hides), looked up at most once per animation
@@ -55,16 +64,18 @@ export class CursorTip {
  * and the touch of a finger is no hover), on a wheel turn, and when the cursor
  * leaves `target`; it comes back with the next move of the cursor. Call
  * refresh() when what is under a still cursor may have changed (the view
- * moved, the colouring changed).
+ * moved, the colouring changed). What `describe` draws besides the tip (the
+ * preselection highlight) goes with it: onStop.
  */
 export class HoverProbe {
   /** client px of the last hover move; null while there is none to show for */
   private at: [number, number] | null = null
   private queued = false
   private readonly tip: CursorTip
-  private readonly describe: (clientX: number, clientY: number) => string | null
+  private readonly describe: (clientX: number, clientY: number) => TipContent
+  private readonly stopListeners: (() => void)[] = []
 
-  constructor(target: HTMLElement, tip: CursorTip, describe: (clientX: number, clientY: number) => string | null) {
+  constructor(target: HTMLElement, tip: CursorTip, describe: (clientX: number, clientY: number) => TipContent) {
     this.tip = tip
     this.describe = describe
     target.addEventListener('pointermove', (e) => {
@@ -87,9 +98,10 @@ export class HoverProbe {
       this.queued = false
       const at = this.at
       if (!at) return
-      const text = this.describe(at[0], at[1])
-      if (text === null) this.tip.hide()
-      else this.tip.show(text, at[0], at[1])
+      const out = this.describe(at[0], at[1])
+      if (out === null) this.tip.hide()
+      else if (typeof out === 'string') this.tip.show(out, at[0], at[1])
+      else this.tip.show(out.text, at[0], at[1], out.kind)
     })
   }
 
@@ -97,5 +109,11 @@ export class HoverProbe {
   stop(): void {
     this.at = null
     this.tip.hide()
+    for (const fn of this.stopListeners) fn()
+  }
+
+  /** Called on every stop (a press, a drag, a wheel turn, the cursor leaving, stop()). */
+  onStop(fn: () => void): void {
+    this.stopListeners.push(fn)
   }
 }

@@ -15,7 +15,7 @@ import {
   type ModelMeta,
   type ModelProperties,
 } from './api'
-import { CursorTip, HoverProbe } from './cursortip'
+import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
@@ -23,6 +23,7 @@ import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
 import { Picker } from './picking'
+import { DiameterCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
@@ -219,7 +220,12 @@ const actions = {
   // 3D keeps the view direction and fits the visible parts; 2D fits the whole drawing
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
   // both can be undone: the 3D list, or a drawing's measurements
-  clearMeasure: () => (is2D ? clearDrawingWithUndo() : deleteWithUndo(() => measureTool.clearAll())),
+  clearMeasure: () => {
+    if (is2D) clearDrawingWithUndo()
+    else deleteWithUndo(() => measureTool.clearAll()) // drops a chosen first point too
+    // a line asking for that point's partner is stale: back to the mode's hint
+    if (modeHud && hudInfo.textContent === modeHud) showModeHint()
+  },
   // a function declaration below, so it is hoisted
   savePng: () => void savePng(),
 }
@@ -233,6 +239,10 @@ const modeCtl = gui
     drawing2d.measureMode = mode === '計測'
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
+    showModeHint()
+    // the highlight and the label follow the mode at once, also under a still cursor
+    preselect.hide()
+    probe.refresh()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
 gui.add(actions, 'clearMeasure').name('計測クリア')
@@ -562,6 +572,29 @@ function clearThickness(): void {
   dropThicknessHud()
   probe.refresh()
 }
+// The status line in 計測 / 注記 says what the next click does: the first
+// point, then (after it, from the click) its partner. When the mode goes, a
+// line that only told what to click goes too, back to the line under it (the
+// heatmap's or the model's); a result (距離 ...) stays. 2D drawings keep their
+// own lines (drawing2d.ts).
+const MEASURE_HINT = '計測: クリックで 1 点目'
+const MEASURE_MESH_HINT = '計測はSTEP/IGESモデルのみ（メッシュ形式に真値はない）'
+const NOTE_HINT = '注記: クリックした点に注記を付ける'
+/** the last 計測 / 注記 line that only says what to click; '' when none is shown */
+let modeHud = ''
+function setModeHud(text: string): void {
+  modeHud = text
+  hudInfo.textContent = text
+}
+function showModeHint(): void {
+  if (modeHud && hudInfo.textContent === modeHud) hudInfo.textContent = thicknessHud || modelSummary
+  modeHud = ''
+  // a 3D model on screen (not the empty screen, a load or a drawing)
+  if (!contentShown || is2D) return
+  if (state.mode === '計測') setModeHud(measureTool.available ? MEASURE_HINT : MEASURE_MESH_HINT)
+  else if (state.mode === '注記') setModeHud(NOTE_HINT)
+}
+
 /** a style switch updates the note only while the HUD shows the heatmap message */
 function refreshHeatmapHud(): void {
   // through setThicknessHud, so that turning the heatmap off still recognises
@@ -696,7 +729,51 @@ draftFolder
     updateDraft()
   })
 
-// ---- the value under the cursor (#cursor-tip)
+// ---- what is under the cursor (#cursor-tip, the preselection highlight)
+// In 計測 / 注記 (3D), what a click there would pick is highlighted and named
+// beside the cursor (pickUnderCursor). Otherwise, while the heatmap or the
+// draft colouring is on, the label says what the colour under the cursor
+// stands for (valueUnderCursor). Where a click would pick a B-rep entity in
+// 計測 / 注記, its name wins over the value: a measurement aims at an entity,
+// and one label stays readable. Where it would not (a mesh model, a
+// measurement in flight), the value shows as in なし.
+const cursorTip = new CursorTip(document.body)
+const probe = new HoverProbe(viewport, cursorTip, underCursor)
+const preselect = new Preselect(viewer)
+// an answer for the entity under a still cursor: its label gets the ⌀ now
+const diameters = new DiameterCache(() => probe.refresh())
+probe.onStop(() => {
+  preselect.hide()
+  diameters.rest(null)
+})
+function underCursor(clientX: number, clientY: number): TipContent {
+  if (state.mode !== 'なし' && !is2D && contentShown) {
+    const picked = pickUnderCursor(clientX, clientY)
+    if (picked !== null) return picked
+  }
+  preselect.hide()
+  diameters.rest(null)
+  return valueUnderCursor(clientX, clientY)
+}
+/**
+ * 計測 / 注記: the pick a click here would make (the click's own call,
+ * picker.pick at this point with the same snap radii), highlighted, and its
+ * name as the measure list gives it, with the exact ⌀ of a circular edge or a
+ * cylindrical face once the backend has told it. null (no highlight) where a
+ * click picks no B-rep entity: off the model, while a measurement is in flight
+ * (busy: the click is dropped), in 計測 on a mesh model (the click only says
+ * it cannot measure), on a face of a mesh model (no entity to show).
+ */
+function pickUnderCursor(clientX: number, clientY: number): TipContent {
+  const live = !measureTool.busy && (state.mode === '注記' || measureTool.available)
+  const pick = live ? picker.pick(toNdc(clientX, clientY)) : null
+  if (!pick || pick.id < 1) return null // the caller hides the highlight
+  preselect.show(pick, state.mode === '計測' ? measureTool.pendingPoint : null)
+  if (!preselect.shown) return null
+  diameters.rest(pick)
+  const d = diameters.get(pick)
+  return { text: measureTool.label(pick) + (d === null ? '' : ` ⌀${d.toFixed(3)}`), kind: 'pick' }
+}
 // While the heatmap or the draft colouring is on, the label beside the cursor
 // says what the colour under it stands for: the thickness, or the draft angle
 // and its class. Read from the triangle under the cursor by the rule that
@@ -704,8 +781,6 @@ draftFolder
 // what the colour says; where the colours blur across a triangle (a large
 // face between thin and thick vertices, a curved B-rep face), it gives the
 // value at that very point.
-const cursorTip = new CursorTip(document.body)
-const probe = new HoverProbe(viewport, cursorTip, valueUnderCursor)
 function valueUnderCursor(clientX: number, clientY: number): string | null {
   if (is2D || colorOwner === 'none') return null
   const hit = picker.faceHit(toNdc(clientX, clientY))
@@ -1310,17 +1385,24 @@ viewport.addEventListener('pointerup', (e) => {
   }
 
   if (!measureTool.available) {
-    hudInfo.textContent = '計測はSTEP/IGESモデルのみ（メッシュ形式に真値はない）'
+    hudInfo.textContent = MEASURE_MESH_HINT
     return
   }
   measureTool
     .handlePick(pick)
     .then((msg) => {
-      if (msg) hudInfo.textContent = msg
+      if (!msg) return
+      // the first point's line asks for the partner: it goes with the mode;
+      // a result stays
+      if (measureTool.pendingPoint) setModeHud(msg)
+      else hudInfo.textContent = msg
     })
     .catch((err) => {
       hudInfo.textContent = `計測エラー: ${err instanceof Error ? err.message : err}`
     })
+    // a cursor moved while the measurement was in flight (no highlight then:
+    // a click would have been dropped) gets its highlight now
+    .finally(() => probe.refresh())
 })
 
 // Double-click (mode なし only: in 計測/注記 both clicks are picks) makes that
@@ -1403,7 +1485,10 @@ async function loadFile(file: File): Promise<void> {
       draftLegend.classList.add('hidden')
       thicknessLegend.classList.add('hidden')
       probe.stop()
+      preselect.setModel([])
+      diameters.setModel(null)
       thicknessHud = ''
+      modeHud = ''
       modelSummary = ''
       modelProps = null
       propsPanel.hide()
@@ -1474,6 +1559,9 @@ async function loadFile(file: File): Promise<void> {
         setContentShown(true, file.name)
         showEmpty(false)
         picker.setModel(model.parts)
+        preselect.setModel(model.parts)
+        // a mesh model has no B-rep to ask for a diameter
+        diameters.setModel(meta.format === 'brep' ? meta.id : null)
         measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         // restore persisted measurements / annotations

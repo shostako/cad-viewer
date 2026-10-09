@@ -84,6 +84,11 @@ export class MeasureTool {
     return this.pending !== null
   }
 
+  /** where the chosen first point is (the marker), while it waits for its partner */
+  get pendingPoint(): THREE.Vector3 | null {
+    return this.pending?.pick.point ?? null
+  }
+
   /** Handle a pick in measure mode. Returns a status message for the HUD. */
   async handlePick(pick: PickResult): Promise<string> {
     if (!this.modelId || this.busy) return ''
@@ -94,7 +99,7 @@ export class MeasureTool {
       this.pending = { pick, marker }
       // circular entity? report its exact diameter as a bonus entry
       void this.reportEntityInfo(pick)
-      return `${this.describe(pick)} を選択 — 相手をクリック`
+      return `${this.describe(pick)} を選択 — 相手をクリックで 2 点目`
     }
 
     const a = this.pending
@@ -180,8 +185,17 @@ export class MeasureTool {
    * say which part was taken.
    */
   private describe(pick: PickResult): string {
-    const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
-    return `${this.partPrefix(pick)}${kind}#${pick.id}`
+    return `${this.partPrefix(pick)}${entityName(pick)}`
+  }
+
+  /**
+   * The name of a pick beside the cursor before the click (preselection):
+   * describe's name with the part set off by a dot, "cavity_block · 面#6"
+   * ("面#6" for a one-part model).
+   */
+  label(pick: PickResult): string {
+    const name = this.partNames?.get(pick.partId)
+    return name ? `${name} · ${entityName(pick)}` : entityName(pick)
   }
 
   /** "core_pin " in an assembly (see describe), "" for a one-part model */
@@ -329,6 +343,11 @@ export class MeasureTool {
     line.renderOrder = 998
     return line
   }
+}
+
+/** 面#6, エッジ#2, 頂点#5: the B-rep entity of a pick, as the HUD and the list name it */
+function entityName(pick: PickResult): string {
+  return `${{ vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]}#${pick.id}`
 }
 
 function toRef(pick: PickResult): EntityRef {

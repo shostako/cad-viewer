@@ -132,6 +132,13 @@ export class Viewer {
   readonly labelRenderer: CSS2DRenderer
   /** overlay group for dimensions / markers / annotations */
   readonly overlay = new THREE.Group()
+  /**
+   * Transient cues drawn for the screen only (the hover preselection of
+   * 計測 / 注記): never picked (the picker casts at the part meshes), never
+   * framed (a fit measures the parts), and left out of a saved image (snapshot
+   * hides the group while it renders the export).
+   */
+  readonly cues = new THREE.Group()
   private modelGroup = new THREE.Group()
   private gridHelper: THREE.GridHelper | null = null
   /** size and placement of the current grid, so an export can build a recoloured copy */
@@ -256,6 +263,7 @@ export class Viewer {
 
     this.scene.add(this.modelGroup)
     this.scene.add(this.overlay)
+    this.scene.add(this.cues)
 
     this.container = container
     new ResizeObserver(() => this.fitToContainer()).observe(container)
@@ -1186,6 +1194,9 @@ export class Viewer {
     if (!ctx) throw new Error('画像を作れない')
     let restore = () => {}
     this.prepareCamera()
+    // the hover cues are for the screen, not for a document
+    const cuesShown = this.cues.visible
+    this.cues.visible = false
     try {
       if (background === 'white') restore = this.applyWhiteBackground()
       this.renderer.render(this.scene, this.camera)
@@ -1193,6 +1204,7 @@ export class Viewer {
       ctx.drawImage(src, 0, 0)
     } finally {
       restore()
+      this.cues.visible = cuesShown
       // the visible canvas holds the normal frame again (a hidden tab may not
       // run the loop for a while)
       this.renderer.render(this.scene, this.camera)
