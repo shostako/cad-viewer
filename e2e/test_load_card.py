@@ -259,6 +259,31 @@ with sync_playwright() as p:
     page.click("#load-close")  # over the panel: Playwright refuses a click on a covered button
     assert not card()["shown"]
 
+    def above_panel(sel):
+        """drawn over the operation panel: the higher z-index in the same stacking context"""
+        return page.evaluate(
+            "s => +getComputedStyle(document.querySelector(s)).zIndex"
+            " > +getComputedStyle(document.querySelector('.lil-gui.lil-root')).zIndex",
+            sel,
+        )
+
+    # the loading card and the open card go over the panel too; the open
+    # card's button takes clicks there
+    meshes = []
+    held_requests("**/mesh.bin", "GET", meshes)
+    page.set_input_files("#file-input", STL)
+    wait_held(meshes)
+    assert not centred_left_of_panel("#load-card") and above_panel("#load-card"), "6 the loading card under the panel"
+    page.unroute("**/mesh.bin")
+    meshes[0].continue_()
+    wait_until("document.querySelector('#hud-info').textContent.includes('tris')")
+    page.goto(BASE_URL)
+    page.wait_for_load_state("networkidle")
+    assert visible("#empty-hint") and not centred_left_of_panel("#empty-hint")
+    assert above_panel("#empty-hint"), "6 the open card under the panel"
+    with page.expect_file_chooser():
+        page.click("#empty-open")
+
     page.screenshot(path="/tmp/cad_viewer_load_card.png")
     # the refused and aborted requests of the failures
     errors = [e for e in errors if "Failed to load resource" not in e]

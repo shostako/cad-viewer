@@ -541,8 +541,10 @@ body,
   pointer-events: auto;
 }
 
-/* no room left of the operation panel: a failed card's buttons go over it */
-#load-card.failed.over-panel {
+/* no room left of the operation panel: the cards go over it (lil-gui: 1001).
+   They still let clicks through where they show no button (pointer-events). */
+#empty-hint.over-panel,
+#load-card.over-panel {
   z-index: 1002;
 }
 
