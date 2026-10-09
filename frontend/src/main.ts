@@ -1058,9 +1058,10 @@ async function loadFile(file: File): Promise<void> {
       // flush above has already landed, so the sidecar GET reads it.)
       const propsStart = performance.now()
       const propsReq = settled(fetchProperties(meta.id))
-      // A sidecar that cannot be read (network error, a body that is not
-      // JSON) is treated like a missing one: the model still loads. The HUD
-      // says so, since a later edit saves over the unread one.
+      // A sidecar that cannot be read is treated like a missing one: the model
+      // still loads, and the HUD gives the reason. Mostly the backend's 500
+      // for a saved file that is damaged (it keeps that file aside when the
+      // next edit saves); also a network error or a body that is not JSON.
       let restoreProblem = ''
       const sidecarReq = getSidecar(meta.id).catch((e: unknown): Record<string, unknown> => {
         restoreProblem = `計測・注記を読み込めなかった（${e instanceof Error ? e.message : e}）`

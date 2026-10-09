@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
 from datetime import datetime
@@ -323,8 +324,11 @@ def _keep_unreadable(path: Path) -> None:
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     try:
         os.replace(path, path.with_name(f"{path.stem}.unreadable-{stamp}.json"))
-    except OSError:
-        pass  # a concurrent save moved it already, or it is gone
+    except FileNotFoundError:
+        pass  # a concurrent save moved it already
+    except OSError as e:
+        # the save goes on (the user's new entries matter more), but leave a trace
+        logging.getLogger(__name__).warning("could not keep unreadable sidecar %s: %s", path.name, e)
 
 
 @app.put("/api/models/{model_id}/sidecar")
