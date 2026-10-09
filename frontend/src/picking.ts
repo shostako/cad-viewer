@@ -176,8 +176,11 @@ export class Picker {
    * Screen-space snap to the drawn B-rep lines of every visible part:
    * vertex within VERTEX_SNAP_PX, else edge within EDGE_SNAP_PX (the same
    * priority as pick()). The nearest on screen wins; on a tie the one nearer
-   * the camera. Clipped-away points (section) never win. Runs once per click,
-   * never per frame: a pass over the edge segments of the visible parts.
+   * the camera. Clipped-away points (section) never win. A pass over the edge
+   * segments of the visible parts: it runs once per click, and for the hover
+   * preselection of 計測 / 注記 at most once per frame and, after a scan that
+   * took a while, only after four times that long (main.ts pickUnderCursor;
+   * not at all during a drag).
    */
   private snapDrawnLines(ndc: THREE.Vector2): PickResult | null {
     const cam = this.viewer.camera

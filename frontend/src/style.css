@@ -167,6 +167,12 @@ body,
   display: none;
 }
 
+/* 計測 / 注記: the name of what a click would pick, framed in the colour of
+   its highlight (preselect.ts PRESELECT_COLOR) */
+#cursor-tip[data-kind='pick'] {
+  border-color: #55d6ff;
+}
+
 #hud-keys {
   margin-top: 4px;
   font-size: 11px;
