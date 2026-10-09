@@ -604,6 +604,69 @@ def run(page, nav, infos):
     page.evaluate("document.activeElement && document.activeElement.blur()")
     print("(n) 半透明 ok:", t)
 
+    # ================= (n2) 半透明: a slow hover pick waits before the next ==========
+    # Every scan of the drawn lines is made to take 25 ms (a model with many
+    # edges) and every pick's start and end are logged, by patching the
+    # picker's class in the page (the dev server's module the app uses).
+    nav.ctl("表示スタイル").locator("select").select_option(label="半透明")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    set_mode("計測")
+    page.evaluate(
+        """async () => {
+             const P = (await import('/src/picking.ts')).Picker.prototype
+             window.__plainScan = P.snapDrawnLines
+             window.__plainPick = P.pick
+             window.__pickLog = []
+             window.__scanMs = 25
+             P.snapDrawnLines = function (ndc) {
+               const t = performance.now()
+               while (performance.now() - t < window.__scanMs) {}
+               return window.__plainScan.call(this, ndc)
+             }
+             P.pick = function (ndc) {
+               const t0 = performance.now()
+               const r = window.__plainPick.call(this, ndc)
+               window.__pickLog.push([t0, performance.now()])
+               return r
+             }
+           }"""
+    )
+    a, b = project(BLOCK_TOP), project(PLATE_TOP)
+    for k in range(31):
+        page.mouse.move(a[0] + (b[0] - a[0]) * k / 30, a[1] + (b[1] - a[1]) * k / 30)
+        page.wait_for_timeout(20)
+    page.wait_for_timeout(500)
+    log = page.evaluate("window.__pickLog")
+    # a move inside a wait (right after a pick): the place is looked at when the
+    # wait is over, without another move (the block's top, not the plate). A
+    # slower scan here (100 ms: a wait of 400 ms) so that the move surely lands
+    # inside the wait, also on a busy machine
+    page.evaluate("window.__scanMs = 100")
+    page.mouse.move(b[0] + 4, b[1])
+    page.wait_for_timeout(150)  # its pick (100 ms) has run; the hover now waits 400 ms
+    page.mouse.move(*a)
+    page.wait_for_timeout(900)
+    page.evaluate(
+        """async () => {
+             const P = (await import('/src/picking.ts')).Picker.prototype
+             P.snapDrawnLines = window.__plainScan
+             P.pick = window.__plainPick
+           }"""
+    )
+    ratios = [(log[i + 1][0] - log[i][1]) / (log[i][1] - log[i][0]) for i in range(len(log) - 1)]
+    print("(n2) hover picks", len(log), "wait / pick time", [round(r, 1) for r in ratios])
+    assert len(log) >= 3, ("(n2) the case needs several picks", log)
+    assert min(ratios) >= 3.6, ("(n2) a hover pick right after a slow one", ratios)
+    t = tip_text("(n2) where the cursor stopped")
+    ha = pick(a)
+    # the block's top face (the plate's top has the same number: the part tells them apart)
+    assert ha and ha["kind"] == "face", ha
+    assert t == name_of(ha, "cavity_block"), ("(n2) the last place was not looked at", t, ha)
+    set_mode("なし")
+    nav.ctl("表示スタイル").locator("select").select_option(label="陰影＋稜線")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    print("(n2) ok")
+
     # ================= (o) the heatmap's value: the pick's name wins in 計測 ========
     title = page.locator(".lil-gui .lil-title", has_text=re.compile("^肉厚$")).first
     title.click()
@@ -651,6 +714,22 @@ def run(page, nav, infos):
     assert_no_tip("2D drawing")
     set_mode("なし")
     print("(q) ok")
+
+    # ================= (r) a mode kept through a load: its hint after the summary ===
+    set_mode("計測")
+    nav.load(STEP)
+    line = hud()
+    print("(r) loaded in 計測:", line)
+    assert "tris" in line and line.endswith(" — " + MEASURE_HINT), line
+    set_mode("なし")
+    assert hud() == line[: -len(" — " + MEASURE_HINT)], ("(r) back to the summary", hud())
+    set_mode("注記")
+    nav.load(STL)
+    assert hud().endswith(" — " + NOTE_HINT), hud()
+    set_mode("計測")  # a mesh model: the click only says it cannot measure
+    assert hud() == MESH_HINT, hud()
+    set_mode("なし")
+    print("(r) ok")
 
 
 if __name__ == "__main__":

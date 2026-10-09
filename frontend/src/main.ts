@@ -22,7 +22,7 @@ import { fitRect, type ScreenRect } from './freearea'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
-import { Picker } from './picking'
+import { Picker, type PickResult } from './picking'
 import { DiameterCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
@@ -582,17 +582,26 @@ const MEASURE_MESH_HINT = '計測はSTEP/IGESモデルのみ（メッシュ形�
 const NOTE_HINT = '注記: クリックした点に注記を付ける（Esc でやめる）'
 /** the last 計測 / 注記 line that only says what to click; '' when none is shown */
 let modeHud = ''
+/** the line the hint was added to (a load's summary), to go back to; '' for the usual one */
+let modeBase = ''
 function setModeHud(text: string): void {
   modeHud = text
   hudInfo.textContent = text
 }
+/** what the mode asks the next click for ('' in なし) */
+function modeHint(): string {
+  if (state.mode === '計測') return measureTool.available ? MEASURE_HINT : MEASURE_MESH_HINT
+  if (state.mode === '注記') return NOTE_HINT
+  return ''
+}
 function showModeHint(): void {
-  if (modeHud && hudInfo.textContent === modeHud) hudInfo.textContent = thicknessHud || modelSummary
+  if (modeHud && hudInfo.textContent === modeHud) hudInfo.textContent = modeBase || thicknessHud || modelSummary
   modeHud = ''
+  modeBase = ''
   // a 3D model on screen (not the empty screen, a load or a drawing)
   if (!contentShown || is2D) return
-  if (state.mode === '計測') setModeHud(measureTool.available ? MEASURE_HINT : MEASURE_MESH_HINT)
-  else if (state.mode === '注記') setModeHud(NOTE_HINT)
+  const hint = modeHint()
+  if (hint) setModeHud(hint)
 }
 
 /** a style switch updates the note only while the HUD shows the heatmap message */
@@ -745,16 +754,32 @@ const diameters = new DiameterCache(() => probe.refresh())
 probe.onStop(() => {
   preselect.hide()
   diameters.rest(null)
+  lastPickTip = null
+  clearTimeout(hoverPickTimer)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
   if (state.mode !== 'なし' && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
     if (picked !== null) return picked
-  }
+  } else lastPickTip = null
   preselect.hide()
   diameters.rest(null)
   return valueUnderCursor(clientX, clientY)
 }
+/**
+ * In 半透明 / ワイヤーフレーム a pick scans every drawn edge and vertex
+ * (Picker.snapDrawnLines). Once per click that is fine; on hover it could run
+ * on every frame (the cursor moves, the view turns), and on a model with many
+ * edges each scan takes milliseconds. So in those styles the hover waits after
+ * each pick HOVER_PICK_WAIT times as long as the pick took (a pick of 1 ms:
+ * every frame; of 25 ms: every 125 ms, a fifth of the time), shows the last
+ * pick meanwhile, and looks at where the cursor is when the wait is over.
+ */
+const HOVER_PICK_WAIT = 4
+let hoverPickReady = 0
+let hoverPickTimer: ReturnType<typeof setTimeout> | undefined
+/** what the last hover pick showed (kept on screen while the next one waits) */
+let lastPickTip: TipContent = null
 /**
  * 計測 / 注記: the pick a click here would make (the click's own call,
  * picker.pick at this point with the same snap radii), highlighted, and its
@@ -766,7 +791,22 @@ function underCursor(clientX: number, clientY: number): TipContent {
  */
 function pickUnderCursor(clientX: number, clientY: number): TipContent {
   const live = !measureTool.busy && (state.mode === '注記' || measureTool.available)
-  const pick = live ? picker.pick(toNdc(clientX, clientY)) : null
+  let pick: PickResult | null = null
+  if (live) {
+    const now = performance.now()
+    if (viewer.seeThrough && now < hoverPickReady) {
+      clearTimeout(hoverPickTimer)
+      hoverPickTimer = setTimeout(() => probe.refresh(), hoverPickReady - now)
+      return lastPickTip
+    }
+    pick = picker.pick(toNdc(clientX, clientY))
+    const end = performance.now()
+    hoverPickReady = viewer.seeThrough ? end + HOVER_PICK_WAIT * (end - now) : 0
+  }
+  lastPickTip = pickTip(pick)
+  return lastPickTip
+}
+function pickTip(pick: PickResult | null): TipContent {
   if (!pick || pick.id < 1) return null // the caller hides the highlight
   preselect.show(pick, state.mode === '計測' ? measureTool.pendingPoint : null)
   if (!preselect.shown) return null
@@ -1577,6 +1617,13 @@ async function loadFile(file: File): Promise<void> {
         // the note goes on the line once; the heatmap and the draft colouring
         // restore the plain summary
         hudInfo.textContent = modelSummary + (restoreProblem ? ` — ${restoreProblem}` : '')
+        // a mode chosen before the load (or kept from the last model) says what
+        // to click on this one, after the summary (E2E waits for the summary)
+        const hint = modeHint()
+        if (hint) {
+          modeBase = hudInfo.textContent
+          setModeHud(`${modeBase} — ${hint}`)
+        }
         loadCard.hide()
       } finally {
         // Every panel of this load is on screen (the HUD text too: it sets
