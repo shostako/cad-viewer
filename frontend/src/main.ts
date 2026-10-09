@@ -19,6 +19,7 @@ import { CursorTip, HoverProbe } from './cursortip'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
+import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
 import { Picker } from './picking'
@@ -41,6 +42,7 @@ app.innerHTML = `
     <div id="empty-drop">または、この画面にファイルをドロップ</div>
     <div id="empty-formats">STEP / IGES / STL / 3MF / OBJ / PLY / DXF / DWG</div>
   </div>
+  <div id="load-card" class="hidden"></div>
   <div id="tree-panel" class="hidden">
     <div id="tree-title">部品ツリー</div>
     <div id="tree-body"></div>
@@ -86,6 +88,16 @@ const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
 const hudKeys = document.querySelector<HTMLDivElement>('#hud-keys')!
 const emptyHint = document.querySelector<HTMLDivElement>('#empty-hint')!
 document.querySelector('#empty-open')!.addEventListener('click', () => fileInput.click())
+// a failed load's card stands in for the open card until it is closed
+const loadCardEl = document.querySelector<HTMLDivElement>('#load-card')!
+const loadCard = new LoadCard(
+  loadCardEl,
+  () => fileInput.click(),
+  () => {
+    if (!contentShown) showEmpty(true)
+  },
+  placeCentreCards,
+)
 const propsEl = document.querySelector<HTMLDivElement>('#props-panel')!
 
 const viewer = new Viewer(viewport)
@@ -162,7 +174,30 @@ function updateTriad(): void {
 /** the "open / drop a file" card in the middle of an empty screen */
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
+  placeCentreCards()
 }
+
+/** room kept between a centre card and the operation panel, and the window's edge */
+const CARD_MARGIN = 16
+/**
+ * The cards in the middle (the open card, the load card) go in the middle of
+ * the part of the window left of the operation panel, so that the panel never
+ * covers them (on half a screen it would cover a third of a card in the
+ * window's middle). Too narrow a part for the card: the middle of the window,
+ * over the panel. Vertically always the middle of the window.
+ */
+function placeCentreCards(): void {
+  const panel = gui.domElement.getBoundingClientRect()
+  for (const card of [emptyHint, loadCardEl]) {
+    if (card.classList.contains('hidden')) continue
+    const w = card.offsetWidth
+    const roomLeft = panel.width > 0 ? panel.left : window.innerWidth
+    const fits = roomLeft >= w + 2 * CARD_MARGIN
+    card.style.left = `${fits ? roomLeft / 2 : window.innerWidth / 2}px`
+    card.classList.toggle('over-panel', !fits)
+  }
+}
+window.addEventListener('resize', placeCentreCards)
 // whether a model or drawing is on screen: a failed load after the old one was
 // torn down leaves an empty screen, which gets the card back
 let contentShown = false
@@ -383,7 +418,11 @@ function onNavigationKey(e: KeyboardEvent): void {
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
-    if (escapeMeasure()) e.preventDefault()
+    // a failed load's card first: it is what the eye is on
+    if (loadCard.failed) {
+      loadCard.close()
+      e.preventDefault()
+    } else if (escapeMeasure()) e.preventDefault()
     return
   }
   if (e.key === 'h' || e.key === 'H') {
@@ -786,9 +825,12 @@ const propsPanel = new PropertiesPanel(propsEl, (id) => viewer.isPartVisible(id)
 // fitHeight resizes the panel's table, and the panel reports its own changes.
 // The list (ul) too: once the panel is capped, new entries only grow the list.
 new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
+// the panel's left edge sets where the centre cards go (also when it hides)
+new ResizeObserver(() => placeCentreCards()).observe(gui.domElement)
 new ResizeObserver(queueLayoutCorner).observe(measurePanel)
 new ResizeObserver(queueLayoutCorner).observe(measureList)
 window.addEventListener('resize', layoutCorner)
+placeCentreCards() // the open card, now that the operation panel is in place
 // When the GUI has had to give way (it scrolls), bring a folder the user just
 // opened into view once lil-gui's opening animation (300 ms) ends. A timer
 // backs up the transitionend: with no transition (nothing to animate, reduced
@@ -1316,10 +1358,25 @@ async function loadFile(file: File): Promise<void> {
   openNote?.commit() // the old model is still current: the flush below saves it
   const gen = ++loadGen
   hudInfo.textContent = `読み込み中: ${file.name} ...`
+  // the card in the middle: it takes the place of the open card (or of the
+  // card of a load that failed), and stays over the old model until it goes
+  loadCard.start(file)
+  showEmpty(false)
+  let step: LoadStep = 'send'
+  const reach = (s: LoadStep) => {
+    if (gen !== loadGen) return // a newer load owns the card
+    step = s
+    loadCard.step(s)
+  }
 
   try {
-    const meta = await uploadModel(file)
+    const meta = await uploadModel(file, (sent) => {
+      if (gen !== loadGen) return
+      if (sent >= 1) reach('convert') // all of it is up: the backend converts it now
+      else loadCard.sent(sent)
+    })
     if (gen !== loadGen) return // superseded by a newer load
+    reach('prepare')
 
     // --- teardown of the previous model -----------------------------------
     // ORDER MATTERS (sidecar corruption hazard):
@@ -1377,6 +1434,7 @@ async function loadFile(file: File): Promise<void> {
         setContentShown(true, file.name)
         showEmpty(false)
         hudInfo.textContent = modelSummary
+        loadCard.hide()
         return
       }
 
@@ -1429,6 +1487,7 @@ async function loadFile(file: File): Promise<void> {
         // the note goes on the line once; the heatmap and the draft colouring
         // restore the plain summary
         hudInfo.textContent = modelSummary + (restoreProblem ? ` — ${restoreProblem}` : '')
+        loadCard.hide()
       } finally {
         // Every panel of this load is on screen (the HUD text too: it sets
         // the HUD's size). E2E waits for this HUD text, set in this same task.
@@ -1441,11 +1500,16 @@ async function loadFile(file: File): Promise<void> {
       if (restoringOwner === gen) restoringOwner = 0
     }
   } catch (e) {
-    hudInfo.textContent = `エラー: ${e instanceof Error ? e.message : e}`
-    if (gen === loadGen && !contentShown) {
-      show2D(false) // back to the plain empty screen, as at start-up
-      showEmpty(true)
-    }
+    if (gen !== loadGen) return // a newer load owns the screen and the card
+    const reason = failureReason(e, file.name, step)
+    hudInfo.textContent = `エラー: ${file.name} を開けなかった — ${reason}`
+    // what the backend said, for whoever looks into it (詳細を見る)
+    const detail = e instanceof Error ? e.message : String(e)
+    loadCard.fail(file.name, reason, detail)
+    // Nothing on screen (the old model went before the failure, or there was
+    // none): the plain empty screen, as at start-up. The failed card has
+    // 別のファイルを選ぶ; closing it brings back the open card.
+    if (!contentShown) show2D(false)
   }
 }
 

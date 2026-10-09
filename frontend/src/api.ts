@@ -20,15 +20,48 @@ export async function fetchDrawingSvg(modelId: string): Promise<string> {
   return res.text()
 }
 
-export async function uploadModel(file: File): Promise<ModelMeta> {
-  const form = new FormData()
-  form.append('file', file)
-  const res = await fetch('/api/models', { method: 'POST', body: form })
-  if (!res.ok) {
-    const detail = await res.json().catch(() => ({ detail: res.statusText }))
-    throw new Error(detail.detail ?? `upload failed: ${res.status}`)
+/** an upload the backend refused (its HTTP status and message), or one that got no answer (status 0) */
+export class UploadError extends Error {
+  readonly status: number
+  constructor(message: string, status: number) {
+    super(message)
+    this.status = status
   }
-  return res.json()
+}
+
+/**
+ * Send a file; the backend converts it before it answers. XMLHttpRequest, not
+ * fetch: only it tells how much of the file has gone up (onSent, 0..1; 1 once
+ * all of it has, when the conversion starts).
+ */
+export function uploadModel(file: File, onSent?: (fraction: number) => void): Promise<ModelMeta> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open('POST', '/api/models')
+    if (onSent) {
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable && e.total > 0) onSent(e.loaded / e.total)
+      })
+      xhr.upload.addEventListener('load', () => onSent(1))
+    }
+    xhr.addEventListener('load', () => {
+      let body: unknown = null
+      try {
+        body = JSON.parse(xhr.responseText)
+      } catch {
+        // not JSON: the status line says what there is to say
+      }
+      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve(body as ModelMeta)
+      const detail = (body as { detail?: unknown } | null)?.detail
+      const message = typeof detail === 'string' ? detail : xhr.statusText || `upload failed: ${xhr.status}`
+      reject(new UploadError(message, xhr.status))
+    })
+    xhr.addEventListener('error', () => reject(new UploadError('no answer from the backend (network error)', 0)))
+    xhr.addEventListener('abort', () => reject(new UploadError('the upload was aborted', 0)))
+    const form = new FormData()
+    form.append('file', file)
+    xhr.send(form)
+  })
 }
 
 export async function fetchMesh(modelId: string): Promise<MeshPack> {
