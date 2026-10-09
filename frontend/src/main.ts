@@ -19,6 +19,7 @@ import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D, measurementText, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
+import { KeyHelp } from './help'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { toModelData, type ModelData } from './model'
@@ -56,12 +57,14 @@ app.innerHTML = `
   </div>
   <div id="triad" class="hidden"></div>
   <div id="hud">
-    <div id="hud-title">cad-viewer</div>
     <div id="draft-legend" class="hidden"></div>
     <div id="thickness-legend" class="hidden"></div>
-    <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
-    <div id="hud-keys"></div>
+    <div id="hud-line">
+      <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
+      <button id="help-open" type="button" title="キー操作の一覧（?）" aria-label="キー操作の一覧">?</button>
+    </div>
   </div>
+  <div id="help-card" class="hidden"></div>
   <button id="panels-show" class="hidden" type="button" title="パネルを出す（H）">パネルを出す</button>
   <div id="undo-toast" class="hidden" role="status">
     <span id="undo-text"></span>
@@ -84,7 +87,6 @@ const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
 const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
 const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
-const hudKeys = document.querySelector<HTMLDivElement>('#hud-keys')!
 const emptyHint = document.querySelector<HTMLDivElement>('#empty-hint')!
 document.querySelector('#empty-open')!.addEventListener('click', () => fileInput.click())
 // a failed load's card stands in for the open card until it is closed
@@ -123,23 +125,12 @@ const partTree = new PartTree(treePanel, {
   colorOf: (id) => `#${viewer.partColor(id)?.getHexString() ?? '8fb4d8'}`,
 })
 
-// how to move around, per view (HUD bottom left)
-const KEYS_3D = [
-  '左ドラッグ・矢印キー: 回転　右ドラッグ・Shift+矢印: 移動　ホイール（カーソルの位置へ）・＋／−: 拡大縮小',
-  'ダブルクリック: そこを回転の中心に　F・Home: 全体表示',
-]
-const KEYS_2D = [
-  'ドラッグ: 移動　ホイール（カーソルの位置へ）: 拡大縮小　F・Home: 全体表示',
-  '計測モード: 端点・中心・四分円点にスナップして 2 点間の距離',
-]
-function setKeys(lines: string[]): void {
-  hudKeys.replaceChildren()
-  lines.forEach((line, i) => {
-    if (i) hudKeys.appendChild(document.createElement('br'))
-    hudKeys.appendChild(document.createTextNode(line))
-  })
-}
-setKeys(KEYS_3D)
+// what the mouse and the keys do (? or the ? at the end of the status line):
+// a card above the status line, which used to carry these lines all the time
+const helpCard = document.querySelector<HTMLDivElement>('#help-card')!
+const keyHelp = new KeyHelp(helpCard, document.querySelector<HTMLButtonElement>('#help-open')!, (on) => {
+  if (on) placeHelp()
+})
 
 let is2D = false
 /**
@@ -156,7 +147,7 @@ function show2D(on: boolean): void {
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
-  setKeys(on ? KEYS_2D : KEYS_3D)
+  keyHelp.setView(on)
   updateTriad()
 }
 
@@ -185,6 +176,7 @@ function updateTriad(): void {
 /** the "open / drop a file" card in the middle of an empty screen */
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
+  applyFolders(on)
   placeCentreCards()
 }
 
@@ -367,14 +359,20 @@ viewFolder
 viewFolder
   .add(viewPrefs, 'autoRotate')
   .name('自動回転')
-  .onChange((v: boolean) => (viewer.autoRotate = v))
-viewFolder
+  .onChange((v: boolean) => {
+    viewer.autoRotate = v
+    speedCtl.show(v)
+  })
+// the speed matters only while turning: shown with 自動回転 on (a row less in
+// the column on half a screen; auto-rotate always starts off)
+const speedCtl = viewFolder
   .add(viewPrefs, 'speed', 5, 120, 1)
   .name('回転速度 (°/秒)')
   .onChange((v: number) => {
     viewer.autoRotateSpeed = v
     saveViewPrefs()
   })
+speedCtl.show(viewPrefs.autoRotate)
 viewFolder
   .add(viewPrefs, 'rotateMode', { ターンテーブル: 'turntable', 自由回転: 'free' })
   .name('回転方式')
@@ -393,6 +391,9 @@ viewFolder
     saveViewPrefs()
   })
 const presetFolder = viewFolder.addFolder('視点')
+// the seven buttons in rows of four (style.css): a row each took seven rows of
+// the column on half a screen. Their names stay (the E2E finds them by name).
+presetFolder.domElement.classList.add('cv-views')
 const presetActions: Record<string, () => void> = {}
 const presetNames: [ViewPreset, string][] = [
   ['front', '正面'],
@@ -440,11 +441,19 @@ function onNavigationKey(e: KeyboardEvent): void {
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
-    // a failed load's card first: it is what the eye is on
-    if (loadCard.failed) {
+    // a card first (the key list, a failed load's): it is what the eye is on
+    if (keyHelp.shown) {
+      keyHelp.show(false)
+      e.preventDefault()
+    } else if (loadCard.failed) {
       loadCard.close()
       e.preventDefault()
     } else if (escapeMeasure()) e.preventDefault()
+    return
+  }
+  if (e.key === '?') {
+    if (!e.repeat) keyHelp.show(!keyHelp.shown)
+    e.preventDefault()
     return
   }
   if (e.key === 'h' || e.key === 'H') {
@@ -988,14 +997,34 @@ function layoutCorner(): void {
   const measureUsed = measureShown ? measurePanel.getBoundingClientRect().height + COLUMN_GAP : 0
   propsPanel.fitHeight(room - measureUsed)
   // the HUD (bottom left) wraps its lines rather than run under the right-hand
-  // column on a narrow window (half a screen): the column starts at the GUI or
-  // at the stack, whichever reaches further left (the stack is as wide as its
-  // widest panel)
+  // column on a narrow window (half a screen)
   const hudLeft = hud.getBoundingClientRect().left
+  hud.style.maxWidth = `${Math.max(columnLeft() - COLUMN_GAP - hudLeft, HUD_MIN_PX)}px`
+  placeHelp()
+}
+/**
+ * Where the right-hand column starts: at the GUI or at the stack, whichever
+ * reaches further left (the stack is as wide as its widest panel).
+ */
+function columnLeft(): number {
   // (a hidden GUI or stack measures 0 x 0 at the origin: not a left edge)
   const lefts = [gui.domElement, cornerBr].map((el) => el.getBoundingClientRect()).filter((r) => r.width > 0)
-  const columnLeft = lefts.length ? Math.min(...lefts.map((r) => r.left)) : window.innerWidth - COLUMN_MARGIN
-  hud.style.maxWidth = `${Math.max(columnLeft - COLUMN_GAP - hudLeft, HUD_MIN_PX)}px`
+  return lefts.length ? Math.min(...lefts.map((r) => r.left)) : window.innerWidth - COLUMN_MARGIN
+}
+/** the smallest room the key list is squeezed into (it scrolls below this) */
+const HELP_MIN_PX = 160
+/**
+ * The key list sits above the status line and the axis triad, from the
+ * window's left edge to the right-hand column (like the status line, never
+ * under the column). Placed again when any of them moves or grows.
+ */
+function placeHelp(): void {
+  if (!keyHelp.shown) return
+  const tops = [hud, triadEl].map((el) => el.getBoundingClientRect()).filter((r) => r.height > 0)
+  const above = Math.min(...tops.map((r) => r.top))
+  helpCard.style.bottom = `${window.innerHeight - above + COLUMN_GAP}px`
+  helpCard.style.maxHeight = `${Math.max(above - COLUMN_GAP - COLUMN_MARGIN, HELP_MIN_PX)}px`
+  helpCard.style.maxWidth = `${Math.max(columnLeft() - COLUMN_GAP - COLUMN_MARGIN, HELP_MIN_PX)}px`
 }
 // From a ResizeObserver, lay out on the next frame: changing an observed
 // element's size inside its own callback reports a "ResizeObserver loop" error.
@@ -1018,6 +1047,8 @@ new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
 new ResizeObserver(() => placeCentreCards()).observe(gui.domElement)
 new ResizeObserver(queueLayoutCorner).observe(measurePanel)
 new ResizeObserver(queueLayoutCorner).observe(measureList)
+// the status line grows and shrinks with its text (and the legends above it)
+new ResizeObserver(() => placeHelp()).observe(hud)
 window.addEventListener('resize', layoutCorner)
 placeCentreCards() // the open card, now that the operation panel is in place
 // When the GUI has had to give way (it scrolls), bring a folder the user just
@@ -1025,8 +1056,49 @@ placeCentreCards() // the open card, now that the operation panel is in place
 // backs up the transitionend: with no transition (nothing to animate, reduced
 // motion) the event never comes, and the listener must not stay behind.
 const REVEAL_FALLBACK_MS = 450
+// ---- the folders are left the way the user left them (表示 and 視点 start
+// open, the rest closed), across reloads. On the empty screen they are all
+// folded (nothing to set yet: the open card is what matters); a model or a
+// drawing brings them back.
+const FOLDERS_KEY = 'cad-viewer:folders'
+const savedFolders: Record<string, boolean> = {}
+try {
+  const saved = JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? '{}')
+  for (const [k, v] of Object.entries(saved ?? {})) if (typeof v === 'boolean') savedFolders[k] = v
+} catch {
+  /* storage unavailable or damaged: the defaults */
+}
+/** the folders remembered, with the state each is built in (set once all exist) */
+let folderDefaults = new Map<GUI, boolean>()
+/** while the app itself folds or unfolds them (the empty screen): not the user's choice */
+let foldingByApp = false
+function rememberFolder(f: GUI): void {
+  if (foldingByApp || !folderDefaults.has(f)) return
+  savedFolders[f._title] = !f._closed
+  try {
+    localStorage.setItem(FOLDERS_KEY, JSON.stringify(savedFolders))
+  } catch {
+    /* best-effort */
+  }
+}
+/** every folder folded (the empty screen), or each the way it was left */
+function applyFolders(empty: boolean): void {
+  foldingByApp = true
+  try {
+    for (const [f, byDefault] of folderDefaults) {
+      // 視点 sits in 表示: folding 表示 hides it, and it keeps its own state
+      const open = empty && f !== presetFolder ? false : (savedFolders[f._title] ?? byDefault)
+      f.open(open)
+    }
+  } finally {
+    foldingByApp = false
+  }
+}
 gui.onOpenClose((changed) => {
-  if (changed === gui || changed._closed) return
+  rememberFolder(changed)
+  // the app's own folding scrolls nothing (a remembered 断面 would pull the
+  // panel down to it on every load)
+  if (foldingByApp || changed === gui || changed._closed) return
   const kids = changed.domElement.querySelector<HTMLElement>(':scope > .lil-children')
   const scroller = gui.domElement.querySelector<HTMLElement>(':scope > .lil-children')
   if (!kids || !scroller) return
@@ -1080,8 +1152,8 @@ viewer.fitArea = (modelW, modelH) => {
 // ---- hide the panels for a while (H, or the button in the GUI's title bar)
 // On half a screen the panels cover about half the canvas; hidden, the model
 // gets the whole of it. Hidden: the GUI, the part tree, the measure list and
-// the volume panel, the HUD's title and key help (its status line, the draft
-// legend and the axis triad stay). Not remembered: a reload shows them again.
+// the volume panel (the status line with its ?, the legends and the axis
+// triad stay). Not remembered: a reload shows them again.
 let panelsHidden = false
 const panelsHide = document.createElement('button')
 panelsHide.type = 'button'
@@ -1144,6 +1216,12 @@ function applyDensity(): void {
   savePropsPrefs()
 }
 applyDensity()
+
+// every folder exists now: remember these, folded on the empty screen we start on
+folderDefaults = new Map(
+  [viewFolder, presetFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder].map((f) => [f, !f._closed]),
+)
+applyFolders(!contentShown)
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
