@@ -440,8 +440,12 @@ def run(page, nav, infos):
     assert t_b == name_of(vertex_b, "plate"), t_b
     page.mouse.click(*v_xy)
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('距離')", timeout=10000)
-    rows = page.locator("#measure-list li span").all_text_contents()
-    want = f"{t_a.replace(' · ', ' ')} ↔ {t_b.replace(' · ', ' ')} : {TOP_TO_CORNER:.3f}"
+    # the row: the value with its unit first, what was measured under it
+    rows = page.evaluate(
+        "[...document.querySelectorAll('#measure-list li')].map(li =>"
+        " [li.querySelector('.m-value').textContent, li.querySelector('.m-what').textContent])"
+    )
+    want = [f"{TOP_TO_CORNER:.3f} mm", f"{t_a.replace(' · ', ' ')} ↔ {t_b.replace(' · ', ' ')}"]
     print("(g) row:", rows, "want", want)
     assert rows == [want], (rows, want)
     assert hud() == f"距離 {TOP_TO_CORNER:.3f}", hud()

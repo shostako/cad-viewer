@@ -715,21 +715,59 @@ body,
   display: none;
 }
 
-#measure-title {
+/* 計測 · the count · すべてコピー */
+#measure-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 6px;
+}
+
+#measure-count {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+#measure-copy-all {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#measure-copy-all:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+#measure-copy-all.done,
+#measure-list .m-copy.done {
+  color: var(--cv-ok);
 }
 
 #measure-list {
   list-style: none;
 }
 
+/* a row: the kind's mark, the value (with its unit) over what was measured,
+   then the copy and the × */
 #measure-list li {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
+  align-items: flex-start;
   gap: 8px;
-  padding: 3px 0;
+  padding: 5px 2px 5px 4px;
   border-top: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
   font-variant-numeric: tabular-nums;
 }
 
@@ -737,13 +775,92 @@ body,
   border-top: none;
 }
 
-/* the values can be selected and copied (into a report, Excel); the × cannot */
-#measure-list li > span {
+/* its label, line and points are lit in 3D (or the pointer is on its label) */
+#measure-list li.hot {
+  background: var(--cv-pick-weak);
+  box-shadow: inset 2px 0 0 var(--cv-pick);
+}
+
+#measure-list .m-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  height: 20px;
+  color: var(--cv-measure);
+}
+
+#measure-list li[data-kind='note'] .m-icon {
+  color: var(--cv-note);
+}
+
+/* the values can be selected and copied too (into a report, Excel) */
+#measure-list .m-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
   user-select: text;
 }
 
-#measure-list button {
+#measure-list .m-value {
+  color: var(--cv-text);
+  font-size: var(--cv-fs-lg);
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+/* a note is text, not a number */
+#measure-list li[data-kind='note'] .m-value,
+#measure-list li[data-kind='other'] .m-value {
+  font-size: var(--cv-fs-md);
+  font-weight: 400;
+}
+
+#measure-list .m-unit {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  font-weight: 400;
+}
+
+#measure-list .m-what {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* the copy before the × on screen; the × stays the row's first (only) button */
+#measure-list .m-copy {
+  order: 3;
   flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  color: var(--cv-text-3);
+  border-radius: var(--cv-r-sm);
+  cursor: pointer;
+  user-select: none;
+}
+
+#measure-list .m-copy:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+/* the list scrolls (clips): the ring sits on the control */
+#measure-list .m-copy:focus-visible {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: 0;
+}
+
+#measure-list button {
+  order: 4;
+  flex: none;
+  height: 20px;
   background: none;
   border: none;
   border-radius: var(--cv-r-sm);
@@ -752,11 +869,19 @@ body,
   font-size: 14px;
   line-height: 1;
   padding: 2px 5px;
+  user-select: none;
 }
 
 #measure-list button:hover {
   color: var(--cv-danger);
   background: var(--cv-hover);
+}
+
+/* a 3D label whose row the pointer is on (or that is under the pointer) */
+.dim-label.hot,
+.note-label.hot {
+  outline: 2px solid var(--cv-pick);
+  outline-offset: 1px;
 }
 
 .note-label {
