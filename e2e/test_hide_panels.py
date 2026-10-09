@@ -31,7 +31,7 @@ with nav_session() as n:
 
     def refitted(tag):
         """the app fitted again on the toggle: check against the panels now on screen"""
-        n.fit_panels = n.panel_rects()
+        n.mark_fit()
         return n.fill_check(*MOLD, tag)
 
     def same_view(a, b):
