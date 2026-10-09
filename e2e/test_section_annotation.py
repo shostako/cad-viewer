@@ -6,8 +6,9 @@ turned the section on. Now a pick checks the clipping itself: the plate's top
 at x 90 is on the side the default section (axis X at 0.5, x <= 50 kept)
 cuts away.
 
-The model is a private copy of mini_mold.step (seven trailing newlines: its
-own content hash, so its own sidecar). Its sidecar is emptied before and after:
+The model is a private copy of mini_mold.step (fifteen trailing newlines: its
+own content hash, so its own sidecar; the other scripts' copies take the odd
+counts 3 to 13). Its sidecar is emptied before and after:
 the note this script writes no longer stays on the shared mini_mold.step,
 where other scripts and the user's own views saw it.
 """
@@ -26,7 +27,7 @@ BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
 
 tmp = tempfile.mkdtemp(prefix="cad_section_note_")
 STEP = os.path.join(tmp, "mini_mold.step")
-Path(STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 7)
+Path(STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 15)
 CUT = (90, 10, 15)  # on the plate's top, on the side the section cuts away
 
 
