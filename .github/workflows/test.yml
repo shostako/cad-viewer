@@ -68,7 +68,9 @@ jobs:
 
   e2e:
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # a shard takes 8-16 min (the runners' speed varies about twofold); room
+    # for one script that hangs up to its own limit (E2E_SCRIPT_TIMEOUT)
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
@@ -112,6 +114,11 @@ jobs:
       - name: E2E
         env:
           SHARD: ${{ matrix.shard }}
+          # per script. The slowest scripts take 150 s on a fast runner and
+          # up to 300 s on a slow one (test_ortho_nav, test_display_styles)
+          E2E_SCRIPT_TIMEOUT: 600
+          # a script stopped by the timeout still shows how far it got
+          PYTHONUNBUFFERED: '1'
         run: |
           (cd backend && nohup .venv/bin/uvicorn app.main:app --port 8008 > /tmp/uvicorn.log 2>&1 &)
           # --host: Vite's default "localhost" resolves to ::1 on the runner, and
@@ -135,7 +142,7 @@ jobs:
             total=$((total + 1))
             echo "::group::$t"
             start=$(date +%s)
-            if timeout 300 backend/.venv/bin/python "$t"; then
+            if timeout "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "$t"; then
               passed=$((passed + 1))
             else
               echo "::error title=E2E failed::$t"

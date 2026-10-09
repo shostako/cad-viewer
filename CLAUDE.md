@@ -51,7 +51,7 @@ for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do
 done
 ```
 
-CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。
+CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
 
 ### 手元（WSL2 ＋ Windows）だけのもの
 
