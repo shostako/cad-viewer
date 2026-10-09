@@ -70,10 +70,24 @@ const toSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.
 export const MAX_LUMINANCE_ON_WHITE = 0.18
 
 /**
+ * A drawing's page colour made another one, in CSS text (a <style> rule or a
+ * stroke / fill / style attribute): `page` (any case, #rgb too) becomes
+ * `colour`, the other colours stay. The 2D viewer puts a drawing on the 3D
+ * view's background this way: ezdxf fills WIPEOUT masks with its page colour
+ * (#212830), and they must stay unseen on the new page too.
+ */
+export function swapPageColour(css: string, page: string | null, colour: string): string {
+  const pageHex = page ? hex6(page) : null
+  if (!pageHex) return css
+  return css.replace(/#([0-9a-f]{6}|[0-9a-f]{3})\b/gi, (match) => (hex6(match) === pageHex ? colour : match))
+}
+
+/**
  * Drawing colours for a white page, in CSS text (a <style> rule or a
  * stroke / fill / style attribute):
- * - `page`, the drawing's own page colour (ezdxf #212830), becomes white:
- *   ezdxf fills WIPEOUT masks with it, unseen on screen, dark boxes on white;
+ * - `page`, the drawing's page colour (on screen the 3D background #1d2126,
+ *   see swapPageColour), becomes white: WIPEOUT masks are filled with it,
+ *   unseen on screen, dark boxes on white;
  * - near-white (every channel >= 0xE0) becomes black: drawings use white for
  *   "the default colour" (ACI 7), drawn black on a white page as in CAD;
  * - other light colours (yellow, cyan, green ...: under 4.5:1 against white,

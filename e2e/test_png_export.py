@@ -55,7 +55,8 @@ MOLD = ((0, 0, 0), (100, 60, 40))  # plate + pins + block
 CLICK_A = (50, 30, 35)  # cavity block top, centre
 CLICK_B = (90, 10, 15)  # plate top, clear of the pins and the block (20.000 below A)
 NOTE_AT = (10, 10, 15)  # plate top, front-left: left of the block, clear of the panels
-DRAW_PAGE = (33, 40, 48)  # ezdxf background rect #212830
+EZDXF_PAGE = (33, 40, 48)  # the page ezdxf draws a drawing on (its background rect, #212830)
+DRAW_PAGE = BG  # on screen a drawing's page is the 3D background: the viewer swaps ezdxf's
 # runs of spaces: the page collapses them to one, an export must too
 NOTE_WORD = "G1-ABC"
 NOTE_TEXT = "ゲート      " + NOTE_WORD
@@ -565,7 +566,7 @@ try:
             px = patch(img, sorigin, pts[q], 2)
             assert px.min(axis=1).max() >= 180, ("2D line missing (white lines)", q, px.tolist())
         px = patch(img, sorigin, pts[INTERIOR], 1)
-        assert near_colour(px, DRAW_PAGE, 12).all(), ("2D page colour", px.tolist())
+        assert near_colour(px, DRAW_PAGE, 2).all(), ("2D page colour", px.tolist())
         for q in HOLES:
             px = patch(img, sorigin, above(pts[q]), 1)
             assert near_colour(px, MARKER, 25).all(), ("2D marker missing", q, px.tolist())
@@ -593,12 +594,24 @@ try:
         name, img, before, after = export("2d_colours_white")
         for c in corner_patches(img):
             assert np.mean(c.min(axis=2) >= 250) >= 0.75, ("corner not white", c.reshape(-1, 3)[:4].tolist())
-        # 1. the wipeout (page-coloured on screen, so unseen) is white, not a dark box
-        page_dark = int(near_colour(img, DRAW_PAGE, 6).sum())
+        # 1. the wipeout (page-coloured on screen, so unseen) is white, not a dark box;
+        #    neither page colour (the screen's, ezdxf's) is left, but for the
+        #    line drawn in #1d2126 itself (y 45, x 5..45): the screen swaps the
+        #    page to that very colour, and the white page must not take the line
+        a, b = dxf_client(3, 47, CSIZE), dxf_client(47, 43, CSIZE)
+        lx0, ly0, lx1, ly1 = dev_box((a[0], a[1], b[0], b[1]), sorigin, img)
+        page_mask = near_colour(img, DRAW_PAGE, 6) | near_colour(img, EZDXF_PAGE, 6)
+        page_mask[ly0:ly1, lx0:lx1] = False
+        page_dark = int(page_mask.sum())
         wipe = patch(img, sorigin, dxf_client(25, 20, CSIZE), 10)
         print("page-coloured pixels:", page_dark, "wipeout centre min", int(wipe.min()))
         assert page_dark <= 20, ("the drawing's page colour is left on the white page", page_dark)
         assert wipe.min() >= 250, ("the wipeout is not white", wipe[:4].tolist())
+        native = patch(img, sorigin, dxf_client(25, 45, CSIZE), 3)
+        darkest_native = native[int(np.argmin(luminance(native)))]
+        print("the #1d2126 line:", darkest_native.tolist())
+        assert all(abs(int(c) - t) <= 12 for c, t in zip(darkest_native, DRAW_PAGE)), (
+            "the line drawn in #1d2126 went white with the page", darkest_native.tolist())
         # 2. the ACI 7 outline is black
         px = patch(img, sorigin, dxf_client(30, 50, CSIZE), 3)
         assert px.max(axis=1).min() <= 80, ("outline not black", px.tolist())
@@ -623,8 +636,8 @@ try:
         bright = int(near_colour(box, (255, 255, 0), 60).sum())
         print("yellow text: dark ink", ink, "pure yellow", bright)
         assert ink >= 100 and bright == 0, ("yellow text not darkened", ink, bright)
-        # 5. the screen is untouched
-        assert page.evaluate("document.querySelector('#viewport2d svg > rect').getAttribute('fill')") == "#212830"
+        # 5. the screen is untouched: its page stays the 3D background
+        assert page.evaluate("document.querySelector('#viewport2d svg > rect').getAttribute('fill')") == "#1d2126"
         check_name(name, "colours_drawing", before, after)
 
         # ---- (e2) a load that fails after the teardown disables the button again --
