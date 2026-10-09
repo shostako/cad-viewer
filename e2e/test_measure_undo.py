@@ -222,6 +222,42 @@ with sync_playwright() as p:
     set_mode("なし")
     print("6 notes ok")
 
+    # ---- 6c. while a note is being typed, one click on × deletes and one click
+    # on 元に戻す undoes (the note's commit must not eat the click); the note
+    # stays open and is still committed with Enter
+    set_mode("注記")
+    n = count()
+    click_world(PLATE_TOP2)
+    page.wait_for_selector(".note-input", timeout=5000)
+    page.keyboard.type("途中")
+    page.locator("#measure-list li").nth(0).locator("button").click()
+    wait_count(n - 1)
+    assert toast_shown()
+    assert page.locator(".note-input").count() == 1 and page.locator(".note-input").input_value() == "途中"
+    page.locator("#undo-btn").click()
+    wait_count(n)
+    assert page.locator(".note-input").count() == 1, "6c the undo click closed the note"
+    page.locator(".note-input").press("Enter")
+    wait_count(n + 1)
+    assert any("途中" in t for t in texts()), texts()
+    set_mode("なし")
+    print("6c one click while typing ok")
+
+    # ---- 6d. an undo keeps a first point chosen after the deletion
+    set_mode("計測")
+    n = count()
+    page.locator("#measure-list li").nth(0).locator("button").click()
+    wait_count(n - 1)
+    click_world(CAV_TOP)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('相手をクリック')", timeout=10000)
+    page.keyboard.press("Control+z")
+    wait_count(n)
+    click_world(PLATE_TOP)  # the partner of the first point chosen before the undo
+    wait_count(n + 1)
+    assert texts()[-1].endswith("20.000"), ("6d the first point was dropped by the undo", texts())
+    set_mode("なし")
+    print("6d undo keeps the first point ok")
+
     # ---- 6b. a note still being typed when another file is opened goes to its
     # own model (saved before the switch), not to the new one
     set_mode("注記")
@@ -235,6 +271,35 @@ with sync_playwright() as p:
     assert page.locator(".note-input").count() == 0 and count() == 0, texts()
     set_mode("なし")
     print("6b note before a load ok")
+
+    # ---- 6e. a note opened while the next file is uploading still goes to the
+    # model it was clicked on (saved before the switch)
+    load(STEP)
+    held = []
+    page.route("**/api/models", lambda r: held.append(r) if r.request.method == "POST" else r.continue_())
+    page.set_input_files("#file-input", STL)
+    for _ in range(100):
+        if held:
+            break
+        page.wait_for_timeout(50)
+    assert held, "6e the upload was not seen"
+    set_mode("注記")
+    click_world(PLATE_TOP)
+    page.wait_for_selector(".note-input", timeout=5000)
+    page.keyboard.type("アップロード中の注記")
+    saved_before = len(puts)
+    page.unroute("**/api/models")
+    held[0].continue_()
+    page.wait_for_function(
+        "document.querySelector('#hud-info').textContent.includes('tris')"
+        " && document.querySelector('#hud-info').textContent.includes('ribbed_plate.stl')",
+        timeout=60000,
+    )
+    assert any("アップロード中の注記" in json.dumps(b, ensure_ascii=False) for b in puts[saved_before:]), \
+        ("6e the note opened during the upload was lost", puts[saved_before:])
+    assert count() == 0, ("6e the note went to the new model", texts())
+    set_mode("なし")
+    print("6e note during an upload ok")
 
     # ---- 7. a model switch ends the undo
     load(STEP)

@@ -212,6 +212,20 @@ export class MeasureTool {
     return failed
   }
 
+  /**
+   * Replace the list with saved entries (the undo of a deletion). Unlike
+   * clearAll + restore, a chosen first point and a measurement in flight
+   * stay: the user may have started the next one before undoing.
+   * Returns how many could not be rebuilt.
+   */
+  replaceAll(datas: EntryData[]): number {
+    for (const e of this.entries) for (const o of e.objects) this.viewer.disposeOverlayObject(o)
+    this.entries = []
+    const failed = this.restore(datas)
+    this.emit() // also when nothing could be rebuilt
+    return failed
+  }
+
   cancelPending(): void {
     // invalidate in-flight distance / entity-info requests too — leaving
     // measure mode must not let a late response add (and autosave) an entry

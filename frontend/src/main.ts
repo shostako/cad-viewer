@@ -950,7 +950,7 @@ measureTool.onChange(() => {
     span.textContent = e.label
     const del = document.createElement('button')
     del.textContent = '×'
-    del.addEventListener('click', () => deleteWithUndo(() => measureTool.remove(e.id)))
+    pressOnce(del, () => deleteWithUndo(() => measureTool.remove(e.id)))
     li.append(span, del)
     measureList.appendChild(li)
   }
@@ -970,6 +970,25 @@ let undoState: { modelId: string; entries?: EntryData[]; drawing?: string } | nu
 let undoTimer: ReturnType<typeof setTimeout> | undefined
 /** set while this code changes the list itself: those changes keep the undo */
 let undoOwnChange = false
+
+/**
+ * A button of the measure list or the undo toast acts on mousedown and keeps
+ * the focus where it is. On click it came too late: a note being typed loses
+ * the focus on mousedown and commits, the list is drawn again, and the button
+ * under the mouse is a new one by the mouseup, so the first click did nothing
+ * (and a commit also ends the undo the click was meant to use). The keyboard
+ * (Enter / Space on a focused button) still works through click.
+ */
+function pressOnce(btn: HTMLButtonElement, act: () => void): void {
+  btn.addEventListener('mousedown', (ev) => {
+    if (ev.button !== 0) return
+    ev.preventDefault() // no focus change: a note being typed stays open
+    act()
+  })
+  btn.addEventListener('click', (ev) => {
+    if (ev.detail === 0) act() // from the keyboard; a mouse click acted on mousedown
+  })
+}
 
 function dropUndo(): void {
   undoState = null
@@ -1020,13 +1039,13 @@ function undoDelete(): boolean {
   }
   if (!u.entries) return false
   undoOwnChange = true
+  let failed = 0
   try {
-    measureTool.clearAll()
-    measureTool.restore(u.entries)
+    failed = measureTool.replaceAll(u.entries)
   } finally {
     undoOwnChange = false
   }
-  hudInfo.textContent = `計測を元に戻した（${u.entries.length} 件）`
+  hudInfo.textContent = `計測を元に戻した（${u.entries.length - failed} 件）`
   return true
 }
 
@@ -1039,7 +1058,8 @@ function placeUndoToast(): void {
   undoToast.style.bottom = `${window.innerHeight - r.top + 8}px`
 }
 window.addEventListener('resize', placeUndoToast)
-undoBtn.addEventListener('click', () => void undoDelete())
+new ResizeObserver(placeUndoToast).observe(hud) // the HUD grows with its text and the legends
+pressOnce(undoBtn, () => void undoDelete())
 measureTool.onChange(() => {
   if (!undoOwnChange) dropUndo()
 })
@@ -1197,6 +1217,8 @@ async function loadFile(file: File): Promise<void> {
     //    edit (which a later save then persists over)
     // 2. restoring=true so teardown emits can't schedule new saves
     // 3. only then swap currentModelId and clear tools
+    // a note opened while the upload ran still belongs to the old model
+    openNote?.commit()
     await flushSidecar()
     if (gen !== loadGen) return // flush await yielded — a newer load may have won
     restoringOwner = gen
