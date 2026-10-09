@@ -185,3 +185,51 @@ def test_sidecar_concurrent_puts_no_tmp_collision(client):
     from app.main import SIDECAR_DIR
     leftovers = list(SIDECAR_DIR.glob("*.tmp"))
     assert leftovers == [], leftovers
+
+
+def test_sidecar_missing_is_empty(client):
+    mid = _upload_box(client, (11, 21, 31))["id"]
+    r = client.get(f"/api/models/{mid}/sidecar")
+    assert r.status_code == 200 and r.json() == {}
+
+
+@pytest.mark.parametrize(
+    "raw, why",
+    [
+        (b"{not json", "JSON ではない"),
+        (b"[1, 2, 3]", "中身の形が違う"),
+        (b"\xff\xfe{}", "UTF-8 ではない"),
+    ],
+)
+def test_sidecar_unreadable_is_an_error(client, raw, why):
+    """A sidecar file that is there but cannot be read is not reported as
+    "nothing saved" ({}): the load tells the user instead."""
+    from app.main import _sidecar_path
+
+    mid = _upload_box(client, (12, 22, 32))["id"]
+    path = _sidecar_path(mid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+    r = client.get(f"/api/models/{mid}/sidecar")
+    assert r.status_code == 500, (r.status_code, r.text)
+    assert "壊れている" in r.json()["detail"] and why in r.json()["detail"], r.json()
+    assert path.read_bytes() == raw, "a GET must not touch the file"
+
+
+def test_sidecar_save_keeps_an_unreadable_file(client):
+    """The next save after an unreadable sidecar keeps the old bytes beside it."""
+    from app.main import _sidecar_path
+
+    mid = _upload_box(client, (13, 23, 33))["id"]
+    path = _sidecar_path(mid)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"{damaged")
+    r = client.put(f"/api/models/{mid}/sidecar", json={"version": 1, "entries": []})
+    assert r.status_code == 200, r.text
+    kept = sorted(path.parent.glob(f"{path.stem}.unreadable-*.json"))
+    assert len(kept) == 1 and kept[0].read_bytes() == b"{damaged", kept
+    assert client.get(f"/api/models/{mid}/sidecar").json() == {"version": 1, "entries": []}
+    # a readable sidecar is replaced as before, with no copy
+    r = client.put(f"/api/models/{mid}/sidecar", json={"version": 1, "entries": [{"n": 1}]})
+    assert r.status_code == 200
+    assert len(sorted(path.parent.glob(f"{path.stem}.unreadable-*.json"))) == 1

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, UploadFile
@@ -275,13 +277,58 @@ def _sidecar_path(model_id: str) -> Path:
     return SIDECAR_DIR / f"{content_hash}.json"
 
 
+class _UnreadableSidecar(Exception):
+    """A sidecar file is there but cannot be read as one (damaged, edited by hand)."""
+
+
+def _read_sidecar(path: Path) -> dict | None:
+    """The saved sidecar, or None when nothing is saved for the model."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    except UnicodeDecodeError as e:
+        raise _UnreadableSidecar("文字コードが UTF-8 ではない") from e
+    except OSError as e:
+        raise _UnreadableSidecar(e.strerror or str(e)) from e
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as e:
+        raise _UnreadableSidecar(f"JSON ではない、{e.lineno} 行目") from e
+    if not isinstance(data, dict):
+        raise _UnreadableSidecar("中身の形が違う")
+    return data
+
+
 @app.get("/api/models/{model_id}/sidecar")
 def get_sidecar(model_id: str) -> dict:
+    """{} when nothing is saved. A file that cannot be read is an error, not
+    {}: the load then tells the user, instead of opening as if nothing had
+    been saved (the next edit would save over the file without a word)."""
     path = _sidecar_path(model_id)
     try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
+        return _read_sidecar(path) or {}
+    except _UnreadableSidecar as e:
+        raise HTTPException(500, f"保存ファイルが壊れている: {e}") from e
+
+
+def _keep_unreadable(path: Path) -> None:
+    """Move an unreadable sidecar aside before a save replaces it. The model
+    opened without its entries (GET said why); the bytes may still be
+    repaired by hand, so they stay, as <hash>.unreadable-<time>.json."""
+    try:
+        _read_sidecar(path)
+        return  # missing or readable: replaced as usual
+    except _UnreadableSidecar:
+        pass
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    try:
+        os.replace(path, path.with_name(f"{path.stem}.unreadable-{stamp}.json"))
+    except FileNotFoundError:
+        pass  # a concurrent save moved it already
+    except OSError as e:
+        # the save goes on (the user's new entries matter more), but leave a trace
+        logging.getLogger(__name__).warning("could not keep unreadable sidecar %s: %s", path.name, e)
 
 
 @app.put("/api/models/{model_id}/sidecar")
@@ -295,6 +342,7 @@ def put_sidecar(model_id: str, body: dict) -> dict:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write(json.dumps(body, ensure_ascii=False))
+        _keep_unreadable(path)
         os.replace(tmp, path)
     except OSError:
         try:

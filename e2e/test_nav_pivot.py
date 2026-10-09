@@ -1,17 +1,21 @@
 """E2E: double-click sets the rotation centre (both rotate modes) — the C checks
 of the navigation suite. Split from test_navigation.py so each script stays well
 under the CI per-script limit. Helpers and the rule for expected values: nav_common.py.
+
+"Mid-screen" is the view centre: the centre of the free area a fit framed
+the model in (Nav.view_centre, from the panels' rects), not the canvas centre.
 """
 import math
 
 from nav_common import (
-    LOAD_DIR, RUNNER, STEP, SURFACE,
-    close, dot, nav_session, norm, sub,
+    LOAD_DIR, RUNNER, SURFACE,
+    add, close, dot, mul, nav_session, norm, sub,
 )
 
 with nav_session(boxes=("runner",)) as n:
     page = n.page
     paths = n.paths
+    STEP = paths["step"]  # private copy, empty sidecar (nav_session)
     load, settle, view, project, pick = n.load, n.settle, n.view, n.project, n.pick
     canvas_rect, ctl, click_button, set_mode, set_rotate = n.canvas_rect, n.ctl, n.click_button, n.set_mode, n.set_rotate
     direction, same_dir, rect, fill_check, depth_check = n.direction, n.same_dir, n.rect, n.fill_check, n.depth_check
@@ -19,11 +23,10 @@ with nav_session(boxes=("runner",)) as n:
     load(STEP)
 
     # ============ C. double-click rotation centre ================================
-    CENTRE_JS = "(() => { const r = document.querySelector('#viewport canvas').getBoundingClientRect();" \
-        " return [r.left + r.width / 2, r.top + r.height / 2] })()"
-    centre = page.evaluate(CENTRE_JS)
+    centre = n.view_centre()
 
     def setup(mode):
+        global centre
         set_rotate(mode)
         click_button("等角")
         if mode == "自由回転":
@@ -31,8 +34,8 @@ with nav_session(boxes=("runner",)) as n:
                 page.keyboard.press("ArrowUp")
             for _ in range(3):
                 page.keyboard.press("ArrowRight")
-        page.keyboard.press("f")
-        settle()
+        n.fit()
+        centre = n.view_centre()
 
     def marker_rect():
         return page.evaluate(
@@ -128,8 +131,8 @@ with nav_session(boxes=("runner",)) as n:
     page.wait_for_timeout(500)
     v1 = view()
     assert close(v1["target"], v0["target"], 1e-9), ("C5", v1["target"], v0["target"])
-    page.keyboard.press("f")
-    settle()
+    n.fit()
+    centre = n.view_centre()
 
     # C6. an interruption finishes the slide (the new centre is kept)
     Qp = (50, 30, 35)  # top of the cavity block
@@ -140,8 +143,8 @@ with nav_session(boxes=("runner",)) as n:
     page.wait_for_timeout(400)
     assert close(view()["target"], Q, 1e-4), ("C6", view()["target"], Q)
     assert math.dist(project(Q), centre) <= 0.5
-    page.keyboard.press("f")
-    settle()
+    n.fit()
+    centre = n.view_centre()
 
     # C7. auto-rotate pauses for the slide, then spins around the new centre
     ctl("自動回転").locator("input").click()
@@ -180,20 +183,25 @@ with nav_session(boxes=("runner",)) as n:
     page.locator(".lil-gui .lil-title", has_text="断面").click()
 
     # C10. a wheel step during the slide zooms from the slide's end pose: at the
-    # canvas centre that is P itself, so the target stays P (picking in the
-    # in-between pose would zoom about another point and move the target off P)
+    # view centre that is P itself (or the plate-top point under the whole pixel
+    # the wheel lands on), so the target stays on P (picking in the in-between
+    # pose would zoom about another point and move the target off P)
     # The wheel must land while the 250 ms slide is still running. Timing two
     # separate inputs cannot promise that (on the CI runner the slide ended first
     # every time), so the wheel is sent from inside the page: a one-shot window
     # dblclick listener runs after the viewer's own (on #viewport) has started
     # the slide, and dispatches the wheel in the next task. The camera state
     # when the wheel arrives is recorded (window capture runs first) to prove it.
-    page.keyboard.press("f")
-    settle()
+    n.fit()  # waits for the 断面 folder of C8 to finish closing
+    centre = n.view_centre()
+    # a synthetic WheelEvent carries whole pixels (Chrome drops the fraction),
+    # and the view centre can be at .5 (the free area is 703 px tall)
+    w = [math.floor(c) for c in centre]
     cur = tuple(round(c) for c in project(SURFACE))
     P = pick(cur)["point"]
     v0 = view()
-    depth = dot(sub(P, v0["position"]), direction(v0))
+    f0 = direction(v0)
+    depth = dot(sub(P, v0["position"]), f0)
     page.evaluate(
         """([cx, cy]) => {
              const vp = document.querySelector('#viewport')
@@ -203,20 +211,29 @@ with nav_session(boxes=("runner",)) as n:
                new WheelEvent('wheel', { deltaY: -100, clientX: cx, clientY: cy, bubbles: true, cancelable: true })
              ), 0), { once: true })
            }""",
-        centre,
+        w,
     )
     page.mouse.dblclick(*cur)
     page.wait_for_timeout(400)
     at = page.evaluate("window.__atWheel")
     assert at and math.dist(at["target"], P) > 1e-3, ("C10 the wheel did not land mid-slide", at and at["target"], P)
     v = view()
-    assert close(v["target"], P, 1e-4), ("C10 target", v["target"], P)
-    assert abs(math.dist(v["position"], P) - 0.9 * depth) <= 1e-6 * depth, ("C10 distance", math.dist(v["position"], P), depth)
+    # the zoom point stays under the cursor: after the zoom it is the surface
+    # point under w (within a pixel of P). The slide ends with the target on P
+    # and the camera depth behind it (no turn, no zoom); one notch scales both
+    # by 0.9 about the zoom point
+    Z = pick(w)["point"]
+    assert math.dist(Z, P) < 0.5, ("C10 zoom point", Z, P)
+    end_cam = add(P, mul(f0, -depth))
+    want_t = add(Z, mul(sub(P, Z), 0.9))
+    want_c = add(Z, mul(sub(end_cam, Z), 0.9))
+    assert close(v["target"], want_t, 1e-4), ("C10 target", v["target"], want_t, P)
+    assert math.dist(v["position"], want_c) <= 1e-6 * depth, ("C10 camera", v["position"], want_c)
 
     # C11. a second double-click during the slide starts from the pose on
     # screen: it never jumps to the first slide's end first
-    page.keyboard.press("f")
-    settle()
+    n.fit()
+    centre = n.view_centre()
     cur1 = tuple(round(c) for c in project(SURFACE))
     cur2 = tuple(round(c) for c in project((10, 5, 15)))  # plate top, near the front left corner
     hit2 = pick(cur2)
@@ -243,8 +260,7 @@ with nav_session(boxes=("runner",)) as n:
     assert math.dist(project(end), centre) <= 0.5
 
     # C9. a reload during the slide drops it
-    page.keyboard.press("f")
-    settle()
+    n.fit()
     page.mouse.dblclick(*tuple(round(c) for c in project(SURFACE)))
     load(paths["runner"])
     page.wait_for_timeout(400)

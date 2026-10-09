@@ -125,9 +125,18 @@ export async function fetchThickness(
   return out
 }
 
+/**
+ * The saved measurements and notes of a model ({} when none are saved: the
+ * backend answers that with 200). Any other answer is an error, such as a
+ * sidecar file that is there but damaged: the load reports it, rather than
+ * opening as if nothing had been saved.
+ */
 export async function getSidecar(modelId: string): Promise<Record<string, unknown>> {
   const res = await fetch(`/api/models/${modelId}/sidecar`)
-  if (!res.ok) return {}
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(detail.detail ?? `sidecar fetch failed: ${res.status}`)
+  }
   return res.json()
 }
 

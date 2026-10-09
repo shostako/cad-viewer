@@ -135,27 +135,33 @@ export class MeasureTool {
   /** Build overlay graphics from serializable data and register the entry. */
   addFromData(data: EntryData): void {
     const objects: THREE.Object3D[] = []
-    for (const m of data.markers ?? []) {
-      const marker = this.makeMarker(new THREE.Vector3(...m))
-      this.viewer.overlay.add(marker)
-      objects.push(marker)
-    }
-    if (data.line) {
-      const line = this.makeDimLine(
-        new THREE.Vector3(...data.line[0]),
-        new THREE.Vector3(...data.line[1]),
-      )
-      this.viewer.overlay.add(line)
-      objects.push(line)
-    }
-    if (data.labelText) {
-      const label = this.viewer.makeLabel(
-        data.labelText,
-        new THREE.Vector3(...data.labelPos),
-        data.annotation ? 'note-label' : 'dim-label',
-      )
-      this.viewer.overlay.add(label)
-      objects.push(label)
+    try {
+      for (const m of data.markers ?? []) {
+        const marker = this.makeMarker(new THREE.Vector3(...m))
+        this.viewer.overlay.add(marker)
+        objects.push(marker)
+      }
+      if (data.line) {
+        const line = this.makeDimLine(
+          new THREE.Vector3(...data.line[0]),
+          new THREE.Vector3(...data.line[1]),
+        )
+        this.viewer.overlay.add(line)
+        objects.push(line)
+      }
+      if (data.labelText) {
+        const label = this.viewer.makeLabel(
+          data.labelText,
+          new THREE.Vector3(...data.labelPos),
+          data.annotation ? 'note-label' : 'dim-label',
+        )
+        this.viewer.overlay.add(label)
+        objects.push(label)
+      }
+    } catch (e) {
+      // all or nothing: a half-built entry would leave markers no entry owns
+      for (const o of objects) this.viewer.disposeOverlayObject(o)
+      throw e
     }
     this.addEntry(data.text, objects, data)
   }
@@ -164,8 +170,22 @@ export class MeasureTool {
     return this.entries.map((e) => e.data)
   }
 
-  restore(datas: EntryData[]): void {
-    for (const d of datas) this.addFromData(d)
+  /**
+   * Rebuild saved entries; returns how many could not be (skipped). A sidecar
+   * is plain JSON that anyone can edit: one bad entry must not cost the
+   * others, nor stop the load that restores them.
+   */
+  restore(datas: EntryData[]): number {
+    let failed = 0
+    for (const d of datas) {
+      try {
+        this.addFromData(d)
+      } catch (e) {
+        failed++
+        console.warn('skipped a saved measurement that cannot be rebuilt', d, e)
+      }
+    }
+    return failed
   }
 
   cancelPending(): void {
