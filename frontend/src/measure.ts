@@ -176,8 +176,13 @@ export class MeasureTool {
    */
   private describe(pick: PickResult): string {
     const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
+    return `${this.partPrefix(pick)}${kind}#${pick.id}`
+  }
+
+  /** "core_pin " in an assembly (see describe), "" for a one-part model */
+  private partPrefix(pick: PickResult): string {
     const name = this.partNames?.get(pick.partId)
-    return name ? `${name} ${kind}#${pick.id}` : `${kind}#${pick.id}`
+    return name ? `${name} ` : ''
   }
 
   toJSON(): EntryData[] {
@@ -228,7 +233,7 @@ export class MeasureTool {
         if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.curve === 'circle' && info.diameter !== undefined && info.center) {
           this.addFromData({
-            text: `円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
+            text: `${this.partPrefix(pick)}円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
             labelText: `⌀${fmt(info.diameter)}`,
             labelPos: info.center,
           })
@@ -238,7 +243,7 @@ export class MeasureTool {
         if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.surface === 'cylinder' && info.diameter !== undefined) {
           this.addFromData({
-            text: `円筒面 ⌀${fmt(info.diameter)}`,
+            text: `${this.partPrefix(pick)}円筒面 ⌀${fmt(info.diameter)}`,
             labelText: `⌀${fmt(info.diameter)}`,
             labelPos: pick.point.toArray() as [number, number, number],
           })

@@ -410,8 +410,8 @@ export class Viewer {
     copy.userData.windingSign = windingSign(P)
     copy.renderOrder = mesh.renderOrder
     mesh.parent!.add(copy)
-    mesh.visible = false
     this.flatCopies.set(partId, copy)
+    this.applyStyle(partId) // the copy is drawn in the current style, the part mesh hidden
     return copy
   }
 
@@ -423,8 +423,7 @@ export class Viewer {
     copy.geometry.dispose()
     ;(copy.material as THREE.Material).dispose()
     this.flatCopies.delete(partId)
-    const mesh = this.partMeshes.get(partId)
-    if (mesh) mesh.visible = true
+    this.applyStyle(partId) // the part mesh is drawn again, as the style says
   }
 
   /** Back to the part colours (thickness heatmap or draft colouring off). */
@@ -590,28 +589,40 @@ export class Viewer {
   private applyStyle(partId: number): void {
     const mesh = this.partMeshes.get(partId)
     if (!mesh) return
-    const mat = mesh.material as THREE.MeshStandardMaterial
     const edges = this.partEdges.get(partId)
     const s = this._displayStyle
     const hasFaces = (mesh.geometry.index?.count ?? 0) > 0
     // Hidden faces stay pickable: the raycaster and the picker ignore
     // Object3D.visible (the picker filters on the part group, the tree's
     // switch). The section's stencil meshes are siblings, so caps still work.
-    mesh.visible = !(s === 'wireframe' && edges)
-    // no edge lines (STL): the triangles are the wireframe. three builds their
-    // line index once per geometry and caches it; no geometry is made here.
-    mat.wireframe = s === 'wireframe' && !edges && hasFaces
-    const xray = s === 'xray'
-    if (mat.transparent !== xray) {
-      mat.transparent = xray
-      // transparent picks the shader variant (the OPAQUE define): three only
-      // re-derives the program on a version bump
-      mat.needsUpdate = true
+    const facesShown = !(s === 'wireframe' && edges)
+    // While the draft colouring shows a per-triangle copy of a mesh-format
+    // part (flatCopy), the copy is what is drawn: it takes the style, and the
+    // part mesh stays hidden (it is kept for picking only).
+    const copy = this.flatCopies.get(partId)
+    if (copy) {
+      mesh.visible = false
+      copy.visible = facesShown
+    } else {
+      mesh.visible = facesShown
     }
-    mat.opacity = xray ? XRAY_OPACITY : 1
-    // no depth writes: the inner walls of the same solid show, whatever the
-    // order of its triangles
-    mat.depthWrite = !xray
+    for (const m of copy ? [mesh, copy] : [mesh]) {
+      const mat = m.material as THREE.MeshStandardMaterial
+      // no edge lines (STL): the triangles are the wireframe. three builds their
+      // line index once per geometry and caches it; no geometry is made here.
+      mat.wireframe = s === 'wireframe' && !edges && hasFaces
+      const xray = s === 'xray'
+      if (mat.transparent !== xray) {
+        mat.transparent = xray
+        // transparent picks the shader variant (the OPAQUE define): three only
+        // re-derives the program on a version bump
+        mat.needsUpdate = true
+      }
+      mat.opacity = xray ? XRAY_OPACITY : 1
+      // no depth writes: the inner walls of the same solid show, whatever the
+      // order of its triangles
+      mat.depthWrite = !xray
+    }
     if (edges) {
       edges.lines.visible = s !== 'shaded'
       if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)

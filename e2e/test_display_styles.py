@@ -136,6 +136,32 @@ with display_session() as d:
     assert hud.startswith("core_pin エッジ#"), ("the HUD must name the part taken", hud)
     assert page.locator("#measure-list li").count() == 0
 
+    # (b3) the automatic diameter entry of a cylinder names its part too: pin2's
+    # side, toward the camera, clear of every drawn line (no line snap)
+    def clear_side():
+        for deg in range(-30, -151, -10):
+            for z in (27, 22, 32):
+                a = math.radians(deg)
+                xy = d.project((PIN2[0] + PIN_R * math.cos(a), PIN2[1] + PIN_R * math.sin(a), z))
+                if d.clearance(xy, segs) >= 12:
+                    return xy
+        raise AssertionError("(b3) no point on pin2's side clear of the drawn lines")
+
+    side_xy = clear_side()
+    d.assert_clear(side_xy, segs, "pin2 side", pick_point=True)
+    hit = d.pick(side_xy)
+    assert hit and hit["kind"] == "face" and hit["partId"] not in ids.values(), ("pin2's side", hit, ids)
+    d.set_mode("計測")
+    page.mouse.click(*side_xy)
+    page.wait_for_function("document.querySelectorAll('#measure-list li').length === 1", timeout=10000)
+    entry = page.locator("#measure-list li").first.inner_text()
+    d.set_mode("なし")
+    print("(b3) entry:", entry)
+    assert entry.startswith("core_pin 円筒面 ⌀8.000"), ("the diameter entry must name the part", entry)
+    page.locator("#measure-list li button").first.click()
+    page.wait_for_function("document.querySelectorAll('#measure-list li').length === 0", timeout=5000)
+    d.settle()
+
     d.select_style("xray")
     base["xray"] = d.frame()
 
