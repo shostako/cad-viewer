@@ -90,8 +90,9 @@ with sync_playwright() as p:
         tree = page.locator("#tree-panel").bounding_box()
         hud = page.locator("#hud").bounding_box()
         tri = page.locator("#triad").bounding_box()
+        # 32 px clear of the panels: their shadows (8 px down, 24 px blur) reach that far
         x0, x1 = 8, int(min(xs)) - 8
-        y0, y1 = int(tree["y"] + tree["height"]) + 8, int(min(hud["y"], tri["y"] if tri else hud["y"])) - 8
+        y0, y1 = int(tree["y"] + tree["height"]) + 32, int(min(hud["y"], tri["y"] if tri else hud["y"])) - 32
         assert x1 - x0 >= 60 and y1 - y0 >= 200, ("floor patch too small", x0, x1, y0, y1)
         png = page.screenshot()
         img = Image.open(io.BytesIO(png)).convert("RGB")
