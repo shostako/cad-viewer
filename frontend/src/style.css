@@ -641,6 +641,9 @@ body.panels-hidden #hud-keys {
   position: absolute;
   top: 3px;
   right: 6px;
+  /* lil-gui makes every button in its panel full width: this one covered the
+     whole title bar and took the clicks that fold the GUI */
+  width: auto;
   height: calc(var(--title-height, 29px) - 6px);
   padding: 0 8px;
   color: #cfd8e3;

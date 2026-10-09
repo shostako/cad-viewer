@@ -39,6 +39,15 @@ with nav_session() as n:
     w0 = width()
     print("shown", n.fill_check(*MOLD, "loaded"), "width", round(w0, 1))
     assert not hidden("#panels-hide") and hidden("#panels-show")
+    # 隠す stays a small button at the right end of the title bar: the rest of
+    # the title still takes the clicks that fold the GUI
+    hide_box = page.locator("#panels-hide").bounding_box()
+    title_hit = page.evaluate(
+        "(() => { const t = document.querySelector('.lil-gui.lil-root > .lil-title').getBoundingClientRect();"
+        " const e = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);"
+        " return e.classList.contains('lil-title') })()"
+    )
+    assert hide_box["width"] < 80 and title_hit, ("隠す covers the GUI's title", hide_box, title_hit)
 
     # ---- 1. H hides; the unmoved view fits again, much larger
     page.keyboard.press("h")
