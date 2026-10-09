@@ -36,7 +36,11 @@ import tempfile
 
 from PIL import Image
 
-from nav_common import DXF, STEP, SURFACE, cross, nav_session, norm, sub
+from nav_common import DXF, STEP_SRC, SURFACE, cross, nav_session, norm, sub
+
+# The shared mini_mold.step: every sidecar request is answered in the page
+# (see run()), so other scripts' notes on it never show here.
+STEP = str(STEP_SRC)
 
 DRAFT_KEY = "cad-viewer:draft"
 THICK_RE = re.compile(r"/thickness\.bin")
@@ -299,7 +303,7 @@ def run(parts: str) -> None:
                 assert not checked("色分け"), "a0 ticked on the empty screen"
                 assert not legend_shown(), "a0 legend over an empty scene"
 
-                nav.load(STEP)
+                nav.load(STEP, props="live")
                 props_ready()
                 for p in ALL_PTS.values():
                     on_face(p)
@@ -459,7 +463,7 @@ def run(parts: str) -> None:
             if "b" in parts:
                 open_folder("抜き勾配")  # also when (a) did not run
                 # ================= (b) frustum with 2 deg walls ===========================
-                nav.load(FRUSTUM)
+                nav.load(FRUSTUM, props="live")
                 assert not checked("色分け"), "a new model starts uncoloured"
                 assert not legend_shown()
                 for p in F_PTS.values():
@@ -495,7 +499,7 @@ def run(parts: str) -> None:
 
                 # b5. filleted STL: the 1 deg wall is under-drafted at 3 deg all the way
                 # up to the fillet; the facets of the fillet itself lean 8 deg or more
-                nav.load(FILLET)
+                nav.load(FILLET, props="live")
                 click_button("右")
                 page.keyboard.press("f")
                 settle()
@@ -550,7 +554,7 @@ def run(parts: str) -> None:
                 # runner before the check), then let through.
                 held_props = []
                 page.route("**/properties", lambda r: held_props.append(r))
-                nav.load(OPEN)
+                nav.load(OPEN, props="unheld")  # the route above holds the values
                 click_button("等角")
                 page.keyboard.press("f")
                 settle()
@@ -572,7 +576,7 @@ def run(parts: str) -> None:
                 # b7. the same closed frustum wound inside out: the colours are those of
                 # b2 (the solid's outside is its outside, whatever the file's winding),
                 # and no note (it is closed: /properties gives it a volume)
-                nav.load(INSIDE_OUT)
+                nav.load(INSIDE_OUT, props="live")
                 click_button("等角")
                 page.keyboard.press("f")
                 settle()
@@ -597,7 +601,7 @@ def run(parts: str) -> None:
             if "c" in parts:  # (c), (d) and (e) build on each other
                 open_folder("抜き勾配")
                 # ================= (c) thickness heatmap: one at a time ===================
-                nav.load(STEP)
+                nav.load(STEP, props="live")
                 open_folder("肉厚")
                 on_face(TOP)
                 B_TOP = colours({"TOP": TOP})["TOP"]
@@ -727,7 +731,7 @@ def run(parts: str) -> None:
 
                 # ================= (d) drawing, reload reset ==============================
                 toggle("色分け", True)
-                nav.load(DXF, wait_text="2D図面")
+                nav.load(DXF, wait_text="2D図面", props="live")  # no hold left armed for the direct load in d2
                 title = page.locator(".lil-gui .lil-title", has_text=re.compile("^抜き勾配$")).first
                 assert not title.is_visible(), "the folder must be hidden on a drawing"
                 assert not legend_shown()

@@ -12,7 +12,7 @@ panel: a correct fit that ignored it would fail the same check.
 - P3 the 視点 folder closed / open, and the whole GUI collapsed (the band
      under its title wins: a fit that read the GUI once would not see it)
 - P6 a resize keeps the shift in px (clamped, restored), with no re-fit
-- P4 700 x 900: left of the GUI; with 表示 closed, the band under it
+- P4 700 x 1100: left of the GUI; with 表示 closed, the band under it
 - P5 400 x 900 falls back to the whole canvas; 450 x 900 does not
 - P2 an IGES with a short tree and the 体積・重量 values: values later than the
      app's wait (the fit sees 計算中…), values in time (the fit sees them);
@@ -158,13 +158,17 @@ try:
             assert close(view()["target"], t0, 1e-9), ("P6 a resize must not re-fit", w)
         fit()
 
-        # ---- P4. 700 x 900 -------------------------------------------------------
-        resize(700, 900)
+        # ---- P4. 700 x 1100 ------------------------------------------------------
+        # 1100 tall: with 表示 closed the band under the GUI must beat the column
+        # left of it by a clear margin (about 10 %). At 900 it lost: the GUI has
+        # the 抜き勾配 folder too, and the HUD wraps (taller) to stay left of
+        # the right-hand column.
+        resize(700, 1100)
         fit()
         F, fb = n.free_area()
         g = panels()[GUI]
         assert F[2] <= g[0] + 0.5, ("P4 left of the GUI", F, g)
-        print("P4 700x900", fill_check(*RUNNER, "700x900", fallback=False, needs=(GUI,)))
+        print("P4 700x1100", fill_check(*RUNNER, "700x1100", fallback=False, needs=(GUI,)))
         v0 = view()
         folder_title("表示").click()
         n.wait_gui_idle()
@@ -176,7 +180,7 @@ try:
         F, fb = n.free_area()
         g = panels()[GUI]
         assert F[1] >= g[3] - 0.5 and F[2] == W, ("P4 the band under the shorter GUI", F, g)
-        print("P4 表示 closed", fill_check(*RUNNER, "700x900 表示 closed", fallback=False, needs=(GUI,)))
+        print("P4 表示 closed", fill_check(*RUNNER, "700x1100 表示 closed", fallback=False, needs=(GUI,)))
         folder_title("表示").click()
         n.wait_gui_idle()
 
@@ -242,6 +246,11 @@ try:
         n.wait_gui_idle()
 
         # ---- P7. the mold with a long measurement list ----------------------------
+        # 表示 closed first: the right-hand column keeps the GUI's height and
+        # gives the stack under it the rest (down to about three rows of the
+        # list), so a long list needs a short GUI
+        folder_title("表示").click()
+        n.wait_gui_idle()
         empty_sidecar(page, MOLD_COPY)  # a previous failed run may have left entries
         load(MOLD_COPY)
         fit()
@@ -319,6 +328,8 @@ try:
         assert drawn, "P7 the sampler never saw the mold"
         assert not other, ("P7 a provisional framing was drawn", other[:3], pre, final)
         assert not early, ("P7 the mold was drawn before its fit", early[:3], final)
+        folder_title("表示").click()
+        n.wait_gui_idle()
 
         # ---- P8. a sidecar that cannot be restored -------------------------------
         # P8a. an entry without labelPos (the app always writes one; a hand edit

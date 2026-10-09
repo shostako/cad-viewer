@@ -205,8 +205,10 @@ class Nav:
           they take: the panel shows the values at the fit
         - "late": held for good, with the app's own wait: the load waits that
           long, then fits with 計算中…
+        - "unheld": let through, and the load does not wait for them: they come
+          when they come (a script that holds /properties itself with a route)
         """
-        stall, wait = {"frozen": (1e9, 0), "live": (0, 600000), "late": (1e9, None)}[props]
+        stall, wait = {"frozen": (1e9, 0), "live": (0, 600000), "late": (1e9, None), "unheld": (0, 0)}[props]
         self.page.evaluate(
             "([s, w]) => { window.__cadStallProperties(s); window.__cadPropsWait(w ?? undefined) }", [stall, wait]
         )
