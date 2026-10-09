@@ -116,6 +116,16 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, id?: string, text?: s
 
 /** the parts table never gets shorter than this (about two rows) */
 const TABLE_MIN_PX = 44
+/** whether the parts table is open (it starts folded: the total is what one reads first) */
+const PARTS_OPEN_KEY = 'cad-viewer:props-parts'
+
+function loadPartsOpen(): boolean {
+  try {
+    return localStorage.getItem(PARTS_OPEN_KEY) === '1'
+  } catch {
+    return false // storage unavailable (private window, blocked site data)
+  }
+}
 
 export class PropertiesPanel {
   private root: HTMLElement
@@ -135,6 +145,9 @@ export class PropertiesPanel {
   private totalArea = el('dd', 'props-total-area')
   private totalMass = el('dd', 'props-total-mass')
   private noteEl = el('div', 'props-note')
+  /** 部品ごとの値（N 部品）: opens and folds the parts table */
+  private partsToggle = el('button', 'props-parts-toggle')
+  private partsOpen = loadPartsOpen()
 
   constructor(root: HTMLElement, isVisible: (id: number) => boolean, onLayout: () => void) {
     this.root = root
@@ -153,7 +166,19 @@ export class PropertiesPanel {
     dl.append(el('dt', undefined, '表面積'), this.totalArea)
     dl.append(el('dt', undefined, '重量'), this.totalMass)
     this.totalEl.append(this.totalTitle, dl)
-    root.replaceChildren(head, this.statusEl, this.wrap, this.totalEl, this.noteEl)
+    this.partsToggle.type = 'button'
+    this.partsToggle.setAttribute('aria-controls', 'props-parts-wrap')
+    this.partsToggle.addEventListener('click', () => {
+      this.partsOpen = !this.partsOpen
+      try {
+        localStorage.setItem(PARTS_OPEN_KEY, this.partsOpen ? '1' : '0')
+      } catch {
+        /* best-effort */
+      }
+      if (this.data) this.render()
+    })
+    // the total first; the parts table below it, folded until asked for
+    root.replaceChildren(head, this.statusEl, this.totalEl, this.noteEl, this.partsToggle, this.wrap)
     root.classList.add('hidden') // no onLayout here: the caller is still being constructed
   }
 
@@ -214,6 +239,7 @@ export class PropertiesPanel {
     this.statusEl.textContent = text
     this.statusEl.classList.remove('hidden')
     this.wrap.classList.add('hidden')
+    this.partsToggle.classList.add('hidden')
     this.totalEl.classList.add('hidden')
     this.noteEl.classList.add('hidden')
     this.root.classList.remove('hidden')
@@ -226,7 +252,11 @@ export class PropertiesPanel {
     this.statusEl.classList.add('hidden')
     this.root.classList.remove('hidden')
 
-    this.wrap.classList.toggle('hidden', !v.rows || v.rows.length === 0)
+    const rows = v.rows?.length ?? 0
+    this.partsToggle.classList.toggle('hidden', rows === 0)
+    this.partsToggle.textContent = `部品ごとの値（${rows} 部品）`
+    this.partsToggle.setAttribute('aria-expanded', String(this.partsOpen))
+    this.wrap.classList.toggle('hidden', rows === 0 || !this.partsOpen)
     this.tbody.replaceChildren()
     for (const p of v.rows ?? []) {
       const tr = el('tr')
@@ -242,12 +272,14 @@ export class PropertiesPanel {
     this.totalTitle.textContent = v.title
     this.totalTitle.classList.toggle('hidden', !v.title)
     const t = v.total
-    this.totalVolume.textContent =
-      t.volume !== null
-        ? `${fmtNum(t.volume / 1000, 3)} cm³（${fmtNum(t.volume, t.volume < 100 ? 2 : 0)} mm³）`
-        : t.reason
-          ? noVolume(t.reason)
-          : '—'
+    if (t.volume !== null) {
+      // the cm³ first; the mm³ beside it, smaller (one line in the 264 px column)
+      const mm3 = el('span', undefined, `（${fmtNum(t.volume, t.volume < 100 ? 2 : 0)} mm³）`)
+      mm3.className = 'sub'
+      this.totalVolume.replaceChildren(`${fmtNum(t.volume / 1000, 3)} cm³`, mm3)
+    } else {
+      this.totalVolume.textContent = t.reason ? noVolume(t.reason) : '—'
+    }
     this.totalArea.textContent = t.area !== null ? `${fmtNum(t.area / 100, 2)} cm²` : '—'
     this.totalMass.textContent = t.volume !== null ? `${fmtNum(massGrams(t.volume, this.density), 2)} g` : '—'
 

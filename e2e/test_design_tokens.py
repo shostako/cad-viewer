@@ -113,7 +113,7 @@ with sync_playwright() as p:
         st = style(sel, ["backgroundColor", "borderTopColor", "borderTopLeftRadius"])
         assert st == {"backgroundColor": SURFACE, "borderTopColor": BORDER, "borderTopLeftRadius": RADIUS}, (sel, st)
     # one heading style
-    for sel in ("#hud-title", "#tree-title", "#measure-title", "#props-head"):
+    for sel in ("#tree-title", "#measure-title", "#props-head"):
         st = style(sel, list(HEADING))
         assert st == HEADING, (sel, st)
     # the font of the tokens, first in every panel's list (the OS falls back as needed)

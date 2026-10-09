@@ -124,7 +124,8 @@ try:
         folder_title("視点").click()
         fit()
         gui_closed = panels()[GUI]
-        assert gui_closed[3] < gui_open[3] - 100, ("視点 closed: the GUI must be shorter", gui_open, gui_closed)
+        # (its seven buttons are two rows of a grid: about 50 px)
+        assert gui_closed[3] < gui_open[3] - 40, ("視点 closed: the GUI must be shorter", gui_open, gui_closed)
         print("P3 視点 closed", fill_check(*RUNNER, "視点 closed", fallback=False, needs=(GUI,)))
         folder_title("視点").click()
         fit()
@@ -169,8 +170,12 @@ try:
         # 1100 tall: with 表示 closed the band under the GUI must beat the column
         # left of it by a clear margin (about 10 %). At 900 it lost: the GUI has
         # the 抜き勾配 folder too, and the HUD wraps (taller) to stay left of
-        # the right-hand column.
+        # the right-hand column. The tall GUI has 断面 open as well: since #23
+        # item 7 (視点 in two rows, 回転速度 only with 自動回転) 表示 alone no
+        # longer makes it tall enough for the column left of it to win.
         resize(700, 1100)
+        folder_title("断面").click()
+        n.wait_gui_idle()
         fit()
         F, fb = n.free_area()
         g = panels()[GUI]
@@ -178,6 +183,8 @@ try:
         print("P4 700x1100", fill_check(*RUNNER, "700x1100", fallback=False, needs=(GUI,)))
         v0 = view()
         folder_title("表示").click()
+        n.wait_gui_idle()
+        folder_title("断面").click()
         n.wait_gui_idle()
         v1 = view()
         # panels changing do not re-fit
