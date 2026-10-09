@@ -17,7 +17,7 @@ import {
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
-import { Drawing2D } from './drawing2d'
+import { Drawing2D, measurementText, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
@@ -221,7 +221,7 @@ const actions = {
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
   // both can be undone: the 3D list, or a drawing's measurements
   clearMeasure: () => {
-    if (is2D) clearDrawingWithUndo()
+    if (is2D) deleteDrawingWithUndo(() => drawing2d.clearMeasurements())
     else deleteWithUndo(() => measureTool.clearAll()) // drops a chosen first point too
     // a line asking for that point's partner is stale: back to the mode's hint
     if (modeHud && hudInfo.textContent === modeHud) showModeHint()
@@ -1220,21 +1220,38 @@ function promptAnnotation(screenX: number, screenY: number, at: THREE.Vector3): 
   input.addEventListener('blur', () => done(true))
 }
 
-measureTool.onChange(() => {
+/**
+ * The 計測 list: the 3D entries, or the measurements of a drawing (a load
+ * empties both, so one of the two is always empty). A drawing's rows have the
+ * class m2d and give the distance with its ΔX and ΔY, as the HUD does.
+ */
+function renderMeasureList(): void {
   const entries = measureTool.list()
-  measurePanel.classList.toggle('hidden', entries.length === 0)
-  measureList.innerHTML = ''
+  const dims = drawing2d.measurements()
+  measurePanel.classList.toggle('hidden', entries.length + dims.length === 0)
+  measureList.replaceChildren()
   for (const e of entries) {
-    const li = document.createElement('li')
-    const span = document.createElement('span')
-    span.textContent = e.label
-    const del = document.createElement('button')
-    del.textContent = '×'
-    pressOnce(del, () => deleteWithUndo(() => measureTool.remove(e.id)))
-    li.append(span, del)
+    measureList.appendChild(measureRow(e.label, () => deleteWithUndo(() => measureTool.remove(e.id))))
+  }
+  for (const m of dims) {
+    const li = measureRow(measurementText(m), () => deleteDrawingWithUndo(() => drawing2d.removeMeasurement(m.id)))
+    li.classList.add('m2d')
     measureList.appendChild(li)
   }
-})
+}
+/** a row: its text (selectable, to copy the values) and its × */
+function measureRow(text: string, remove: () => void): HTMLLIElement {
+  const li = document.createElement('li')
+  const span = document.createElement('span')
+  span.textContent = text
+  const del = document.createElement('button')
+  del.textContent = '×'
+  pressOnce(del, remove)
+  li.append(span, del)
+  return li
+}
+measureTool.onChange(renderMeasureList)
+drawing2d.onChange(renderMeasureList)
 
 // ---- undo the last deletion (× or 計測クリア)
 // One step back: the list as it was before the deletion, for UNDO_MS or until
@@ -1245,8 +1262,8 @@ const UNDO_MS = 8000
 const undoToast = document.querySelector<HTMLDivElement>('#undo-toast')!
 const undoText = document.querySelector<HTMLSpanElement>('#undo-text')!
 const undoBtn = document.querySelector<HTMLButtonElement>('#undo-btn')!
-/** entries: the 3D list before the deletion; drawing: a drawing's measurements (markup) */
-let undoState: { modelId: string; entries?: EntryData[]; drawing?: string } | null = null
+/** the list before the deletion: entries (3D), or drawing (a drawing's measurements) */
+let undoState: { modelId: string; entries?: EntryData[]; drawing?: Measurement2D[] } | null = null
 let undoTimer: ReturnType<typeof setTimeout> | undefined
 /** set while this code changes the list itself: those changes keep the undo */
 let undoOwnChange = false
@@ -1290,12 +1307,18 @@ function deleteWithUndo(run: () => void): void {
   armUndo({ modelId: currentModelId, entries: before }, removed)
 }
 
-/** 計測クリア on a drawing: its measurements live in the drawing's overlay */
-function clearDrawingWithUndo(): void {
-  const snap = drawing2d.measurementsSnapshot()
-  drawing2d.clearMeasurements()
-  if (!snap || !currentModelId) return
-  armUndo({ modelId: currentModelId, drawing: snap.html }, snap.count)
+/** The same for a drawing's measurements (計測クリア or a row's × on a drawing). */
+function deleteDrawingWithUndo(run: () => void): void {
+  const before = drawing2d.measurementsSnapshot()
+  undoOwnChange = true
+  try {
+    run()
+  } finally {
+    undoOwnChange = false
+  }
+  const removed = before.length - drawing2d.measurements().length
+  if (removed <= 0 || !currentModelId) return
+  armUndo({ modelId: currentModelId, drawing: before }, removed)
 }
 
 function armUndo(state: NonNullable<typeof undoState>, removed: number): void {
@@ -1313,8 +1336,13 @@ function undoDelete(): boolean {
   if (!u || u.modelId !== currentModelId) return false
   dropUndo()
   if (u.drawing !== undefined) {
-    drawing2d.restoreMeasurements(u.drawing)
-    hudInfo.textContent = '計測を元に戻した'
+    undoOwnChange = true
+    try {
+      drawing2d.restoreMeasurements(u.drawing)
+    } finally {
+      undoOwnChange = false
+    }
+    hudInfo.textContent = `計測を元に戻した（${u.drawing.length} 件）`
     return true
   }
   if (!u.entries) return false
@@ -1343,8 +1371,10 @@ pressOnce(undoBtn, () => void undoDelete())
 measureTool.onChange(() => {
   if (!undoOwnChange) dropUndo()
 })
-// a new measurement on a drawing ends its undo too (as in 3D)
-drawing2d.onMeasurement(dropUndo)
+// on a drawing too: a new measurement, a load (the same drawing again as well)
+drawing2d.onChange(() => {
+  if (!undoOwnChange) dropUndo()
+})
 
 /**
  * Esc in 計測 / 注記: first drop a chosen first point, then leave the mode.
