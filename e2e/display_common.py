@@ -10,10 +10,11 @@ the STL boxes and walls written here), picks (__cadPick), the camera
 of loose curves) and canvas pixels read with toDataURL inside rAF.
 
 The STEP is a private copy with eleven trailing newlines: its own hash, so its
-own model id and sidecar on a shared backend. test_section_annotation leaves
-annotations in mini_mold.step's sidecar, and restoring them would put marker
-spheres on the canvas and labels into the PNG export. Every load checks that
-nothing was restored. No step here writes a sidecar.
+own model id and sidecar on a shared backend. The shared mini_mold.step's
+sidecar may hold measurements and notes (the user's own views, a script that
+stopped half way), and restoring them would put marker spheres on the canvas
+and labels into the PNG export. Every load checks that nothing was restored.
+No step here writes a sidecar.
 
 The checks use the B-rep edges of mini_mold, projected, to keep sample points
 away from lines: a sample point is at least 10 px from every edge (also the
