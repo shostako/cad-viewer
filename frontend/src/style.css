@@ -626,3 +626,72 @@ body,
   outline: 2px solid #8fb4d8;
   outline-offset: 2px;
 }
+
+/* The column layout caps the operation panel's height (layoutCorner); its
+   root is a flex column, so the title would shrink first (to 14 px on a low
+   window, clipping 操作 and the 隠す button on it). The list scrolls instead. */
+.lil-gui.lil-root > .lil-title {
+  flex-shrink: 0;
+}
+
+/* panels hidden for a while (H): only the model, the status line and the triad */
+body.panels-hidden .lil-gui.lil-root,
+body.panels-hidden #tree-panel,
+body.panels-hidden #corner-br,
+body.panels-hidden #hud-title,
+body.panels-hidden #hud-keys {
+  display: none !important;
+}
+
+/* 隠す: over the right end of the GUI's title bar */
+#panels-hide {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  /* lil-gui makes every button in its panel full width: this one covered the
+     whole title bar and took the clicks that fold the GUI */
+  width: auto;
+  height: calc(var(--title-height, 29px) - 6px);
+  padding: 0 8px;
+  color: #cfd8e3;
+  background: rgba(143, 180, 216, 0.12);
+  border: 1px solid rgba(143, 180, 216, 0.3);
+  border-radius: 5px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+#panels-hide:hover {
+  background: rgba(143, 180, 216, 0.24);
+}
+
+/* パネルを出す: where the GUI was */
+#panels-show {
+  position: fixed;
+  z-index: 1001;
+  top: 8px;
+  right: 15px;
+  padding: 5px 12px;
+  color: #e6ebf1;
+  background: rgba(20, 24, 30, 0.9);
+  border: 1px solid #3a4250;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+#panels-show.hidden {
+  display: none;
+}
+
+#panels-show:hover {
+  background: rgba(36, 42, 52, 0.95);
+}
+
+#panels-hide:focus-visible,
+#panels-show:focus-visible {
+  outline: 2px solid #8fb4d8;
+  outline-offset: 2px;
+}

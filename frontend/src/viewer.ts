@@ -790,6 +790,7 @@ export class Viewer {
     const forward = this.target.clone().sub(this.camera.position)
     if (forward.lengthSq() < 1e-20) forward.copy(LOAD_VIEW_DIR).negate()
     this.frameBox(box, forward.normalize())
+    this.rememberFit()
   }
 
   /** The load fit: default oblique direction, Z up, framed in fitArea. */
@@ -799,6 +800,38 @@ export class Viewer {
     this.camera.up.copy(WORLD_UP)
     const box = this.modelBBox()
     if (!box.isEmpty()) this.frameBox(box, LOAD_VIEW_DIR.clone().negate())
+    this.rememberFit()
+  }
+
+  /** the view right after the last fit (fitToView / frameNewModel) */
+  private lastFit: { target: THREE.Vector3; dir: THREE.Vector3; up: THREE.Vector3; dist: number; zoom: number } | null = null
+
+  private rememberFit(): void {
+    const cam = this.camera
+    const target = this.target.clone()
+    const off = target.clone().sub(cam.position)
+    this.lastFit = { target, dir: off.clone().normalize(), up: cam.up.clone(), dist: off.length(), zoom: cam.zoom }
+  }
+
+  /**
+   * Is the view still the one the last fit made (not turned, panned or
+   * zoomed since)? Then a change of the panels can fit again without
+   * undoing anything the user did. The parallel camera's position moves along
+   * the view axis on every frame (keepOrthoDepth), so the distance only
+   * counts in perspective; its zoom only in parallel.
+   */
+  get atLastFit(): boolean {
+    const f = this.lastFit
+    if (!f || this.viewAnim || this.autoRotate) return false
+    const cam = this.camera
+    const target = this.target
+    const off = target.clone().sub(cam.position)
+    const scale = Math.max(f.dist, 1e-9)
+    if (target.distanceTo(f.target) > 1e-6 * scale) return false
+    if (off.clone().normalize().dot(f.dir) < 1 - 1e-9) return false
+    if (cam.up.distanceTo(f.up) > 1e-6) return false
+    if (this._projection === 'orthographic') return Math.abs(cam.zoom / f.zoom - 1) < 1e-9
+    return Math.abs(off.length() / scale - 1) < 1e-9
   }
 
   /**
@@ -1356,6 +1389,9 @@ export class Viewer {
    */
   setProjection(p: Projection): void {
     if (p === this._projection) return
+    // the switch keeps the view: a view still as the last fit left it stays so
+    // (atLastFit compares within one projection)
+    const wasAtFit = this.atLastFit
     this.finishViewAnim()
     this.stopInertia()
     const from = this.camera
@@ -1381,6 +1417,7 @@ export class Viewer {
     this.controls.object = to
     this.trackball.object = to
     this.setTarget(target)
+    if (wasAtFit) this.rememberFit()
   }
 
   /**
