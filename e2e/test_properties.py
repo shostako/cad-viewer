@@ -72,6 +72,10 @@ box_stl(OPEN_STL, (10, 20, 30), top=False)
 # that the layout check in 5. lays out against the GUI.
 STEP = os.path.join(tmp, "mini_mold.step")
 Path(STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 9)
+# 12: a private copy (its own hash, so its own model id and sidecar): the
+# measurements it makes never touch mini_mold.step's sidecar
+LAYOUT_STEP = os.path.join(tmp, "layout_mold.step")
+Path(LAYOUT_STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 13)
 
 try:
     with sync_playwright() as p:
@@ -375,6 +379,53 @@ try:
         check_total(v_closed, A["plate"] + A["core_pin"] + A["cavity_block"], 1.19)
         assert total()["area"] == "227.29 cm²", total()
         assert page.inner_text("#props-note") == "計算できなかった 1 部品は合計に含めない", page.inner_text("#props-note")
+        page.close()
+
+        # 12. no parts table (計算中…, or a one-part model): the measure list
+        #     takes the room up to the GUI before it scrolls; no table row is
+        #     kept free. Window 800 px tall, the default GUI (表示 open).
+        page = new_page()
+        page.set_viewport_size({"width": 1280, "height": 800})
+        page.evaluate("window.__cadStallProperties(120000)")  # 計算中… for the whole section
+        load(LAYOUT_STEP)
+        page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'")
+        assert hidden("#props-parts-wrap")
+        ctl("モード").locator("select").select_option("計測")
+        page.evaluate("document.activeElement.blur()")
+        a, b = (page.evaluate("([x, y, z]) => window.__cadProject(x, y, z)", list(q)) for q in ((90, 10, 15), (50, 30, 35)))
+
+        def stack():
+            return page.evaluate(
+                """(() => { const r = s => document.querySelector(s).getBoundingClientRect()
+                  const panel = document.querySelector('#measure-panel')
+                  return { gui: r('.lil-gui.lil-root').bottom, list: r('#measure-panel').top, listH: r('#measure-panel').height,
+                           props: r('#props-panel').top, propsBottom: r('#props-panel').bottom, scrolls: panel.scrollHeight > panel.clientHeight + 1,
+                           vh: innerHeight } })()"""
+            )
+
+        added = 0  # entries restored from an earlier run (a cut-short cleanup) only fill the list sooner
+        while True:
+            n = page.locator("#measure-list li").count()
+            page.mouse.click(a["x"], a["y"])
+            page.wait_for_function("document.querySelector('#hud-info').textContent.includes('相手をクリック')")
+            page.mouse.click(b["x"], b["y"])
+            page.wait_for_function(f"document.querySelectorAll('#measure-list li').length > {n}", timeout=10000)
+            page.wait_for_timeout(100)
+            added += 1
+            st = stack()
+            if st["scrolls"] or added >= 12:
+                break
+        print("12 no table:", added, "added,", st)
+        assert st["scrolls"], ("the list never filled its room", st)
+        assert st["listH"] < 0.4 * st["vh"] - 1, ("capped by 40vh, not by the room: the check needs a lower window", st)
+        assert st["list"] < st["props"] and st["propsBottom"] <= st["vh"] - 12 + 0.5, st
+        gap = st["list"] - (st["gui"] + 8)
+        assert -0.5 <= gap <= 1.5, ("the list scrolls while room is left empty under the GUI", round(gap, 1), st)
+        ctl("モード").locator("select").select_option("なし")
+        while page.locator("#measure-list li").count() > 0:
+            page.locator("#measure-list li button").last.click()
+            page.wait_for_timeout(50)
+        page.wait_for_timeout(1000)  # let the sidecar save (now empty) settle
 
         page.evaluate(f"localStorage.removeItem('{PREFS}')")
         page.screenshot(path="/tmp/cad_viewer_properties.png")

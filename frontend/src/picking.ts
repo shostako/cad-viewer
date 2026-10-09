@@ -86,6 +86,15 @@ export class Picker {
 
   /** Pick at normalized device coords; returns null when nothing is hit. */
   pick(ndc: THREE.Vector2): PickResult | null {
+    // ワイヤーフレーム / 半透明 draw every visible part's lines, also through
+    // the faces in front of them: a click on a drawn line means that line,
+    // whichever part it belongs to. Without this the ray hits the (undrawn or
+    // see-through) face of the part in front, and a measurement silently
+    // takes the wrong part.
+    if (this.viewer.seeThrough) {
+      const drawn = this.snapDrawnLines(ndc)
+      if (drawn) return drawn
+    }
     const hit = this.firstVisibleHit(ndc)
     if (!hit) return null
     const partId = hit.object.userData.partId as number
@@ -118,6 +127,106 @@ export class Picker {
     const faceId = findRange(part.faceRanges, hit.faceIndex)
     if (faceId === null) return null
     return { partId, kind: 'face', id: faceId, point: hit.point.clone() }
+  }
+
+  /**
+   * Screen-space snap to the drawn B-rep lines of every visible part:
+   * vertex within VERTEX_SNAP_PX, else edge within EDGE_SNAP_PX (the same
+   * priority as pick()). The nearest on screen wins; on a tie the one nearer
+   * the camera. Clipped-away points (section) never win. Runs once per click,
+   * never per frame: a pass over the edge segments of the visible parts.
+   */
+  private snapDrawnLines(ndc: THREE.Vector2): PickResult | null {
+    const cam = this.viewer.camera
+    cam.updateMatrixWorld()
+    const el = this.viewer.renderer.domElement
+    const w = el.clientWidth
+    const h = el.clientHeight
+    const cx = ((ndc.x + 1) / 2) * w
+    const cy = ((1 - ndc.y) / 2) * h
+    const view = cam.matrixWorldInverse
+    const near = cam.near
+    this.raycaster.setFromCamera(ndc, cam)
+    const ray = this.raycaster.ray
+
+    const a = new THREE.Vector3()
+    const b = new THREE.Vector3()
+    const va = new THREE.Vector3()
+    const vb = new THREE.Vector3()
+    const p = new THREE.Vector3()
+    const onSeg = new THREE.Vector3()
+    /** view-space point -> screen px (x, y), into out */
+    const toScreen = (v: THREE.Vector3, out: THREE.Vector3): THREE.Vector3 => {
+      out.copy(v).applyMatrix4(cam.projectionMatrix) // includes the perspective divide
+      return out.set(((out.x + 1) / 2) * w, ((1 - out.y) / 2) * h, -v.z)
+    }
+    const visibleAt = (clip: THREE.Plane[], q: THREE.Vector3) => clip.every((pl) => pl.distanceToPoint(q) >= 0)
+    // within 0.5 px of each other on screen counts as a tie: the nearer one wins
+    const better = (d: number, depth: number, bestD: number, bestDepth: number) =>
+      d < bestD - 0.5 || (d <= bestD + 0.5 && depth < bestDepth)
+
+    let vBest: PickResult | null = null
+    let vD = VERTEX_SNAP_PX
+    let vDepth = Infinity
+    let eBest: { part: PartData; seg: number; point: THREE.Vector3 } | null = null
+    let eD = EDGE_SNAP_PX
+    let eDepth = Infinity
+    const sa = new THREE.Vector3()
+    const sb = new THREE.Vector3()
+
+    for (const part of this.parts.values()) {
+      if (!this.viewer.hasEdgeLines(part.id) || !this.viewer.isPartVisible(part.id)) continue
+      const mat = this.viewer.getPartMesh(part.id)?.material as
+        | (THREE.Material & { clippingPlanes?: THREE.Plane[] | null })
+        | undefined
+      const clip = mat?.clippingPlanes ?? []
+
+      const vs = part.vertices
+      for (let i = 0; i + 2 < vs.length; i += 3) {
+        p.set(vs[i], vs[i + 1], vs[i + 2])
+        va.copy(p).applyMatrix4(view)
+        if (va.z > -near) continue // behind the camera
+        toScreen(va, sa)
+        const d = Math.hypot(sa.x - cx, sa.y - cy)
+        if (d > VERTEX_SNAP_PX || !better(d, sa.z, vD, vDepth) || !visibleAt(clip, p)) continue
+        vD = d
+        vDepth = sa.z
+        vBest = { partId: part.id, kind: 'vertex', id: i / 3 + 1, point: p.clone() } // 1-based, as snapVertex
+      }
+      if (vBest) continue // a vertex beats any edge; still look for nearer vertices in other parts
+
+      const segs = part.edges
+      for (let s = 0; s * 6 + 5 < segs.length; s++) {
+        a.set(segs[s * 6], segs[s * 6 + 1], segs[s * 6 + 2])
+        b.set(segs[s * 6 + 3], segs[s * 6 + 4], segs[s * 6 + 5])
+        va.copy(a).applyMatrix4(view)
+        vb.copy(b).applyMatrix4(view)
+        // keep the part in front of the near plane (a segment crossing it would project inverted)
+        if (va.z > -near && vb.z > -near) continue
+        if (va.z > -near) va.lerp(vb, (va.z + near) / (va.z - vb.z))
+        else if (vb.z > -near) vb.lerp(va, (vb.z + near) / (vb.z - va.z))
+        toScreen(va, sa)
+        toScreen(vb, sb)
+        const dx = sb.x - sa.x
+        const dy = sb.y - sa.y
+        const l2 = dx * dx + dy * dy
+        const t = l2 > 0 ? THREE.MathUtils.clamp(((cx - sa.x) * dx + (cy - sa.y) * dy) / l2, 0, 1) : 0
+        const d = Math.hypot(sa.x + t * dx - cx, sa.y + t * dy - cy)
+        if (d > EDGE_SNAP_PX) continue
+        // the 3D point: on the segment, nearest the pick ray (perspective-correct)
+        ray.distanceSqToSegment(a, b, undefined, onSeg)
+        const depth = -p.copy(onSeg).applyMatrix4(view).z
+        if (!better(d, depth, eD, eDepth) || !visibleAt(clip, onSeg)) continue
+        eD = d
+        eDepth = depth
+        eBest = { part, seg: s, point: onSeg.clone() }
+      }
+    }
+    if (vBest) return vBest
+    if (!eBest) return null
+    const edgeId = findEdgeRange(eBest.part.edgeRanges, eBest.seg)
+    if (edgeId === null) return null
+    return { partId: eBest.part.id, kind: 'edge', id: edgeId, point: eBest.point }
   }
 
   private pxScale(at: THREE.Vector3): number {

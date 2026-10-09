@@ -25,7 +25,7 @@ import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './prop
 import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { renderTree } from './tree'
-import { DRAG_PX, Viewer, type RotateMode, type ViewPreset } from './viewer'
+import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type RotateMode, type ViewPreset } from './viewer'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
@@ -229,12 +229,14 @@ const viewPrefs = {
   autoRotate: false,
   speed: 30,
   rotateMode: 'turntable' as RotateMode,
+  style: 'shaded-edges' as DisplayStyle,
 }
 try {
   const saved = JSON.parse(localStorage.getItem(VIEW_PREFS_KEY) ?? '{}')
   if (typeof saved.grid === 'boolean') viewPrefs.grid = saved.grid
   if (typeof saved.speed === 'number') viewPrefs.speed = saved.speed
   if (saved.rotateMode === 'turntable' || saved.rotateMode === 'free') viewPrefs.rotateMode = saved.rotateMode
+  if ((DISPLAY_STYLES as readonly string[]).includes(saved.style)) viewPrefs.style = saved.style
 } catch {
   /* defaults */
 }
@@ -242,8 +244,8 @@ function saveViewPrefs(): void {
   try {
     // auto-rotate is deliberately not remembered: a model that starts spinning
     // on open is a surprise, not a preference
-    const { grid, speed, rotateMode } = viewPrefs
-    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode }))
+    const { grid, speed, rotateMode, style } = viewPrefs
+    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode, style }))
   } catch {
     /* best-effort */
   }
@@ -251,8 +253,21 @@ function saveViewPrefs(): void {
 viewer.gridVisible = viewPrefs.grid
 viewer.autoRotateSpeed = viewPrefs.speed
 viewer.setRotateMode(viewPrefs.rotateMode)
+// before any model loads: addPart applies the current style to every new part
+viewer.setDisplayStyle(viewPrefs.style)
 
 const viewFolder = gui.addFolder('表示')
+// "Pick a style, then turn the model to look" works without blurring the
+// select: the arrows turn the view even while a GUI dropdown has the focus
+// (isTextEntry), and never step its options.
+viewFolder
+  .add(viewPrefs, 'style', { '陰影＋稜線': 'shaded-edges', 陰影のみ: 'shaded', ワイヤーフレーム: 'wireframe', 半透明: 'xray' })
+  .name('表示スタイル')
+  .onChange((v: DisplayStyle) => {
+    viewer.setDisplayStyle(v)
+    saveViewPrefs()
+    refreshHeatmapHud()
+  })
 viewFolder
   .add(viewPrefs, 'grid')
   .name('グリッド')
@@ -433,6 +448,20 @@ function saveDraftPrefs(): void {
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as 'ray' | 'ball' }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
+const HEATMAP_HUD = '肉厚ヒートマップ表示中'
+function heatmapHud(): string {
+  const method = thicknessState.method === 'ball' ? 'ローリングボール法' : 'レイ法'
+  // B-rep faces are not drawn in ワイヤーフレーム, so their colours cannot show;
+  // a mesh model (STL, ...) draws its triangles' edges in the colours instead
+  const note = viewer.facesHidden ? '。ワイヤーフレームでは面を描かないので、色は陰影か半透明で見る' : ''
+  return `${HEATMAP_HUD}（${method}、赤=閾値未満${note}）`
+}
+/** a style switch updates the note only while the HUD shows the heatmap message */
+function refreshHeatmapHud(): void {
+  // through setThicknessHud, so that turning the heatmap off still recognises
+  // (and replaces) the line; not over a measure result that replaced it
+  if (thicknessHud && hudInfo.textContent === thicknessHud) setThicknessHud(heatmapHud())
+}
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
@@ -462,9 +491,9 @@ async function updateThickness(): Promise<void> {
     }
     viewer.setThicknessColors(data, thicknessState.threshold)
     colorOwner = 'thickness'
-    setThicknessHud(
-      `肉厚ヒートマップ表示中（${requestedMethod === 'ball' ? 'ローリングボール法' : 'レイ法'}、赤=閾値未満）`,
-    )
+    // the method named is thicknessState.method, equal to requestedMethod here
+    // (a fetch that a method change overtook returned above)
+    setThicknessHud(heatmapHud())
   } catch (e) {
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
     // the user moved on (抜き勾配 took over, toggled off, other 方式): a late error is noise
@@ -1081,7 +1110,7 @@ async function loadFile(file: File): Promise<void> {
         setContentShown(true, file.name)
         showEmpty(false)
         picker.setModel(model.parts)
-        measureTool.setModel(meta.id, meta.format === 'brep')
+        measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         // restore persisted measurements / annotations
         const entries = Array.isArray(sidecar.entries) ? (sidecar.entries as EntryData[]) : []
@@ -1157,7 +1186,13 @@ testHooks.__cadView = () => ({
   gridVisible: viewer.gridVisible,
   near: viewer.camera.near,
   far: viewer.camera.far,
+  displayStyle: viewer.displayStyle,
 })
+// WebGL resource counters of the last frame: a style switch must build no geometry
+testHooks.__cadRenderInfo = () => {
+  const info = viewer.renderer.info
+  return { geometries: info.memory.geometries, programs: info.programs?.length ?? 0, calls: info.render.calls }
+}
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 testHooks.__cadStallProperties = (ms: number) => __stallNextProperties(ms)
 // how long a load waits for the 体積・重量 values before its fit (no argument: the app's own)

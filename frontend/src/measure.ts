@@ -44,6 +44,8 @@ export class MeasureTool {
   // re-upload of identical content yields the same (deduped) model id
   private session = 0
   private isBrep = false
+  /** part names when the model has more than one part: a pick names its part (see describe) */
+  private partNames: ReadonlyMap<number, string> | null = null
   private pending: { pick: PickResult; marker: THREE.Object3D } | null = null
   private entries: MeasureEntry[] = []
   private nextId = 1
@@ -62,10 +64,11 @@ export class MeasureTool {
     for (const fn of this.listeners) fn()
   }
 
-  setModel(modelId: string, isBrep: boolean): void {
+  setModel(modelId: string, isBrep: boolean, partNames?: ReadonlyMap<number, string>): void {
     this.clearAll()
     this.modelId = modelId
     this.isBrep = isBrep
+    this.partNames = partNames && partNames.size > 1 ? partNames : null
   }
 
   get available(): boolean {
@@ -86,7 +89,7 @@ export class MeasureTool {
       this.pending = { pick, marker }
       // circular entity? report its exact diameter as a bonus entry
       void this.reportEntityInfo(pick)
-      return `${describe(pick)} を選択 — 相手をクリック`
+      return `${this.describe(pick)} を選択 — 相手をクリック`
     }
 
     const a = this.pending
@@ -113,7 +116,7 @@ export class MeasureTool {
         (pa[2] + pb[2]) / 2,
       ]
       const data: EntryData = {
-        text: `${describe(a.pick)} ↔ ${describe(pick)} : ${fmt(res.value)}`,
+        text: `${this.describe(a.pick)} ↔ ${this.describe(pick)} : ${fmt(res.value)}`,
         labelText: fmt(res.value),
         labelPos: mid,
         markers: [a.pick.point.toArray() as [number, number, number], pick.point.toArray() as [number, number, number]],
@@ -166,6 +169,22 @@ export class MeasureTool {
     this.addEntry(data.text, objects, data)
   }
 
+  /**
+   * 面#6, or "cavity_block 面#6" in an assembly: in ワイヤーフレーム / 半透明 a
+   * click can go through one part to another, and the HUD and the list must
+   * say which part was taken.
+   */
+  private describe(pick: PickResult): string {
+    const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
+    return `${this.partPrefix(pick)}${kind}#${pick.id}`
+  }
+
+  /** "core_pin " in an assembly (see describe), "" for a one-part model */
+  private partPrefix(pick: PickResult): string {
+    const name = this.partNames?.get(pick.partId)
+    return name ? `${name} ` : ''
+  }
+
   toJSON(): EntryData[] {
     return this.entries.map((e) => e.data)
   }
@@ -214,7 +233,7 @@ export class MeasureTool {
         if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.curve === 'circle' && info.diameter !== undefined && info.center) {
           this.addFromData({
-            text: `円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
+            text: `${this.partPrefix(pick)}円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
             labelText: `⌀${fmt(info.diameter)}`,
             labelPos: info.center,
           })
@@ -224,7 +243,7 @@ export class MeasureTool {
         if (this.modelId !== requestedModelId || this.session !== requestedSession) return
         if (info.surface === 'cylinder' && info.diameter !== undefined) {
           this.addFromData({
-            text: `円筒面 ⌀${fmt(info.diameter)}`,
+            text: `${this.partPrefix(pick)}円筒面 ⌀${fmt(info.diameter)}`,
             labelText: `⌀${fmt(info.diameter)}`,
             labelPos: pick.point.toArray() as [number, number, number],
           })
@@ -269,7 +288,10 @@ export class MeasureTool {
   private makeMarker(at: THREE.Vector3): THREE.Object3D {
     // screen-constant size via onBeforeRender scaling
     const geo = new THREE.SphereGeometry(1, 12, 12)
-    const mat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, depthTest: false })
+    // transparent at full opacity only so it draws in three's transparent
+    // pass, after the see-through faces of 半透明 and the translucent section
+    // cap: drawn in the opaque pass, those would blend over it
+    const mat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, depthTest: false, transparent: true })
     const m = new THREE.Mesh(geo, mat)
     m.renderOrder = 999
     m.position.copy(at)
@@ -285,7 +307,8 @@ export class MeasureTool {
 
   private makeDimLine(a: THREE.Vector3, b: THREE.Vector3): THREE.Object3D {
     const geo = new THREE.BufferGeometry().setFromPoints([a, b])
-    const mat = new THREE.LineBasicMaterial({ color: DIM_COLOR, depthTest: false })
+    // transparent at full opacity for the same reason as the markers
+    const mat = new THREE.LineBasicMaterial({ color: DIM_COLOR, depthTest: false, transparent: true })
     const line = new THREE.Line(geo, mat)
     line.renderOrder = 998
     return line
@@ -299,11 +322,6 @@ function toRef(pick: PickResult): EntityRef {
   // exact B-rep measurement. The id IS the 1-based TopTools vertex map index,
   // which the backend resolves to the exact vertex.
   return { partId: pick.partId, kind: pick.kind, id: pick.id }
-}
-
-function describe(pick: PickResult): string {
-  const kind = { vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]
-  return `${kind}#${pick.id}`
 }
 
 function fmt(v: number): string {

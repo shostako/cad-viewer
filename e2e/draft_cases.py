@@ -20,7 +20,8 @@ keyboard (a dropdown that keeps focus), hidden part; (b) frustum: all six pull
 directions and the 2 deg boundary; a filleted STL whose under-drafted wall
 must stay red up to the fillet (mesh formats are classified per triangle);
 an open STL gets the legend's note on face orientation, a closed STL wound
-inside out is coloured as if wound outward (and gets no note); (c) mutual exclusion
+inside out is coloured as if wound outward (and gets no note), and the
+colouring's per-triangle copy follows the display style (A4); (c) mutual exclusion
 with the thickness heatmap, including held and aborted thickness requests, a
 方式 switch and a measure result on the status line; (d) hidden on a drawing,
 reset on reload, ticking while the mesh is still loading; (e) remembered
@@ -36,7 +37,7 @@ import tempfile
 
 from PIL import Image
 
-from nav_common import DXF, STEP_SRC, SURFACE, cross, nav_session, norm, sub
+from nav_common import BG, DXF, STEP_SRC, SURFACE, cross, nav_session, norm, sub
 
 # The shared mini_mold.step: every sidecar request is answered in the page
 # (see run()), so other scripts' notes on it never show here.
@@ -597,6 +598,49 @@ def run(parts: str) -> None:
                 assert "緑と青が逆" not in legend(), ("b7 closed part noted as unoriented", legend())
                 set_dir("+Z")
                 toggle("色分け", False)
+
+                # b8. the colouring's per-triangle copy of a mesh part takes the
+                # display style, and the part mesh stays hidden behind it (kept
+                # for picking only): the same number of draw calls with and
+                # without the colouring in every style, and in ワイヤーフレーム
+                # a point inside the top face stays the background
+                def style(label):
+                    ctl("表示スタイル").locator("select").select_option(label=label)
+                    page.evaluate("document.activeElement && document.activeElement.blur()")
+                    settle()
+
+                def calls():
+                    settle()
+                    return page.evaluate("window.__cadRenderInfo().calls")
+
+                STYLE_LABELS = ("陰影＋稜線", "陰影のみ", "ワイヤーフレーム", "半透明")
+                plain = {}
+                for label in STYLE_LABELS:
+                    style(label)
+                    plain[label] = calls()
+                # a point inside the top face, away from its diagonal and edges,
+                # where the uncoloured wireframe shows the background
+                style("ワイヤーフレーム")
+                img = grab()
+                inside = None
+                for fx, fy in ((0.5, -0.5), (-0.5, 0.5), (0.55, 0.0), (0.0, -0.55), (-0.55, 0.0), (0.0, 0.55)):
+                    q = (fx * F_TOPHALF, fy * F_TOPHALF, F_H)
+                    if same(px(img, q), BG, 6):
+                        inside = q
+                        break
+                assert inside, "b8 no background point inside the top face in ワイヤーフレーム"
+                toggle("色分け", True)
+                for label in STYLE_LABELS:
+                    style(label)
+                    got = calls()
+                    assert got == plain[label], ("b8 draw calls with the colouring", label, got, plain[label])
+                    if label == "ワイヤーフレーム":
+                        c = px(grab(), inside)
+                        assert same(c, BG, 6), ("b8 the coloured copy is filled in ワイヤーフレーム", c)
+                style("陰影＋稜線")
+                expect(F_PTS, SIX["+Z"], "b8 back to 陰影＋稜線")
+                toggle("色分け", False)
+                assert calls() == plain["陰影＋稜線"], "b8 the part mesh is drawn again"
 
             if "c" in parts:  # (c), (d) and (e) build on each other
                 open_folder("抜き勾配")

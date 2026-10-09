@@ -6,11 +6,24 @@
  * the assembly-tree visibility toggles them for free. The technique is
  * version-fragile — three.js is pinned in package.json, and `caps` can be
  * switched off as a fallback.
+ *
+ * Display styles: the stencil meshes are siblings of the face mesh, so they
+ * keep counting when ワイヤーフレーム hides the faces. In 陰影＋稜線 / 陰影のみ the
+ * cap is opaque, as always. In ワイヤーフレーム / 半透明 it is translucent: the
+ * point of those styles is to see what is inside the mold, and an opaque cap
+ * would hide exactly the inner parts behind the cut (in ワイヤーフレーム it would
+ * be the only opaque surface, hiding the lines behind it). Denser than the
+ * faces, the cut still reads as material, and the stencil keeps the tint inside
+ * the cross-section. A transparent cap is drawn in three's transparent pass,
+ * still after the stencil meshes (opaque pass, renderOrder 1), and nothing in
+ * between writes the stencil, so the cut stays closed.
  */
 import * as THREE from 'three'
 import type { Viewer } from './viewer'
 
 const CAP_COLOR = 0x9aa4b0
+/** cap opacity in the see-through styles: denser than the faces (0.3), so the cut reads as material without hiding what is behind it */
+const CAP_SEE_THROUGH_OPACITY = 0.5
 
 export type Axis = 'X' | 'Y' | 'Z'
 
@@ -38,6 +51,7 @@ export class SectionTool {
   constructor(viewer: Viewer) {
     this.viewer = viewer
     viewer.renderer.localClippingEnabled = true
+    viewer.onDisplayStyleChange(() => this.styleCap())
   }
 
   setModelBBox(min: number[], max: number[]): void {
@@ -117,12 +131,28 @@ export class SectionTool {
       stencilZFail: THREE.ReplaceStencilOp,
       stencilZPass: THREE.ReplaceStencilOp,
       side: THREE.DoubleSide,
+      // translucent in the see-through styles: one pass, as for the faces
+      forceSinglePass: true,
     })
     this.capMesh = new THREE.Mesh(new THREE.PlaneGeometry(size, size), capMat)
     this.capMesh.renderOrder = 1.1
     const renderer = this.viewer.renderer
     this.capMesh.onAfterRender = () => renderer.clearStencil()
     this.viewer.scene.add(this.capMesh)
+    this.styleCap()
+  }
+
+  /** opaque cap in the shaded styles, translucent in the see-through ones (see the file comment) */
+  private styleCap(): void {
+    const mat = this.capMesh?.material as THREE.MeshStandardMaterial | undefined
+    if (!mat) return
+    const see = this.viewer.seeThrough
+    if (mat.transparent !== see) {
+      mat.transparent = see
+      mat.needsUpdate = true // a program parameter (OPAQUE): three does not notice by itself
+    }
+    mat.opacity = see ? CAP_SEE_THROUGH_OPACITY : 1
+    mat.depthWrite = !see
   }
 
   private placeCap(): void {
