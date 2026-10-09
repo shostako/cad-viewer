@@ -13,7 +13,7 @@ panel: a correct fit that ignored it would fail the same check.
      under its title wins: a fit that read the GUI once would not see it)
 - P6 a resize keeps the shift in px (clamped, restored), with no re-fit
 - P4 700 x 1100: left of the GUI; with 表示 closed, the band under it
-- P5 400 x 900 falls back to the whole canvas; 450 x 900 does not
+- P5 400 x 900 falls back to the whole canvas; 480 x 900 does not
 - P2 an IGES with a short tree and the 体積・重量 values: values later than the
      app's wait (the fit sees 計算中…), values in time (the fit sees them);
      the runner with the GUI collapsed, where the values panel decides
@@ -201,12 +201,14 @@ try:
         cl, ct, _, _ = canvas_rect()
         tc = project(view()["target"])
         assert math.dist(tc, (cl + W / 2, ct + H / 2)) <= 0.5, ("P5 fallback: target at the canvas centre", tc)
-        resize(450, 900)
+        # just above MIN_FREE: the free area is the window left of the operation
+        # panel (264 px wide, 12 px from the edge): (480 - 276) / 480 = 0.425
+        resize(480, 900)
         fit()
         _, _, W, H = canvas_rect()
         F, _ = n.free_area()
         assert 0.40 < (F[2] - F[0]) / W < 0.45, ("P5 just above MIN_FREE", F, W)
-        print("P5 450x900", fill_check(*RUNNER, "450x900", fallback=False))
+        print("P5 480x900", fill_check(*RUNNER, "480x900", fallback=False))
         resize(1280, 800)
 
         # ---- P2. an IGES with a short tree, and the 体積・重量 values -----------
@@ -255,17 +257,28 @@ try:
         n.wait_gui_idle()
 
         # ---- P7. the mold with a long measurement list ----------------------------
-        # 表示 closed first: the right-hand column keeps the GUI's height and
-        # gives the stack under it the rest (down to about three rows of the
-        # list), so a long list needs a short GUI
-        folder_title("表示").click()
+        # The whole GUI collapsed first: the right-hand column is one width, so
+        # under a full GUI the list only stands where the GUI already bounds the
+        # free area. Collapsed to its title, the GUI leaves the column to the
+        # stack, and a long list is what bounds the area on the right.
+        page.locator(".lil-gui.lil-root > .lil-title").click()
         n.wait_gui_idle()
+
+        def set_mode_collapsed(label):
+            """the mode while the GUI is collapsed (its select cannot be clicked)"""
+            page.evaluate(
+                """l => { const n = [...document.querySelectorAll('.lil-name')].find(e => e.textContent.startsWith('モード'))
+                     const s = n.closest('.lil-controller').querySelector('select')
+                     s.value = l; s.dispatchEvent(new Event('change')) }""",
+                label,
+            )
+
         empty_sidecar(page, MOLD_COPY)  # a previous failed run may have left entries
         load(MOLD_COPY)
         fit()
         print("P7 empty list", fill_check(*MOLD, "mold", needs=("#tree-panel",)))
         v0 = view()
-        set_mode("注記")
+        set_mode_collapsed("注記")
         for i in range(12):
             pt = (8 + 7 * i, 5, 15)  # plate top, front strip: clear of the pins and the block
             xy = project(pt)
@@ -276,18 +289,19 @@ try:
                 assert not (p[0] <= lx <= p[2] and p[1] <= ly <= p[3]), ("P7 note point under a panel", pt, sel, p)
             page.mouse.click(*xy)
             page.wait_for_selector(".note-input", timeout=5000)
-            # full-width text: CJK glyphs are 1 em in any font, so the list
-            # reaches its CSS max-width (360 px) on any machine
+            # long lines: the rows wrap within the column's one width (264 px)
+            # and the list grows tall on any machine
             page.keyboard.insert_text(f"ゲート側の抜き勾配とR止まりを確認し、型側の合わせ面とエジェクタ位置も見るメモ{i:02d}")
             page.keyboard.press("Enter")
             page.wait_for_function(f"document.querySelectorAll('#measure-list li').length === {i + 1}", timeout=5000)
-        set_mode("なし")
+        set_mode_collapsed("なし")
         settle()
         v1 = view()
         assert close(v1["position"], v0["position"], 1e-6) and close(v1["target"], v0["target"], 1e-6), "P7 re-fit"
         _, _, W, H = canvas_rect()
         m, g = panels()["#measure-panel"], panels()[GUI]
-        assert m[3] - m[1] >= 0.3 * H and m[0] <= g[0] - 80, ("P7 the list must be long and wide", m, g)
+        # long, and as wide as the GUI (the column's one width)
+        assert m[3] - m[1] >= 0.3 * H and abs(m[0] - g[0]) <= 0.5, ("P7 the list must be long, in the column", m, g)
         fit()
         print("P7 long list", fill_check(*MOLD, "mold, 12 notes", needs=("#measure-panel", "#tree-panel")))
 
@@ -337,7 +351,7 @@ try:
         assert drawn, "P7 the sampler never saw the mold"
         assert not other, ("P7 a provisional framing was drawn", other[:3], pre, final)
         assert not early, ("P7 the mold was drawn before its fit", early[:3], final)
-        folder_title("表示").click()
+        page.locator(".lil-gui.lil-root > .lil-title").click()
         n.wait_gui_idle()
 
         # ---- P8. a sidecar that cannot be restored -------------------------------
