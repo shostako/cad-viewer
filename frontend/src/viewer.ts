@@ -5,10 +5,11 @@ import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
-import { draftColors, draftColorsFlat, windingSign } from './draft'
+import { draftColors, draftColorsFlat, draftSine, triangleDraftSine, windingSign } from './draft'
 import { MIN_FREE, type ScreenRect } from './freearea'
 import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
+import { thicknessColors } from './thickness'
 
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
@@ -369,7 +370,7 @@ export class Viewer {
     mat.color.set(0xffffff) // vertex colour x material colour: white passes it through
   }
 
-  /** Thickness heatmap: red below threshold, grading to base blue when thick. */
+  /** Thickness heatmap (thickness.ts): red to orange below the threshold, grey-blue to blue at and above it. */
   setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
@@ -380,33 +381,7 @@ export class Viewer {
         console.warn(`thickness length mismatch for part ${partId} — skipped`)
         continue
       }
-      this.applyVertexColors(mesh, (colors) => {
-        for (let i = 0; i < t.length; i++) {
-          const v = t[i]
-          let r = 0.55
-          let g = 0.62
-          let b = 0.75 // no-data: neutral gray-blue
-          if (v > 0) {
-            const u = Math.min(v / (2 * threshold), 1)
-            if (u < 0.5) {
-              // thin: red -> yellow
-              const k = u / 0.5
-              r = 1
-              g = 0.15 + 0.75 * k
-              b = 0.08
-            } else {
-              // ok: yellow -> steel blue
-              const k = (u - 0.5) / 0.5
-              r = 1 - 0.65 * k
-              g = 0.9 - 0.35 * k
-              b = 0.08 + 0.72 * k
-            }
-          }
-          colors[i * 3] = r
-          colors[i * 3 + 1] = g
-          colors[i * 3 + 2] = b
-        }
-      })
+      this.applyVertexColors(mesh, (colors) => thicknessColors(t, threshold, colors))
     }
   }
 
@@ -429,6 +404,46 @@ export class Viewer {
         this.applyVertexColors(mesh, (out) => draftColors(normals, dir, requiredDeg, out))
       }
     }
+  }
+
+  /**
+   * Sine of the draft angle at a point of triangle `tri` of a part (the value
+   * under the cursor), by the rule the colouring on screen uses
+   * (setDraftColors): a mesh-format part by the triangle's own normal from its
+   * winding, times the part's winding sign, read from the flat copy the
+   * colouring drew; a B-rep part by its display normals at the triangle's
+   * vertices, blended with the point's barycentric `weights` (exact on a
+   * planar face, where the three are the face's normal). null when the part
+   * has no such triangle, or is a mesh-format part without its flat copy (the
+   * draft colouring is off).
+   */
+  draftSineAt(
+    partId: number,
+    tri: number,
+    weights: readonly [number, number, number],
+    dir: readonly [number, number, number],
+  ): number | null {
+    const mesh = this.partMeshes.get(partId)
+    const index = mesh?.geometry.index
+    if (!mesh || !index || tri < 0 || (tri + 1) * 3 > index.count) return null
+    if (mesh.userData.meshFormat) {
+      const copy = this.flatCopies.get(partId)
+      if (!copy) return null
+      // the copy holds triangle k of the part as floats 9k .. 9k + 8 (flatCopy)
+      const positions = copy.geometry.getAttribute('position').array
+      return triangleDraftSine(positions, tri * 9, copy.userData.windingSign as 1 | -1, dir)
+    }
+    const normals = mesh.geometry.getAttribute('normal').array
+    let x = 0
+    let y = 0
+    let z = 0
+    for (let k = 0; k < 3; k++) {
+      const v = index.getX(tri * 3 + k) * 3
+      x += weights[k] * normals[v]
+      y += weights[k] * normals[v + 1]
+      z += weights[k] * normals[v + 2]
+    }
+    return draftSine(x, y, z, dir)
   }
 
   /**
@@ -716,6 +731,19 @@ export class Viewer {
       if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)
       else edges.material.color.set(EDGE_COLOR)
     }
+  }
+
+  /**
+   * Whether the display style draws the part's faces: not in ワイヤーフレーム
+   * when the part has edge lines (a B-rep), which are drawn instead. The faces
+   * stay pickable either way (applyStyle); what is read off them for the eye
+   * (the values under the cursor) should come only from faces on screen.
+   */
+  facesDrawn(partId: number): boolean {
+    const mesh = this.partMeshes.get(partId)
+    if (!mesh) return false
+    // the draft colouring's per-triangle copy is what is drawn while it exists
+    return this.flatCopies.get(partId)?.visible ?? mesh.visible
   }
 
   isPartVisible(partId: number): boolean {
