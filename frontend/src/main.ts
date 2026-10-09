@@ -577,9 +577,9 @@ function clearThickness(): void {
 // line that only told what to click goes too, back to the line under it (the
 // heatmap's or the model's); a result (距離 ...) stays. 2D drawings keep their
 // own lines (drawing2d.ts).
-const MEASURE_HINT = '計測: クリックで 1 点目'
+const MEASURE_HINT = '計測: クリックで 1 点目（Esc でやめる）'
 const MEASURE_MESH_HINT = '計測はSTEP/IGESモデルのみ（メッシュ形式に真値はない）'
-const NOTE_HINT = '注記: クリックした点に注記を付ける'
+const NOTE_HINT = '注記: クリックした点に注記を付ける（Esc でやめる）'
 /** the last 計測 / 注記 line that only says what to click; '' when none is shown */
 let modeHud = ''
 function setModeHud(text: string): void {
@@ -1305,7 +1305,9 @@ function escapeMeasure(): boolean {
       if (drawing2d.cancelPending()) return true
     } else if (measureTool.hasPending) {
       measureTool.cancelPending()
-      hudInfo.textContent = '1 点目を取り消した（もう一度 Esc で計測をやめる）'
+      // a hint like the others: the mode's line goes with the mode
+      setModeHud('1 点目を取り消した（クリックで 1 点目、もう一度 Esc で計測をやめる）')
+      probe.refresh() // the dotted line from that point goes now, not at the next move
       return true
     }
   }

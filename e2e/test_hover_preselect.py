@@ -32,8 +32,8 @@ STL = str(TESTDATA / "ribbed_plate.stl")
 SHOTS = "/tmp/cad_viewer_hover_preselect"
 LB = np.array((0x55, 0xD6, 0xFF))  # the highlight colour (水色), sRGB
 
-MEASURE_HINT = "計測: クリックで 1 点目"
-NOTE_HINT = "注記: クリックした点に注記を付ける"
+MEASURE_HINT = "計測: クリックで 1 点目（Esc でやめる）"
+NOTE_HINT = "注記: クリックした点に注記を付ける（Esc でやめる）"
 MESH_HINT = "計測はSTEP/IGESモデルのみ（メッシュ形式に真値はない）"
 
 BLOCK_TOP = (50, 30, 35)  # the middle of the cavity block's top face
@@ -390,7 +390,19 @@ def run(page, nav, infos):
     print("(g) dotted line over the block: changed %.2f, near 水色 %.2f" % (c_dash, lb_dash))
     assert 0.3 <= c_dash <= 0.9, ("a dotted line from the first point to the candidate", c_dash)
     assert lb_dash >= 0.25, ("the dotted line is 水色", lb_dash)
+    assert "Esc で取り消し" in first, first
     page.screenshot(path=SHOTS + "_dash.png")
+    # Esc drops the first point: its dotted line goes at once, the cursor still
+    h_still = frame()
+    page.keyboard.press("Escape")
+    settle()
+    print("(g) after Esc:", hud())
+    assert hud().startswith("1 点目を取り消した"), hud()
+    assert changed(frame(), plain, over_block) <= 0.02, "(g) the dotted line stays after Esc"
+    assert changed(h_still, plain, over_block) >= 0.3, "(g) the case needs the line before Esc"
+    hover(a_xy)
+    page.mouse.click(*a_xy)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('相手をクリック')", timeout=10000)
     # the vertex: the label, then the click takes that very vertex
     hover(v_xy)
     t_b = tip_text("(g) B")

@@ -99,7 +99,7 @@ export class MeasureTool {
       this.pending = { pick, marker }
       // circular entity? report its exact diameter as a bonus entry
       void this.reportEntityInfo(pick)
-      return `${this.describe(pick)} を選択 — 相手をクリックで 2 点目`
+      return `${this.describe(pick)} を選択 — 相手をクリックで 2 点目（Esc で取り消し）`
     }
 
     const a = this.pending
