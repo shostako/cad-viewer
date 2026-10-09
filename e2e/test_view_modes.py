@@ -1,5 +1,9 @@
 """E2E: the empty-screen card, and 3D-only controls hidden on 2D drawings (A2).
 
+A failed load shows its own card (#load-card, see test_load_card.py) in place
+of the empty-screen card; closing it brings the empty-screen card back when
+nothing is on screen.
+
 Checks what is on screen (visibility of the GUI folders, the card, the HUD
 key help, the option state of the mode selector) as models and drawings are
 opened in turn. Needs the same servers as the other E2E scripts.
@@ -42,6 +46,14 @@ with sync_playwright() as p:
         title = page.locator(".lil-gui .lil-title", has_text=re.compile("^" + re.escape(name) + "$"))
         return title.first.is_visible()
 
+    def failed_card(why=""):
+        """the failed load's card is up (its reason containing `why`); close it"""
+        card = page.locator("#load-card")
+        assert card.is_visible() and "ファイルを開けなかった" in card.inner_text(), card.inner_text()
+        assert why in page.inner_text("#load-reason"), page.inner_text("#load-reason")
+        page.click("#load-close")
+        assert not card.is_visible()
+
     def mode_select():
         label = page.locator(".lil-name", has_text=re.compile("^モード"))
         return page.locator(".lil-gui .lil-controller").filter(has=label).first.locator("select")
@@ -76,7 +88,10 @@ with sync_playwright() as p:
     assert "ドロップ" in card.inner_text() and "DXF" in card.inner_text(), card.inner_text()
     box = card.bounding_box()
     vw, vh = 1280, 800
-    assert abs(box["x"] + box["width"] / 2 - vw / 2) < 2 and abs(box["y"] + box["height"] / 2 - vh / 2) < 2, box
+    # in the middle of the part left of the operation panel (it fits there at 1280)
+    gui = page.locator(".lil-gui.lil-root").bounding_box()
+    assert gui["x"] >= box["width"] + 32, (gui, box)
+    assert abs(box["x"] + box["width"] / 2 - gui["x"] / 2) < 2 and abs(box["y"] + box["height"] / 2 - vh / 2) < 2, (box, gui)
     with page.expect_file_chooser() as fc:
         page.click("#empty-open")
     fc.value.set_files(STEP)
@@ -127,12 +142,16 @@ with sync_playwright() as p:
     try:
         page.set_input_files("#file-input", str(bad))
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
-        assert not visible("#empty-hint"), "the model is still on screen: no card"
+        assert not visible("#empty-hint"), "the model is still on screen: no open card"
+        failed_card("読めない")
+        assert not visible("#empty-hint") and visible("#tree-panel"), "the model is still on screen"
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
         page.set_input_files("#file-input", str(bad))
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
-        assert visible("#empty-hint"), "nothing loaded: the card must stay"
+        assert not visible("#empty-hint"), "the failed card stands in for the open card"
+        failed_card("読めない")
+        assert visible("#empty-hint"), "nothing loaded: the open card comes back with the failed card closed"
     finally:
         bad.unlink()
 
@@ -146,6 +165,7 @@ with sync_playwright() as p:
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
     finally:
         page.unroute("**/mesh.bin")
+    failed_card("受け取れなかった")
     assert visible("#empty-hint"), "the old model is gone and nothing replaced it: the card must come back"
     load(STEP)
     assert not visible("#empty-hint")
@@ -161,6 +181,7 @@ with sync_playwright() as p:
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
     finally:
         page.unroute("**/drawing.svg")
+    failed_card("受け取れなかった")
     assert visible("#empty-hint"), "nothing is shown any more: the card must come back"
     assert page.locator("#viewport2d svg").count() == 0, "the old drawing is still in the 2D viewer"
     assert not visible("#viewport2d")
