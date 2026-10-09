@@ -44,8 +44,11 @@ for _ in $(seq 1 90); do up && break; sleep 1; done; up || echo "servers did not
 backend/.venv/bin/python e2e/test_stl_view.py    # 接続先は CAD_VIEWER_URL で変えられる（既定 http://127.0.0.1:5183）
 for t in e2e/test_*.py; do backend/.venv/bin/python "$t" || echo "FAILED: $t"; done
 kill %1 %2    # 止める
-# E2E は backend/.sidecars/ に書く。回し終えたら消してよい
-rm -rf backend/.sidecars
+# E2E は backend/.sidecars/ にテストデータの分を書く。丸ごとは消さない（手元で開いた
+# 実データの計測・注記も同じ場所にある）。消すのはテストデータの分だけ
+for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do
+  rm -f "backend/.sidecars/$(sha256sum "$f" | cut -c1-32).json"
+done
 ```
 
 CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。
@@ -124,7 +127,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - **読み込みの結果（部品や面の番号）を変えたら `backend/app/cache.py` の `CACHE_VERSION` を上げる。** 上げないと、古いキャッシュのメッシュと計測時の読み直しで番号が食い違い、計測が別の面に当たる
 - **lil-gui は自分のパネルの中の keydown を外へ流さない。** キー操作は `main.ts` で window の捕捉段階（capture）で受けている。bubbling に戻すと、視点ボタンを押した直後に矢印キーが効かなくなる
 - pytest の `test_drawing.py` の DWG の案内のテストは、ODA File Converter が入っている環境（手元）では skip される。1 本の skip は正常。ODA の無いクラウドと CI では走る
-- **テストは本番のデータ置き場に書かない。** pytest は `backend/tests/conftest.py` がセッション単位で `.sidecars` と `.cache` を一時ディレクトリに差し替えている。E2E は実際のサーバーを使うので `backend/.sidecars/` に書く（消せば元に戻る）
+- **テストは本番のデータ置き場に書かない。** pytest は `backend/tests/conftest.py` がセッション単位で `.sidecars` と `.cache` を一時ディレクトリに差し替えている。E2E は実際のサーバーを使うので `backend/.sidecars/` に書く。そこには手元で開いた実データの計測・注記も入るので、後片付けはテストデータの分だけにする（上の「コマンド」の手順。ファイル名は中身の sha256 の先頭 32 文字）。多くの E2E は自分専用のコピー（末尾に改行を足したもの）か `page.route` で共有のサイドカーを避けている
 - ヘッドレス Chromium（SwiftShader）の写真で、操作パネルの近くや右下に白い四角が出るのは WebGL の合成の副作用で、実ブラウザでは出ない。絵文字が豆腐になるのもヘッドレスだけ。どちらもバグではない
 - シェルで `cd dir && nohup cmd &` と書くと `&` が列全体にかかり、`$!` が cmd でなく中継のサブシェルの pid になる。`(cd dir || exit; nohup cmd & echo $!)` と分ける
 - パイプは終了コードを飲む（pipefail は既定で off）。`cmd | tail && git commit` は cmd が失敗しても進む。終了コードは変数に取る
