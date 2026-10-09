@@ -19,7 +19,8 @@ panel: a correct fit that ignored it would fail the same check.
      the runner with the GUI collapsed, where the values panel decides
 - P7 a long measurement list; a reload (from another model) restores it
      before the one load fit, and no frame shows the mold at another pose
-- P8 a sidecar entry that cannot be rebuilt, and a sidecar GET that fails:
+- P8 a sidecar entry that cannot be rebuilt, a sidecar GET that fails, and a
+  saved file the backend reports damaged (500 with a reason):
      the model still loads and is framed
 """
 import math
@@ -380,6 +381,32 @@ try:
         assert page.locator("#measure-list li").count() == 0, "P8b no list"
         assert not page.locator("#tree-panel").evaluate("e => e.classList.contains('hidden')"), "P8b the tree"
         print("P8b sidecar GET failed", fill_check(*MOLD, "mold, sidecar GET failed"))
+
+        # P8c. the backend says the saved file is damaged (500 with a reason, as
+        # GET /sidecar answers for a file it cannot read): the same, with the
+        # backend's reason on the HUD (not the plain "nothing saved" of before)
+        def damaged_sidecar(route):
+            if route.request.method == "GET":
+                route.fulfill(status=500, content_type="application/json",
+                              body='{"detail": "保存ファイルが壊れている: JSON ではない、1 行目"}')
+            else:
+                route.continue_()
+
+        load(n.paths["runner"])
+        errors_before = len(n.errors)
+        page.route("**/sidecar", damaged_sidecar)
+        try:
+            load(MOLD_COPY)
+        finally:
+            page.unroute("**/sidecar")
+        # the browser logs the 500 itself; that line is expected, anything else is not
+        new_errors = n.errors[errors_before:]
+        assert new_errors and all("status of 500" in e for e in new_errors), ("P8c console", new_errors)
+        del n.errors[errors_before:]
+        hud_text = page.inner_text("#hud-info")
+        assert "計測・注記を読み込めなかった" in hud_text and "保存ファイルが壊れている" in hud_text, ("P8c", hud_text)
+        assert page.locator("#measure-list li").count() == 0, "P8c no list"
+        print("P8c sidecar damaged", fill_check(*MOLD, "mold, sidecar damaged"))
 
         # leave the private sidecar empty
         empty_sidecar(page, MOLD_COPY)
