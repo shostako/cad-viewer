@@ -16,7 +16,7 @@ import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { LENGTH_UNIT, type EntryData } from './measure'
 
-export type RowKind = 'distance' | 'diameter' | 'note' | 'other'
+export type RowKind = 'distance' | 'diameter' | 'angle' | 'note' | 'other'
 
 export interface RowView {
   kind: RowKind
@@ -30,7 +30,7 @@ export interface RowView {
   b: string
 }
 
-const KIND_NAME: Record<RowKind, string> = { distance: '距離', diameter: '直径', note: '注記', other: '' }
+const KIND_NAME: Record<RowKind, string> = { distance: '距離', diameter: '直径', angle: '角度', note: '注記', other: '' }
 
 /** a 3D entry (as saved) as a row */
 export function entryRow(raw: EntryData): RowView {
@@ -48,6 +48,9 @@ export function entryRow(raw: EntryData): RowView {
     const what = `${dia[1]}${dia[3]}`.trim()
     return { kind: 'diameter', value: dia[2], unit: LENGTH_UNIT, what, a: what, b: '' }
   }
+  // "cavity_block 面#6 ∠ cavity_block 面#3 : 90.000°"
+  const ang = /^(.*) ∠ (.*) : ([-\d.]+)°$/.exec(d.text)
+  if (ang) return { kind: 'angle', value: ang[3], unit: '°', what: `${ang[1]} ∠ ${ang[2]}`, a: ang[1], b: ang[2] }
   // "cavity_block 面#6 ↔ plate 面#6 : 20.000"
   const dist = /^(.*) ↔ (.*) : ([-\d.]+)$/.exec(d.text)
   if (dist) {
@@ -88,6 +91,7 @@ export function listText(rows: readonly RowView[]): string {
 const KIND_ICON: Record<RowKind, IconNode | null> = {
   distance: ICON.distance,
   diameter: ICON.diameter,
+  angle: ICON.angle,
   note: ICON.note,
   other: null,
 }
@@ -165,7 +169,7 @@ export function rowElement(
   if (r.unit) {
     const u = document.createElement('span')
     u.className = 'm-unit'
-    u.textContent = ` ${r.unit}`
+    u.textContent = r.unit === '°' ? '°' : ` ${r.unit}` // 90.000° (no space), 20.000 mm
     value.appendChild(u)
   }
   main.appendChild(value)
