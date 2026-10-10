@@ -125,7 +125,7 @@ try:
         def ctl(name):
             return gui_common.ctl(page, name)
 
-        save_btn = ctl("画像を保存").locator("button")
+        save_btn = page.locator("#toolbar button[data-action='png']")
         bg_select = ctl("画像の背景").locator("select")
 
         def blur():

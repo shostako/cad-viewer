@@ -383,11 +383,14 @@ try:
 
         # 12. no parts table (計算中…, or a one-part model): the measure list
         #     takes the room up to the GUI before it scrolls; no table row is
-        #     kept free. Window 800 px tall, the default GUI (表示 open).
+        #     kept free. Window 800 px tall, the GUI with 表示 open (opened here:
+        #     it starts folded since #23 item 10, and then the list would reach
+        #     40vh before it ran out of room).
         page = new_page()
         page.set_viewport_size({"width": 1280, "height": 800})
         page.evaluate("window.__cadStallProperties(120000)")  # 計算中… for the whole section
         load(LAYOUT_STEP)
+        gui_common.open_folder(page, "表示")
         page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'")
         assert hidden("#props-parts-wrap")
         ctl("モード").locator("select").select_option("計測")

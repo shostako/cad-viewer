@@ -11,7 +11,9 @@
  * entry's text and label as the measure tool writes them, so entries saved
  * before this change show the same way.
  */
+import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
+import { ICON, icon } from './icons'
 import { LENGTH_UNIT, type EntryData } from './measure'
 
 export type RowKind = 'distance' | 'diameter' | 'note' | 'other'
@@ -75,17 +77,12 @@ export function listText(rows: readonly RowView[]): string {
   return ['種類\t値\t単位\t対象 A\t対象 B', ...rows.map(rowLine)].join('\n')
 }
 
-// Marks drawn here (stroke, 14 px, the text colour): a ruler, a diameter, a
-// pin, two sheets (copy) and a tick (copied).
-const SVG_HEAD =
-  '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'
-export const ICONS: Record<RowKind | 'copy' | 'done', string> = {
-  distance: `${SVG_HEAD}<path d="M3 8l5-5 13 13-5 5z"/><path d="M7 8l2 2M10 5l2 2M11 12l2 2M14 9l2 2"/></svg>`,
-  diameter: `${SVG_HEAD}<circle cx="12" cy="12" r="8"/><path d="M5 19L19 5"/></svg>`,
-  note: `${SVG_HEAD}<path d="M12 21s-6-5.5-6-11a6 6 0 0 1 12 0c0 5.5-6 11-6 11z"/><circle cx="12" cy="10" r="2"/></svg>`,
-  other: `${SVG_HEAD}<circle cx="12" cy="12" r="2"/></svg>`,
-  copy: `${SVG_HEAD}<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/></svg>`,
-  done: `${SVG_HEAD}<path d="M5 12l5 5 9-10"/></svg>`,
+/** the mark of a row's kind (Lucide) */
+const KIND_ICON: Record<RowKind, IconNode | null> = {
+  distance: ICON.distance,
+  diameter: ICON.diameter,
+  note: ICON.note,
+  other: null,
 }
 
 /**
@@ -121,13 +118,13 @@ const DONE_MS = 1500
 
 /** show the tick on a copy control for a moment (it went to the clipboard) */
 export function flashDone(el: HTMLElement, label: string): void {
-  el.innerHTML = ICONS.done
+  el.replaceChildren(icon(ICON.done, 14))
   el.classList.add('done')
   el.title = 'コピーした'
   clearTimeout(Number(el.dataset.doneTimer))
   el.dataset.doneTimer = String(
     setTimeout(() => {
-      el.innerHTML = ICONS.copy
+      el.replaceChildren(icon(ICON.copy, 14))
       el.classList.remove('done')
       el.title = label
     }, DONE_MS),
@@ -147,9 +144,10 @@ export function rowElement(
   const li = document.createElement('li')
   li.className = 'm-row'
   li.dataset.kind = r.kind
-  const icon = document.createElement('span')
-  icon.className = 'm-icon'
-  icon.innerHTML = ICONS[r.kind]
+  const mark = document.createElement('span')
+  mark.className = 'm-icon'
+  const kindIcon = KIND_ICON[r.kind]
+  if (kindIcon) mark.appendChild(icon(kindIcon, 14))
   const main = document.createElement('span')
   main.className = 'm-main'
   const value = document.createElement('span')
@@ -185,7 +183,7 @@ export function rowElement(
   const label = '値をコピー（Excel に貼れる形）'
   cp.title = label
   cp.setAttribute('aria-label', '値をコピー')
-  cp.innerHTML = ICONS.copy
+  cp.appendChild(icon(ICON.copy, 14))
   const doCopy = async (): Promise<void> => {
     if (await copyText(rowLine(r))) flashDone(cp, label)
   }
@@ -196,6 +194,6 @@ export function rowElement(
       void doCopy()
     }
   })
-  li.append(icon, main, del, cp)
+  li.append(mark, main, del, cp)
   return li
 }

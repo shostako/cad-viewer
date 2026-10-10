@@ -59,7 +59,7 @@ TINY = ((0, 0, 0), (0.05, 0.03, 0.02))
 HUGE = ((0, 0, 0), (5000, 3000, 2000))
 BOXES = {"runner": RUNNER, "tiny": TINY, "huge": HUGE}
 # overlay panels a fit keeps the model clear of (frontend/src/main.ts FIT_PANELS)
-PANELS = (".lil-gui.lil-root", "#tree-panel", "#hud", "#measure-panel", "#props-panel", "#triad", "#panels-show")
+PANELS = ("#toolbar", ".lil-gui.lil-root", "#tree-panel", "#hud", "#measure-panel", "#props-panel", "#triad", "#panels-show")
 MIN_FREE = 0.4
 SWITCH_GAIN = 1.1
 # the model's box by file name, for the checks that need it without being given one (view_centre)
@@ -287,7 +287,7 @@ class Nav:
         """全体表示 by a key ("f", "F", "Home") or the button ("button"); records the panel rects"""
         self.wait_gui_idle()
         if trigger == "button":
-            self.ctl("全体表示").locator("button").click()
+            self.page.locator("#toolbar button[data-action='fit']").click()
         else:
             self.page.keyboard.press(trigger)
         self.settle()
