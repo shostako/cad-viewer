@@ -152,8 +152,9 @@ with nav_session() as n:
         page.wait_for_selector(".pivot-marker", state="detached", timeout=2000)
         page.mouse.dblclick(*cur)
         # the marker enters the page with the next drawn frame (on a loaded machine, after the
-        # double-click has returned), and stays 1 s
-        page.wait_for_selector(".pivot-marker", state="attached", timeout=500)
+        # double-click has returned), and stays 1 s: waited for up to just under that (a slow
+        # CI runner took more than 500 ms)
+        page.wait_for_selector(".pivot-marker", state="attached", timeout=900)
         page.wait_for_timeout(400)
         v1 = view()
         assert close(v1["target"], P, 1e-6 * R_MOLD), (mode, "N7 target", v1["target"], P)
