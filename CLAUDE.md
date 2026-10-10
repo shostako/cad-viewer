@@ -117,7 +117,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `drawing.py` — DXF/DWG → SVG。DWG は ODA File Converter（無料、手動で入れる、再配布不可）が PATH に必要
 - `cache.py` — テッセレーションの結果を `backend/.cache/` に保存する（キー: ファイルの sha256＋パラメータ＋`CACHE_VERSION`）
 - `store.py` — 読み込んだモデルをメモリに置く（LRU、同じ中身は使い回す）
-- 注記・断面の状態は `backend/.sidecars/` に JSON で保存する（`PUT /sidecar`、まとめて保存）
+- 計測と注記は、モデルごとに `backend/.sidecars/` に JSON で保存する（サイドカー。`PUT /sidecar` でまとめて保存）。ファイル名は読み込んだファイルの中身の sha256 の先頭 32 文字なので、同じ中身なら名前や置き場所が変わっても戻る。断面や表示の状態は保存しない
 
 ### バイナリメッシュの形式
 
