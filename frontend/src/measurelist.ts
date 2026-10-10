@@ -15,8 +15,8 @@
 import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
-import { DISTANCE_MODE_NAMES, LENGTH_UNIT, type EntryData } from './measure'
-import { AREA_UNIT, fmt, pointText } from './sizes'
+import { DISTANCE_MODE_NAMES, type EntryData } from './measure'
+import { areaUnit, fmt, lenUnit, showArea, showDegNum, showLen, showPoint } from './sizes'
 
 export type RowKind =
   | 'distance'
@@ -48,7 +48,30 @@ export interface RowView {
   axes?: [string, string, string]
   /** the third line: where (a slanted distance's ΔX ΔY ΔZ, a whole circle's centre) */
   where?: string
+  /**
+   * The number itself, in mm, mm² or degrees (q): the one saved with the entry,
+   * or read out of its saved text (3 decimals) for an entry saved before the
+   * numbers were. value is it as shown (the display's unit and decimals); the
+   * 記録 writes it as it is (recordCells).
+   */
+  num?: number
+  q?: Quantity
+  /** a distance's ΔX, ΔY, ΔZ in mm (signed, as saved) */
+  delta?: [number, number, number]
 }
+
+/** what a number measures: a length (mm), an area (mm²), an angle (°) */
+export type Quantity = 'len' | 'area' | 'deg'
+
+/** a number as shown, with its unit */
+function shownNum(q: Quantity, n: number): { value: string; unit: string } {
+  if (q === 'area') return { value: showArea(n), unit: areaUnit() }
+  if (q === 'deg') return { value: showDegNum(n), unit: '°' }
+  return { value: showLen(n), unit: lenUnit() }
+}
+
+/** the unit a number is saved and recorded in */
+const RECORD_UNIT: Record<Quantity, string> = { len: 'mm', area: 'mm²', deg: '°' }
 
 /** a saved point (a sidecar anyone can edit: anything else reads as none) */
 function xyzOf(v: unknown): [number, number, number] | null {
@@ -62,10 +85,17 @@ function xyzOf(v: unknown): [number, number, number] | null {
  * slanted (along two axes or more). A no-break space ties each Δ to its
  * number: a narrow list wraps the line between them, never inside one.
  */
-function axesOf(delta: [number, number, number]): { axes: [string, string, string]; where?: string } {
-  const axes = delta.map((c) => fmt(Math.abs(c))) as [string, string, string]
-  const along = axes.filter((c) => c !== fmt(0)).length
-  return along >= 2 ? { axes, where: `ΔX\u00a0${axes[0]}　ΔY\u00a0${axes[1]}　ΔZ\u00a0${axes[2]}` } : { axes }
+function axesOf(delta: [number, number, number]): { axes: [string, string, string]; where?: string; delta: [number, number, number] } {
+  const axes = delta.map((c) => showLen(Math.abs(c))) as [string, string, string]
+  const zero = showLen(0)
+  const along = axes.filter((c) => c !== zero).length
+  return along >= 2 ? { axes, where: `ΔX\u00a0${axes[0]}　ΔY\u00a0${axes[1]}　ΔZ\u00a0${axes[2]}`, delta } : { axes, delta }
+}
+
+/** the number saved with the entry (value), else the one in its text */
+function savedNum(raw: EntryData, inText: string): number {
+  const v = (raw as { value?: unknown }).value
+  return typeof v === 'number' && Number.isFinite(v) ? v : Number(inText)
 }
 
 const KIND_NAME: Record<RowKind, string> = {
@@ -103,39 +133,42 @@ export function entryRow(raw: EntryData): RowView {
   }
   if (num(raw.area)) {
     const what = before('面積')
-    return { kind: 'area', value: fmt(raw.area!), unit: AREA_UNIT, what, a: what, b: '' }
+    return { kind: 'area', ...shownNum('area', raw.area!), num: raw.area!, q: 'area', what, a: what, b: '' }
   }
   if (num(raw.perimeter)) {
     const what = before('周長')
     const holes = Array.isArray(raw.holes) ? raw.holes.filter(num) : []
     return {
       kind: 'perimeter',
-      value: fmt(raw.perimeter!),
-      unit: LENGTH_UNIT,
+      ...shownNum('len', raw.perimeter!),
+      num: raw.perimeter!,
+      q: 'len',
       what,
       a: what,
       b: '',
-      ...(holes.length ? { where: `内側の輪郭 ${holes.length} 個:\u00a0${holes.map(fmt).join('・')}` } : {}),
+      ...(holes.length ? { where: `内側の輪郭 ${holes.length} 個:\u00a0${holes.map((h) => showLen(h as number)).join('・')}` } : {}),
     }
   }
   if (num(raw.length)) {
     const what = before('長さ')
-    return { kind: 'length', value: fmt(raw.length!), unit: LENGTH_UNIT, what, a: what, b: '' }
+    return { kind: 'length', ...shownNum('len', raw.length!), num: raw.length!, q: 'len', what, a: what, b: '' }
   }
   // "core_pin 円エッジ ⌀8.000 (L=25.133)", "円筒面 ⌀8.000"
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
   if (d.labelText.startsWith('⌀') && dia) {
     const what = `${dia[1]}${dia[3]}`.trim()
     const centre = xyzOf(raw.centre)
+    const n = savedNum(raw, dia[2])
     return {
       kind: 'diameter',
-      value: dia[2],
-      unit: LENGTH_UNIT,
+      ...shownNum('len', n),
+      num: n,
+      q: 'len',
       mark: '⌀',
       what,
       a: what,
       b: '',
-      ...(centre ? { where: `中心\u00a0${pointText(centre)}` } : {}),
+      ...(centre ? { where: `中心\u00a0${showPoint(centre)}` } : {}),
     }
   }
   // "body 円筒面 R5.000", "body 円弧 R5.000 (L=7.854)", "body 球面 SR4.000",
@@ -143,27 +176,34 @@ export function entryRow(raw: EntryData): RowView {
   const rad = /^(.*) (S?R)([\d.]+)((?:（[^）]*）)?(?: \(L=[\d.]+\))?)$/.exec(d.text)
   if (/^S?R[\d.]+$/.test(d.labelText) && rad) {
     const what = `${rad[1]}${rad[4]}`
-    return { kind: 'radius', value: rad[3], unit: LENGTH_UNIT, mark: rad[2], what, a: what, b: '' }
+    const n = savedNum(raw, rad[3])
+    return { kind: 'radius', ...shownNum('len', n), num: n, q: 'len', mark: rad[2], what, a: what, b: '' }
   }
   // "body 円錐面 勾配 2.000°": a cone's half angle
   const draft = /^(.*) 勾配 ([\d.]+)°$/.exec(d.text)
   if (d.labelText.startsWith('勾配') && draft) {
-    return { kind: 'draft', value: draft[2], unit: '°', mark: '勾配 ', what: draft[1], a: draft[1], b: '' }
+    const n = savedNum(raw, draft[2])
+    return { kind: 'draft', ...shownNum('deg', n), num: n, q: 'deg', mark: '勾配 ', what: draft[1], a: draft[1], b: '' }
   }
   // "cavity_block 面#6 ∠ cavity_block 面#3 : 90.000°"
   const ang = /^(.*) ∠ (.*) : ([-\d.]+)°$/.exec(d.text)
-  if (ang) return { kind: 'angle', value: ang[3], unit: '°', what: `${ang[1]} ∠ ${ang[2]}`, a: ang[1], b: ang[2] }
+  if (ang) {
+    const n = savedNum(raw, ang[3])
+    return { kind: 'angle', ...shownNum('deg', n), num: n, q: 'deg', what: `${ang[1]} ∠ ${ang[2]}`, a: ang[1], b: ang[2] }
+  }
   // "cavity_block 面#6 ↔ plate 面#6 : 20.000", "core_pin 面#1 ↔ core_pin 面#1 : 中心間 50.000"
   const dist = /^(.*) ↔ (.*) : (?:中心間 |最大 )?([-\d.]+)$/.exec(d.text)
   if (dist) {
     const delta = xyzOf(raw.delta)
     const mode = raw.mode === 'centre' || raw.mode === 'max' ? raw.mode : null
+    const n = savedNum(raw, dist[3])
     return {
       kind: mode ?? 'distance',
-      value: dist[3],
+      ...shownNum('len', n),
+      num: n,
+      q: 'len',
       // which distance, before the value (the copy has it in 種類): 「中心間 50.000」
       ...(mode ? { mark: `${DISTANCE_MODE_NAMES[mode]} ` } : {}),
-      unit: LENGTH_UNIT,
       what: `${dist[1]} ↔ ${dist[2]}`,
       a: dist[1],
       b: dist[2],
@@ -193,9 +233,41 @@ export function cell(s: string): string {
 /** the copy's columns (and the 記録's, report.ts) */
 export const LIST_HEAD = ['種類', '値', '単位', '対象 A', '対象 B', 'ΔX', 'ΔY', 'ΔZ']
 
-/** one row's cells, in LIST_HEAD's order */
+/** one row's cells, in LIST_HEAD's order, as shown (the copy) */
 export function rowCells(r: RowView): string[] {
   return [KIND_NAME[r.kind], r.value, r.unit, r.a, r.b, ...(r.axes ?? ['', '', ''])]
+}
+
+/**
+ * One row's cells for the 記録 (report.ts), in LIST_HEAD's order: the numbers
+ * as they are (mm, mm², °), whatever the display's unit and decimals. A row
+ * without a number (a note, a drawing's: its own unit) as shown.
+ */
+export function recordCells(r: RowView): (string | number)[] {
+  if (r.num === undefined || !r.q) return rowCells(r)
+  const d = r.delta ? r.delta.map((c) => Math.abs(c)) : ['', '', '']
+  return [KIND_NAME[r.kind], r.num, RECORD_UNIT[r.q], r.a, r.b, ...d]
+}
+
+/** words before a label's number that the list's mark leaves out */
+const LABEL_WORD: Partial<Record<RowKind, string>> = { perimeter: '周長 ', length: '長さ ' }
+
+/**
+ * The 3D label of an entry as shown: its number in the display's unit and
+ * decimals (「25.000 mm」「⌀0.3150 in」「中心間 26.000 mm」「90.000°」). With mm
+ * and 3 decimals it reads as the saved label with its unit. A note is its own
+ * text; an entry the list cannot read keeps its saved label.
+ */
+export function labelText(raw: EntryData): string {
+  const saved = typeof raw.labelText === 'string' ? raw.labelText : ''
+  if (raw.annotation) return saved
+  const r = entryRow(raw)
+  if (r.num === undefined || !r.q || !Number.isFinite(r.num)) {
+    // a length says its unit (an angle has its °, an area its mm²)
+    return /[°²]$/.test(saved) ? saved : `${saved} mm`
+  }
+  const word = LABEL_WORD[r.kind] ?? r.mark ?? ''
+  return r.q === 'deg' ? `${word}${r.value}°` : `${word}${r.value} ${r.unit}`
 }
 
 /** one row as a line of tab-separated cells */

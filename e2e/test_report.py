@@ -165,8 +165,10 @@ with nav_session() as n:
     head, rows = table(b["計測（1 件）"], "種類")
     assert head == ["種類", "値", "単位", "対象 A", "対象 B", "ΔX", "ΔY", "ΔZ", "出どころ"], head
     (m,) = rows
-    assert m["種類"] == "距離" and m["値"] == "25.000" and m["単位"] == "mm" and m["出どころ"] == "B-rep の真値", m
-    assert list_value.startswith(m["値"]), ("the list's value", list_value, m)
+    # the number as it is (every digit, mm: the record keeps the internal value), the list's 3 decimals of it
+    assert m["種類"] == "距離" and abs(float(m["値"]) - 25) < 1e-9 and m["単位"] == "mm" and m["出どころ"] == "B-rep の真値", m
+    assert list_value.startswith(f"{float(m['値']):.3f}"), ("the list's value", list_value, m)
+    assert abs(float(m["ΔZ"]) - 25) < 1e-9 and m["ΔX"] == "0" and m["ΔY"] == "0", m
 
     title = next(t for t in b if t.startswith("問題の一覧"))
     assert title == f"問題の一覧（{n_check} 行）", title

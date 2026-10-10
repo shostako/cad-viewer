@@ -17,7 +17,7 @@ import {
   type EntityRef,
 } from './api'
 import type { PickResult } from './picking'
-import { AREA_UNIT, LOCAL_NOTE, edgeSize, faceSize, fmt, fmtDeg, sizeText, type Size } from './sizes'
+import { AREA_UNIT, LOCAL_NOTE, areaUnit, edgeSize, faceSize, fmt, fmtDeg, showArea, showDeg, showLen, sizeText, unitTag, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** Serializable form of an entry — persisted to the model's sidecar. */
@@ -42,6 +42,14 @@ export interface EntryData {
   length?: number
   /** a distance between the centres or the largest one (absent: the shortest) */
   mode?: 'centre' | 'max'
+  /**
+   * The measured number itself (a distance, a diameter or a radius in mm; an
+   * angle, a cone's draft in degrees), as the backend gave it: the screen
+   * shows it in the display's unit and decimals (measurelist.ts). The texts
+   * above stay in mm with 3 decimals. Absent in entries saved before it was
+   * kept: the number is read out of the text then.
+   */
+  value?: number
 }
 
 /** the distances other than the shortest, by name: on the status line, the label, the list */
@@ -50,11 +58,12 @@ export const DISTANCE_MODE_NAMES: Record<Exclude<DistanceMode, 'min'>, string> =
 /** what a face or an edge measures by itself */
 type Extent = { kind: 'face'; area: number; perimeter?: number; holes: number[] } | { kind: 'edge'; length: number }
 
-/** 「面積 1500.000 mm²・周長 230.000」「長さ 100.000」 */
+/** 「面積 1500.000 mm²・周長 230.000」「長さ 100.000」, as shown (the display's unit and decimals) */
 function extentText(x: Extent): string {
-  if (x.kind === 'edge') return `長さ ${fmt(x.length)}`
-  const loops = x.perimeter === undefined ? '' : `・周長 ${fmt(x.perimeter)}${x.holes.length ? `・内側の輪郭 ${x.holes.length} 個` : ''}`
-  return `面積 ${fmt(x.area)} ${AREA_UNIT}${loops}`
+  if (x.kind === 'edge') return `長さ ${showLen(x.length)}${unitTag()}`
+  const loops =
+    x.perimeter === undefined ? '' : `・周長 ${showLen(x.perimeter)}${unitTag()}${x.holes.length ? `・内側の輪郭 ${x.holes.length} 個` : ''}`
+  return `面積 ${showArea(x.area)} ${areaUnit()}${loops}`
 }
 
 export interface MeasureEntry {
@@ -103,6 +112,23 @@ export class MeasureTool {
 
   constructor(viewer: Viewer) {
     this.viewer = viewer
+  }
+
+  /**
+   * The text of an entry's 3D label. main.ts gives measurelist's labelText:
+   * the number in the display's unit and decimals. By itself: the saved
+   * label, a length with its mm (a note is the user's own text, an angle has
+   * its °, an area its mm²).
+   */
+  labelFor: (data: EntryData) => string = (data) =>
+    data.annotation || /[°²]$/.test(data.labelText) ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`
+
+  /** Write every measurement's label again (the display's unit or decimals changed); the notes stay */
+  relabel(): void {
+    for (const e of this.entries) {
+      if (e.data.annotation) continue
+      for (const o of e.objects) if (o instanceof CSS2DObject) o.element.textContent = this.labelFor(e.data)
+    }
   }
 
   onChange(fn: () => void): void {
@@ -200,9 +226,11 @@ export class MeasureTool {
         ...(res.value > 1e-12 ? { line: [pa, pb] as EntryData['line'] } : {}),
         ...(res.delta ? { delta: res.delta } : {}),
         ...(mode === 'min' ? {} : { mode }),
+        value: res.value,
       }
       this.addFromData(data)
-      if (mode !== 'min') return `${named}${fmt(res.value)}`
+      // the status line as shown (the saved texts above stay in mm)
+      if (mode !== 'min') return `${named}${showLen(res.value)}${unitTag()}`
       // two flat things not parallel: their angle too, as an entry of its own
       if (res.angle !== undefined) {
         const [ma, mb] = data.markers!
@@ -210,10 +238,11 @@ export class MeasureTool {
           text: `${this.describe(a.pick)} ∠ ${this.describe(pick)} : ${fmtDeg(res.angle)}`,
           labelText: fmtDeg(res.angle),
           labelPos: [(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2, (ma[2] + mb[2]) / 2],
+          value: res.angle,
         })
-        return `距離 ${fmt(res.value)}　角度 ${fmtDeg(res.angle)}`
+        return `距離 ${showLen(res.value)}${unitTag()}　角度 ${showDeg(res.angle)}`
       }
-      return `距離 ${fmt(res.value)}`
+      return `距離 ${showLen(res.value)}${unitTag()}`
     } catch (e) {
       this.viewer.disposeOverlayObject(a.marker)
       throw e
@@ -243,12 +272,7 @@ export class MeasureTool {
         objects.push(line)
       }
       if (data.labelText) {
-        // a length says its unit (a note is the user's own text, an angle has its °, an area its mm²)
-        const label = this.viewer.makeLabel(
-          data.annotation || /[°²]$/.test(data.labelText) ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
-          new THREE.Vector3(...data.labelPos),
-          data.annotation ? 'note-label' : 'dim-label',
-        )
+        const label = this.viewer.makeLabel(this.labelFor(data), new THREE.Vector3(...data.labelPos), data.annotation ? 'note-label' : 'dim-label')
         this.viewer.overlay.add(label)
         objects.push(label)
       }
@@ -431,6 +455,7 @@ export class MeasureTool {
         labelText: tag,
         // a whole circle's label at its centre (a hole's middle), the rest where it was measured
         labelPos: size.centre ?? size.at ?? near,
+        value: size.value,
         ...(size.centre ? { centre: size.centre } : {}),
       })
     } catch {

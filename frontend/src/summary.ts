@@ -22,7 +22,9 @@ export const FILE_UNIT_NOTE = '（単位はファイルのまま）'
 export function modelSummaryText(meta: ModelMeta): string {
   const parts = meta.partCount > 1 ? `${meta.partCount} 部品・` : ''
   const unit = meta.format === 'brep' ? ` ${LENGTH_UNIT}` : FILE_UNIT_NOTE
-  return `${meta.name} — ${parts}${meta.triangleCount.toLocaleString()} 三角形・${sides(meta.bbox.min, meta.bbox.max)}${unit}`
+  // a file written in another unit (inches, …): said once, as it was read into mm
+  const from = meta.format === 'brep' && meta.fileUnit && meta.fileUnit !== LENGTH_UNIT ? `（元の単位: ${meta.fileUnit}）` : ''
+  return `${meta.name} — ${parts}${meta.triangleCount.toLocaleString()} 三角形・${sides(meta.bbox.min, meta.bbox.max)}${unit}${from}`
 }
 
 /** a drawing: "plate_drawing.dxf — 2D 図面・100.0 × 60.0（計測で端点・中心に吸い付く）" */
