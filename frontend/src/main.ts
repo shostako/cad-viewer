@@ -1457,7 +1457,6 @@ function scheduleChecks(): void {
   clearTimeout(checkTimer)
   checkTimer = window.setTimeout(() => void updateChecks(), 150)
 }
-/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
 /** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
 async function colourFor(kind: CheckRow['kind']): Promise<void> {
   if (kind === 'thin') {
@@ -1478,6 +1477,7 @@ async function colourFor(kind: CheckRow['kind']): Promise<void> {
     updateDraft()
   }
 }
+/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
 function goToCheck(row: CheckRow): void {
   void colourFor(row.kind)
   viewer.goToSpot(row.spot, spotText(row.kind, row.spot))
