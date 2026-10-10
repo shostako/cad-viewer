@@ -16,7 +16,7 @@ import {
   type EntityRef,
 } from './api'
 import type { PickResult } from './picking'
-import { LOCAL_NOTE, edgeSize, faceSize, fmt, fmtDeg, sizeText, type Size } from './sizes'
+import { AREA_UNIT, LOCAL_NOTE, edgeSize, faceSize, fmt, fmtDeg, sizeText, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** Serializable form of an entry — persisted to the model's sidecar. */
@@ -33,6 +33,22 @@ export interface EntryData {
   delta?: [number, number, number]
   /** a whole circle's centre (the backend's, exact) */
   centre?: [number, number, number]
+  /** a face's area (mm²), its outer loop's length and its inner loops' (mm): one entry each, the loops in the perimeter's */
+  area?: number
+  perimeter?: number
+  holes?: number[]
+  /** an edge's length (mm) */
+  length?: number
+}
+
+/** what a face or an edge measures by itself */
+type Extent = { kind: 'face'; area: number; perimeter?: number; holes: number[] } | { kind: 'edge'; length: number }
+
+/** 「面積 1500.000 mm²・周長 230.000」「長さ 100.000」 */
+function extentText(x: Extent): string {
+  if (x.kind === 'edge') return `長さ ${fmt(x.length)}`
+  const loops = x.perimeter === undefined ? '' : `・周長 ${fmt(x.perimeter)}${x.holes.length ? `・内側の輪郭 ${x.holes.length} 個` : ''}`
+  return `面積 ${fmt(x.area)} ${AREA_UNIT}${loops}`
 }
 
 export interface MeasureEntry {
@@ -63,6 +79,13 @@ export class MeasureTool {
   /** part names when the model has more than one part: a pick names its part (see describe) */
   private partNames: ReadonlyMap<number, string> | null = null
   private pending: { pick: PickResult; marker: THREE.Object3D } | null = null
+  /**
+   * What the first point's face or edge measures by itself (its area and loops,
+   * its length), once the backend has told: the status line says it, Enter
+   * puts it on the list (recordPending)
+   */
+  private pendingExtent: Extent | null = null
+  private extentListener: (() => void) | null = null
   private entries: MeasureEntry[] = []
   /** the entry lit by setHot */
   private hotId: number | null = null
@@ -118,13 +141,16 @@ export class MeasureTool {
       const marker = this.makeMarker(pick.point)
       this.viewer.overlay.add(marker)
       this.pending = { pick, marker }
-      // circular entity? report its exact diameter as a bonus entry
+      this.pendingExtent = null
+      // circular entity? report its exact diameter as a bonus entry (and what
+      // the face or edge measures by itself, for the status line and Enter)
       void this.reportEntityInfo(pick)
-      return `${this.describe(pick)} を選択 — 相手をクリックで 2 点目（Esc で取り消し）`
+      return this.pendingStatus()
     }
 
     const a = this.pending
     this.pending = null
+    this.pendingExtent = null
     this.busy = true
     // capture: setModel()/clearAll()/cancelPending() can run while the request
     // is in flight (each bumps session). A late result must neither be added to
@@ -202,9 +228,9 @@ export class MeasureTool {
         objects.push(line)
       }
       if (data.labelText) {
-        // a length says its unit (a note is the user's own text, an angle has its °)
+        // a length says its unit (a note is the user's own text, an angle has its °, an area its mm²)
         const label = this.viewer.makeLabel(
-          data.annotation || data.labelText.endsWith('°') ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
+          data.annotation || /[°²]$/.test(data.labelText) ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
           new THREE.Vector3(...data.labelPos),
           data.annotation ? 'note-label' : 'dim-label',
         )
@@ -289,10 +315,68 @@ export class MeasureTool {
     // user wait for it to release busy. (Slow exact B-rep measurements used to
     // freeze all new picks until the abandoned request returned.)
     this.busy = false
+    this.pendingExtent = null
     if (this.pending) {
       this.viewer.disposeOverlayObject(this.pending.marker)
       this.pending = null
     }
+  }
+
+  /** tell when the first point's area / length is known (the status line can say it then) */
+  onPendingExtent(f: () => void): void {
+    this.extentListener = f
+  }
+
+  /**
+   * The status line while a first point waits for its partner: what it is,
+   * what it measures by itself once known (面積 and 周長 of a face, 長さ of an
+   * edge), and what the keys do.
+   */
+  pendingStatus(): string {
+    const p = this.pending
+    if (!p) return ''
+    const x = this.pendingExtent
+    if (!x) return `${this.describe(p.pick)} を選択 — 相手をクリックで 2 点目（Esc で取り消し）`
+    return `${this.describe(p.pick)} を選択（${extentText(x)}）— 相手をクリックで 2 点目、Enter で一覧へ（Esc で取り消し）`
+  }
+
+  /**
+   * Enter: put what the first point's face or edge measures by itself on the
+   * list (a face: its 面積 and its 周長, an edge: its 長さ), labelled at the
+   * click, and end the selection. False when there is nothing to put (no first
+   * point, a vertex, or the backend has not told yet).
+   */
+  recordPending(): boolean {
+    const p = this.pending
+    const x = this.pendingExtent
+    if (!p || !x) return false
+    this.viewer.disposeOverlayObject(p.marker)
+    this.pending = null
+    this.pendingExtent = null
+    const what = this.describe(p.pick) // "cavity_block 面#6" ("面#6" in a one-part model)
+    const at = p.pick.point.toArray() as [number, number, number]
+    if (x.kind === 'edge') {
+      this.addFromData({ text: `${what} 長さ ${fmt(x.length)}`, labelText: `長さ ${fmt(x.length)}`, labelPos: at, markers: [at], length: x.length })
+      return true
+    }
+    this.addFromData({
+      text: `${what} 面積 ${fmt(x.area)} ${AREA_UNIT}`,
+      labelText: `${fmt(x.area)} ${AREA_UNIT}`,
+      labelPos: at,
+      markers: [at],
+      area: x.area,
+    })
+    if (x.perimeter !== undefined) {
+      const holes = x.holes.length ? `（内側の輪郭 ${x.holes.length} 個: ${x.holes.map(fmt).join('・')}）` : ''
+      this.addFromData({
+        text: `${what} 周長 ${fmt(x.perimeter)}${holes}`,
+        labelText: `周長 ${fmt(x.perimeter)}`,
+        labelPos: at,
+        perimeter: x.perimeter,
+        holes: x.holes,
+      })
+    }
+    return true
   }
 
   private async reportEntityInfo(pick: PickResult): Promise<void> {
@@ -306,14 +390,23 @@ export class MeasureTool {
       let size: Size | null = null
       // an edge says its length too: "円エッジ ⌀8.000 (L=25.133)", "円弧 R5.000 (L=7.854)"
       let length = ''
+      let extent: Extent | null = null
       if (pick.kind === 'edge') {
         const info = await measureEdgeInfo(requestedModelId, toRef(pick), near)
         size = edgeSize(info)
         length = ` (L=${fmt(info.length)})`
+        extent = { kind: 'edge', length: info.length }
       } else if (pick.kind === 'face') {
-        size = faceSize(await measureFaceInfo(requestedModelId, toRef(pick), near))
+        const info = await measureFaceInfo(requestedModelId, toRef(pick), near)
+        size = faceSize(info)
+        extent = { kind: 'face', area: info.area, perimeter: info.perimeter, holes: info.holes ?? [] }
       }
       if (this.modelId !== requestedModelId || this.session !== requestedSession) return
+      // still the first point waiting (not its partner's, not a cancelled one's)
+      if (extent && this.pending?.pick === pick) {
+        this.pendingExtent = extent
+        this.extentListener?.()
+      }
       if (!size) return
       const tag = sizeText(size)
       this.addFromData({

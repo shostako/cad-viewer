@@ -2,7 +2,7 @@
  * The 計測 list as a record to copy into a report or Excel (issue #23 item 8).
  *
  * A row shows its value first, with its unit ("20.000 mm"), a mark of its
- * kind (distance, ⌀, R, angle, draft, note), and what was measured on a
+ * kind (distance, ⌀, R, angle, draft, area, perimeter, length, note), and what was measured on a
  * second, smaller line ("cavity_block 面#6 ↔ plate 面#6"). A third line says
  * where: a slanted distance's ΔX, ΔY and ΔZ, a whole circle's centre. Each row
  * copies its own line, the list's head copies all of them: tab separated
@@ -16,9 +16,9 @@ import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { LENGTH_UNIT, type EntryData } from './measure'
-import { fmt, pointText } from './sizes'
+import { AREA_UNIT, fmt, pointText } from './sizes'
 
-export type RowKind = 'distance' | 'diameter' | 'radius' | 'angle' | 'draft' | 'note' | 'other'
+export type RowKind = 'distance' | 'diameter' | 'radius' | 'angle' | 'draft' | 'area' | 'perimeter' | 'length' | 'note' | 'other'
 
 export interface RowView {
   kind: RowKind
@@ -62,6 +62,9 @@ const KIND_NAME: Record<RowKind, string> = {
   radius: '半径',
   angle: '角度',
   draft: '勾配',
+  area: '面積',
+  perimeter: '周長',
+  length: '長さ',
   note: '注記',
   other: '',
 }
@@ -76,6 +79,35 @@ export function entryRow(raw: EntryData): RowView {
     labelText: typeof raw.labelText === 'string' ? raw.labelText : '',
   }
   if (d.annotation) return { kind: 'note', value: d.labelText, unit: '', what: '', a: '', b: '' }
+  // a face's area and outer loop, an edge's length (Enter on a first point):
+  // the numbers are kept as they are; what was measured is the text before the
+  // last 「 面積 」 (a part's name may have the word in it too)
+  const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
+  const before = (word: string) => {
+    const k = d.text.lastIndexOf(` ${word} `)
+    return k < 0 ? d.text : d.text.slice(0, k)
+  }
+  if (num(raw.area)) {
+    const what = before('面積')
+    return { kind: 'area', value: fmt(raw.area!), unit: AREA_UNIT, what, a: what, b: '' }
+  }
+  if (num(raw.perimeter)) {
+    const what = before('周長')
+    const holes = Array.isArray(raw.holes) ? raw.holes.filter(num) : []
+    return {
+      kind: 'perimeter',
+      value: fmt(raw.perimeter!),
+      unit: LENGTH_UNIT,
+      what,
+      a: what,
+      b: '',
+      ...(holes.length ? { where: `内側の輪郭 ${holes.length} 個:\u00a0${holes.map(fmt).join('・')}` } : {}),
+    }
+  }
+  if (num(raw.length)) {
+    const what = before('長さ')
+    return { kind: 'length', value: fmt(raw.length!), unit: LENGTH_UNIT, what, a: what, b: '' }
+  }
   // "core_pin 円エッジ ⌀8.000 (L=25.133)", "円筒面 ⌀8.000"
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
   if (d.labelText.startsWith('⌀') && dia) {
@@ -158,6 +190,9 @@ const KIND_ICON: Record<RowKind, IconNode | null> = {
   radius: ICON.radius,
   angle: ICON.angle,
   draft: ICON.draft,
+  area: ICON.area,
+  perimeter: ICON.perimeter,
+  length: ICON.length,
   note: ICON.note,
   other: null,
 }

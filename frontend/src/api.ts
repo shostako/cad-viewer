@@ -117,6 +117,9 @@ export interface EdgeInfoResult {
 export interface FaceInfoResult {
   type: 'face'
   area: number
+  /** the outer loop's length, and the inner loops' (holes), longest first: seams not counted */
+  perimeter?: number
+  holes?: number[]
   surface: string
   /** a cylinder's, a sphere's, or a torus's small one */
   radius?: number

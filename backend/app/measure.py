@@ -20,6 +20,11 @@ their angle in degrees, 0 to 90 (angle_between).
 
 A vertex (vertex_info) says its point.
 
+A face also says its boundary (face_info): "perimeter", the length of its
+outer loop, and "holes", the lengths of its inner loops (a plate's holes, the
+foot of a boss), each without the seam edges a closed surface is cut along
+(a cylinder's outer loop is its two circles). An edge says its "length".
+
 A face or an edge (face_info, edge_info) says its size by its kind:
 - cylinder, circle: "radius" and "diameter", and "full" (a whole turn: a hole
   or a boss, told by ⌀; a part of a turn, a fillet or a rounded corner, by R)
@@ -64,7 +69,8 @@ from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from OCP.gp import gp_Circ, gp_Cone, gp_Cylinder, gp_Pln, gp_Pnt, gp_Sphere, gp_Vec
 from OCP.GProp import GProp_GProps
 from OCP.ShapeAnalysis import ShapeAnalysis_CanonicalRecognition
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON, TopAbs_VERTEX
+from OCP.BRepTools import BRepTools
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON, TopAbs_VERTEX, TopAbs_WIRE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shape
 
@@ -359,7 +365,7 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
 
     props = GProp_GProps()
     BRepGProp.SurfaceProperties_s(face, props)
-    out: dict[str, Any] = {"type": "face", "area": props.Mass()}
+    out: dict[str, Any] = {"type": "face", "area": props.Mass(), **_loops(face)}
     surf = BRepAdaptor_Surface(face)
     stype = surf.GetType()
     kinds = {
@@ -402,6 +408,38 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
     elif near is not None:
         out.update(_surface_radius_near(face, surf, near))
     return out
+
+
+def _loop_length(wire, face: TopoDS_Face) -> float:
+    """the length of a loop of a face: its edges, but not a seam (an edge the
+    face meets on both sides, where a closed surface is cut) nor a degenerate
+    one (a sphere's pole)"""
+    total = 0.0
+    ex = TopExp_Explorer(wire, TopAbs_EDGE)
+    while ex.More():
+        edge = TopoDS.Edge_s(ex.Current())
+        ex.Next()
+        if BRep_Tool.Degenerated_s(edge) or BRep_Tool.IsClosed_s(edge, face):
+            continue
+        props = GProp_GProps()
+        BRepGProp.LinearProperties_s(edge, props)
+        total += props.Mass()
+    return total
+
+
+def _loops(face: TopoDS_Face) -> dict[str, Any]:
+    """the face's outer loop ("perimeter") and its inner loops ("holes"), longest first"""
+    outer = BRepTools.OuterWire_s(face)
+    if outer.IsNull():
+        return {}
+    holes = []
+    ex = TopExp_Explorer(face, TopAbs_WIRE)
+    while ex.More():
+        wire = ex.Current()
+        ex.Next()
+        if not wire.IsSame(outer):
+            holes.append(_loop_length(wire, face))
+    return {"perimeter": _loop_length(outer, face), "holes": sorted(holes, reverse=True)}
 
 
 def vertex_info(ref: dict, meshes: list[PartMesh]) -> dict[str, Any]:
