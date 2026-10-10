@@ -22,9 +22,19 @@ def folder_title(page, name):
 
 
 def wait_gui_idle(page):
-    """until no folder is opening or closing (lil-gui adds lil-transition a frame after the click)"""
+    """until no folder is opening or closing: no animation runs in the panel
+
+    Not "no lil-transition": lil-gui takes that class off only when the height's
+    transition ends, and two clicks on a title within a frame or two can leave the
+    height where it was, with no transition to end and the class on for good.
+    (lil-gui starts the transition a frame after the click: two frames first.)
+    """
     page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
-    page.wait_for_function("!document.querySelector('.lil-gui.lil-transition')", timeout=5000)
+    page.wait_for_function(
+        "!document.getAnimations().some(a => a.playState === 'running'"
+        " && a.effect?.target?.closest?.('.lil-gui'))",
+        timeout=5000,
+    )
 
 
 def open_folder(page, name):
@@ -44,12 +54,19 @@ def ctl(page, name):
 
 
 def _open_around(locator):
-    """open the closed folders that hold this element (or are it); how many were opened"""
+    """open the closed folders that hold this element (or are it); how many were opened
+
+    A folder is closed by its title's aria-expanded, not by the class lil-closed:
+    a click on a title (openAnimated) turns aria-expanded at once and the class
+    a frame later. Read by the class just after a click, an opening folder still
+    looks closed, gets clicked again and closes, and the two animations leave
+    lil-transition on it for good (wait_gui_idle then times out).
+    """
     return locator.evaluate(
         """el => {
              const closed = []
              for (let g = el.closest('.lil-gui'); g; g = g.parentElement && g.parentElement.closest('.lil-gui')) {
-               if (g.classList.contains('lil-closed')) closed.unshift(g)
+               if (g.querySelector(':scope > .lil-title')?.getAttribute('aria-expanded') === 'false') closed.unshift(g)
              }
              for (const g of closed) g.querySelector(':scope > .lil-title').click()
              return closed.length

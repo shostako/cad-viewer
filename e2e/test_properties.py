@@ -269,7 +269,7 @@ try:
         ctl("モード").locator("select").select_option("なし")
 
         # 6. a section is only a view: the values are the whole parts'
-        page.locator(".lil-gui .lil-title", has_text="断面").click()
+        gui_common.open_folder(page, "断面")  # by its state: a bare click on an open one closes it
         ctl("有効").locator("input").click()
         page.wait_for_timeout(200)
         check_total(V_ALL, A_ALL, 1.234)
