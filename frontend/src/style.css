@@ -1551,11 +1551,13 @@ body,
   box-shadow: var(--cv-shadow);
 }
 
+/* 9 buttons of 25 px, two separators and the mode segment: 251 px, inside
+   the 252 px the toolbar leaves (264 less its border and padding) */
 #toolbar button {
   flex: none;
   display: grid;
   place-items: center;
-  width: 26px;
+  width: 25px;
   height: 26px;
   padding: 0;
   color: var(--cv-text-2);

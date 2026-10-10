@@ -75,6 +75,13 @@ with nav_session() as n:
     g = rect(".lil-gui.lil-root")
     assert abs(g[1] - (t[3] + GAP)) <= 0.5 and abs(g[2] - t[2]) <= 0.5, ("1 the operation panel under it", t, g)
     assert page.evaluate("[...document.querySelectorAll('#toolbar button')].map(b => b.dataset.action)") == ACTIONS
+    # every button inside the toolbar's surface (Codex on #39: the last one stuck out past it)
+    out = page.evaluate(
+        "(() => { const t = document.querySelector('#toolbar').getBoundingClientRect();"
+        " return [...document.querySelectorAll('#toolbar button')].filter(b => { const r = b.getBoundingClientRect();"
+        " return r.left < t.left + 1 || r.right > t.right - 1 || r.top < t.top || r.bottom > t.bottom }).map(b => b.dataset.action) })()"
+    )
+    assert out == [], ("1 buttons outside the toolbar", out)
     assert enabled() == ["open", "style", "help"], enabled()
     titles = {a: btn(a).get_attribute("title") for a in ACTIONS}
     for a, key in (("fit", "F"), ("mode-none", "Esc"), ("mode-measure", "（M）"), ("mode-note", "（N）"),
