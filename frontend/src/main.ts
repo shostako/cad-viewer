@@ -20,9 +20,10 @@ import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLe
 import { Drawing2D, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
+import { ICON, icon } from './icons'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
-import { ICONS, copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
+import { copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickResult } from './picking'
 import { DiameterCache, Preselect } from './preselect'
@@ -31,6 +32,7 @@ import { SectionTool, type Axis } from './section'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { PartTree } from './tree'
+import { Toolbar, type Mode } from './toolbar'
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
@@ -49,6 +51,7 @@ app.innerHTML = `
   </div>
   <div id="load-card" class="hidden"></div>
   <div id="tree-panel" class="hidden"></div>
+  <div id="toolbar"></div>
   <div id="corner-br">
     <div id="measure-panel" class="hidden">
       <div id="measure-head">
@@ -65,7 +68,7 @@ app.innerHTML = `
     <div id="draft-legend" class="hidden"></div>
     <div id="thickness-legend" class="hidden"></div>
     <div id="hud-line">
-      <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
+      <div id="hud-info">ファイルをドロップするか、「ファイルを選ぶ」で開く</div>
       <button id="help-open" type="button" title="キー操作の一覧（?）" aria-label="キー操作の一覧">?</button>
     </div>
   </div>
@@ -86,6 +89,7 @@ const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const thicknessLegend = document.querySelector<HTMLDivElement>('#thickness-legend')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
+const toolbarEl = document.querySelector<HTMLDivElement>('#toolbar')!
 
 const cornerBr = document.querySelector<HTMLDivElement>('#corner-br')!
 const measurePanel = document.querySelector<HTMLDivElement>('#measure-panel')!
@@ -154,14 +158,15 @@ function show2D(on: boolean): void {
   if (on && state.mode === '注記') modeCtl.setValue('なし')
   keyHelp.setView(on)
   updateTriad()
+  refreshToolbar()
 }
 
 /** whether a model or drawing is on screen, and its file name (for the PNG export) */
 function setContentShown(on: boolean, fileName = ''): void {
   contentShown = on
   shownFileName = on ? fileName : ''
-  savePngCtl.enable(on)
   updateTriad()
+  refreshToolbar()
 }
 
 /**
@@ -221,6 +226,8 @@ let currentModelId: string | null = null
 let restoringOwner = 0 // 0 = not restoring; otherwise the loadGen that owns it
 
 const gui = new GUI({ title: '操作' })
+/** the toolbar (made once the GUI's controls exist; refreshToolbar waits for it) */
+let toolbar: Toolbar | null = null
 const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
 const actions = {
   open: () => fileInput.click(),
@@ -236,8 +243,8 @@ const actions = {
   // a function declaration below, so it is hoisted
   savePng: () => void savePng(),
 }
-gui.add(actions, 'open').name('ファイルを開く')
-gui.add(actions, 'fit').name('全体表示')
+// ファイルを開く, 全体表示 and 画像を保存 are on the toolbar (and the empty
+// screen's card, F, the drop): the panel keeps what the toolbar has not
 const modeCtl = gui
   .add(state, 'mode', ['なし', '計測', '注記'])
   .name('モード')
@@ -252,6 +259,7 @@ const modeCtl = gui
     // looks again now: its last label must not come back without its highlight)
     forgetHoverPick()
     probe.refresh()
+    refreshToolbar()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
 gui.add(actions, 'clearMeasure').name('計測クリア')
@@ -273,8 +281,6 @@ function saveExportPrefs(): void {
     /* best-effort */
   }
 }
-// disabled until something is on screen (setContentShown)
-const savePngCtl = gui.add(actions, 'savePng').name('画像を保存（PNG）').disable()
 // a select, not a checkbox: E2E scripts click the first checkbox of the panel.
 // Labelled 画像の背景 so nobody takes it for the screen's own background.
 gui
@@ -343,16 +349,26 @@ viewer.setDisplayStyle(viewPrefs.style)
 viewer.setProjection(viewPrefs.projection)
 
 const viewFolder = gui.addFolder('表示')
+// folded at first: the toolbar switches the style (W), and the column is
+// short on half a screen. The folder memory keeps it the way the user leaves it.
+viewFolder.close()
 // "Pick a style, then turn the model to look" works without blurring the
 // select: the arrows turn the view even while a GUI dropdown has the focus
 // (isTextEntry), and never step its options.
-viewFolder
-  .add(viewPrefs, 'style', { '陰影＋稜線': 'shaded-edges', 陰影のみ: 'shaded', ワイヤーフレーム: 'wireframe', 半透明: 'xray' })
+const STYLE_NAMES: Record<DisplayStyle, string> = {
+  'shaded-edges': '陰影＋稜線',
+  shaded: '陰影のみ',
+  wireframe: 'ワイヤーフレーム',
+  xray: '半透明',
+}
+const styleCtl = viewFolder
+  .add(viewPrefs, 'style', Object.fromEntries(DISPLAY_STYLES.map((v) => [STYLE_NAMES[v], v])))
   .name('表示スタイル')
   .onChange((v: DisplayStyle) => {
     viewer.setDisplayStyle(v)
     saveViewPrefs()
     refreshHeatmapHud()
+    refreshToolbar()
   })
 viewFolder
   .add(viewPrefs, 'grid')
@@ -461,6 +477,13 @@ function onNavigationKey(e: KeyboardEvent): void {
     e.preventDefault()
     return
   }
+  // the toolbar's keys (a letter typed into a note never comes here: isTextEntry)
+  const letter = e.key.length === 1 ? e.key.toLowerCase() : ''
+  if (letter === 'm' || letter === 'n' || letter === 's' || letter === 'w') {
+    if (!e.repeat) toolbarKey(letter)
+    e.preventDefault()
+    return
+  }
   if (e.key === 'h' || e.key === 'H') {
     // one toggle per press: a held key's auto-repeat would flash the panels
     if (!e.repeat) setPanelsHidden(!panelsHidden)
@@ -506,7 +529,10 @@ sectionFolder
   .add(sectionTool, 'enabled')
   .name('有効')
   .listen() // state can change programmatically (2D switch) — keep UI in sync
-  .onChange(() => sectionTool.update())
+  .onChange(() => {
+    sectionTool.update()
+    refreshToolbar()
+  })
 sectionFolder
   .add(sectionTool, 'axis', ['X', 'Y', 'Z'] as Axis[])
   .name('軸')
@@ -982,7 +1008,10 @@ function measureMinPx(): number {
   for (const li of Array.from(measureList.children).slice(0, 2)) rows += (li as HTMLElement).offsetHeight
   return Math.ceil(frame + titleH + rows)
 }
-const GUI_MIN_PX = 200 // below this the GUI stops giving way (its title and about seven rows)
+// below this the GUI stops giving way: its title and about five rows (the
+// toolbar above it took 44 px of the column, and the column's least height
+// stays about what it was)
+const GUI_MIN_PX = 160
 const HUD_MIN_PX = 200 // below this the HUD stops wrapping and may meet the stack
 function layoutCorner(): void {
   const h = window.innerHeight
@@ -1137,7 +1166,7 @@ gui.onOpenClose((changed) => {
  * A new overlay panel goes here and in e2e/nav_common.py PANELS.
  */
 const panelsShow = document.querySelector<HTMLButtonElement>('#panels-show')!
-const FIT_PANELS: HTMLElement[] = [gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl, panelsShow]
+const FIT_PANELS: HTMLElement[] = [toolbarEl, gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl, panelsShow]
 viewer.fitArea = (modelW, modelH) => {
   // The right-hand column sizes its panels from ResizeObservers, a frame
   // after a change (a folder opened, a load filled the lists); a fit reads
@@ -1222,6 +1251,68 @@ function applyDensity(): void {
   savePropsPrefs()
 }
 applyDensity()
+
+// ---- the toolbar (top of the right-hand column) and its keys M N S W
+function setMode(mode: Mode): void {
+  if (state.mode !== mode) modeCtl.setValue(mode)
+}
+function toggleSection(): void {
+  if (!contentShown || is2D) return
+  sectionTool.enabled = !sectionTool.enabled
+  sectionTool.update()
+  refreshToolbar()
+}
+/** the next display style, in the select's order */
+function nextStyle(): void {
+  const i = DISPLAY_STYLES.indexOf(viewPrefs.style)
+  styleCtl.setValue(DISPLAY_STYLES[(i + 1) % DISPLAY_STYLES.length])
+}
+toolbar = new Toolbar(toolbarEl, (action) => {
+  switch (action) {
+    case 'open':
+      return actions.open()
+    case 'fit':
+      return actions.fit()
+    case 'mode-none':
+      return setMode('なし')
+    case 'mode-measure':
+      return setMode('計測')
+    case 'mode-note':
+      return setMode('注記')
+    case 'section':
+      return toggleSection()
+    case 'style':
+      return nextStyle()
+    case 'png':
+      return actions.savePng()
+    case 'help':
+      return keyHelp.show(!keyHelp.shown)
+  }
+})
+/** M and N switch a mode on, or back to 回転 when it is on; S cuts; W the next style */
+function toolbarKey(letter: 'm' | 'n' | 's' | 'w'): void {
+  if (letter === 's') return toggleSection()
+  if (letter === 'w') {
+    if (!is2D) nextStyle()
+    return
+  }
+  if (!contentShown) return
+  if (letter === 'm') setMode(state.mode === '計測' ? 'なし' : '計測')
+  else if (!is2D) setMode(state.mode === '注記' ? 'なし' : '注記')
+}
+function refreshToolbar(): void {
+  if (!toolbar) return // still being set up
+  toolbar.update({
+    content: contentShown,
+    is2D,
+    mode: state.mode,
+    canMeasure: is2D || measureTool.available,
+    section: sectionTool.enabled,
+    style: STYLE_NAMES[viewPrefs.style],
+  })
+}
+measureTool.onChange(refreshToolbar) // a model's B-rep (or none) comes with setModel
+refreshToolbar()
 
 // every folder exists now: remember these, folded on the empty screen we start on
 folderDefaults = new Map(
@@ -1405,18 +1496,19 @@ function renderMeasureList(): void {
 let listRows: RowView[] = []
 const measureCount = document.querySelector<HTMLSpanElement>('#measure-count')!
 const copyAll = document.querySelector<HTMLButtonElement>('#measure-copy-all')!
-const COPY_ALL_LABEL = `${ICONS.copy}<span>すべてコピー</span>`
-copyAll.innerHTML = COPY_ALL_LABEL
+function copyAllLabel(done: boolean): void {
+  const text = document.createElement('span')
+  text.textContent = done ? 'コピーした' : 'すべてコピー'
+  copyAll.replaceChildren(icon(done ? ICON.done : ICON.copy, 13), text)
+  copyAll.classList.toggle('done', done)
+}
+copyAllLabel(false)
 let copyAllTimer: ReturnType<typeof setTimeout> | undefined
 copyAll.addEventListener('click', async () => {
   if (!listRows.length || !(await copyText(listText(listRows)))) return
-  copyAll.innerHTML = `${ICONS.done}<span>コピーした</span>`
-  copyAll.classList.add('done')
+  copyAllLabel(true)
   clearTimeout(copyAllTimer)
-  copyAllTimer = setTimeout(() => {
-    copyAll.innerHTML = COPY_ALL_LABEL
-    copyAll.classList.remove('done')
-  }, 1500)
+  copyAllTimer = setTimeout(() => copyAllLabel(false), 1500)
 })
 /**
  * One measurement lit at a time: its 3D label, line and points, and its row

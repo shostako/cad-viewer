@@ -31,6 +31,7 @@ import tempfile
 import time
 from pathlib import Path
 
+import gui_common
 from nav_common import (
     LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, SURFACE, TESTDATA,
     close, empty_sidecar, free_rect, model_size, nav_session, norm, overlaps, put_sidecar, sub,
@@ -73,6 +74,10 @@ try:
         def local(xy):
             cl, ct, _, _ = canvas_rect()
             return (xy[0] - cl, xy[1] - ct)
+
+        # 表示 open from the start (it starts folded since #23 item 10): P1 and
+        # P3 press its controls, and the panel must not grow after their fits
+        gui_common.open_folder(page, "表示")
 
         # ---- P1. the long runner at load (props held at 計算中…) ----------------
         load(n.paths["runner"])

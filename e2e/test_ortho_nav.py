@@ -258,7 +258,7 @@ with nav_session() as n:
     # ---- N10. the PNG export is the frame on screen ----------------------------------
     screen = np.asarray(n.canvas_image()).astype(int)
     with page.expect_download(timeout=15000) as info:
-        ctl("画像を保存").locator("button").click()
+        page.locator("#toolbar button[data-action='png']").click()
     png = Image.open(info.value.path()).convert("RGB")
     out = np.asarray(png).astype(int)
     assert out.shape == screen.shape, (out.shape, screen.shape)

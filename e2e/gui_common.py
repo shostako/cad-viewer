@@ -57,6 +57,13 @@ def _open_around(locator):
     )
 
 
+def toolbar(page, action):
+    """a toolbar button by its data-action (open, fit, mode-none, mode-measure,
+    mode-note, section, style, png, help): 開く, 全体表示 and 画像を保存 are
+    only there"""
+    return page.locator(f"#toolbar button[data-action='{action}']")
+
+
 def set_mode(page, label):
     """モード: なし / 計測 / 注記 (the select gives the focus back to the page)"""
     ctl(page, "モード").locator("select").select_option(label)

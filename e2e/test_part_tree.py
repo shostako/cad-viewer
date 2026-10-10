@@ -410,7 +410,7 @@ with nav_session() as n:
     assert diff(lit["pin1"], base["pin1"]) >= LIT
     with page.expect_download(timeout=15000) as dl:
         # a click from script: the pointer stays on the row
-        page.evaluate("[...document.querySelectorAll('.lil-gui button')].find(b => b.textContent.includes('画像を保存')).click()")
+        page.evaluate("document.querySelector(\"#toolbar button[data-action='png']\").click()")
     img = Image.open(dl.value.path()).convert("RGB")
     cl, ct, cw, ch = n.canvas_rect()
     saved = {k: median_rgb(xy, img, img.width / cw, img.height / ch, cl, ct) for k, xy in pts.items()}

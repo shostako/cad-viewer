@@ -175,7 +175,7 @@ with sync_playwright() as p:
     settle()
     assert page.locator("#measure-list li").count() == N_MEASURE
 
-    # 1. default folders (表示 and 視点 open)
+    # 1. default folders (表示 folded since the toolbar switches the style, #23 item 10)
     check_column("1 default 700")
 
     # 2. every folder open: the GUI alone would be taller than the window

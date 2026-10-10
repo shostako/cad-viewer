@@ -176,13 +176,14 @@ with sync_playwright() as p:
 
     # ---- 3. a model: the folders come back (the defaults), the status card stays small
     load_model()
-    assert folders() == {"表示": True, "視点": True, "断面": False, "肉厚": False, "抜き勾配": False, "体積・重量": False}, folders()
+    # (表示 starts folded since the toolbar switches the style, #23 item 10)
+    assert folders() == {"表示": False, "視点": True, "断面": False, "肉厚": False, "抜き勾配": False, "体積・重量": False}, folders()
     hud = rect("#hud")
     assert hud[3] - hud[1] < 60, ("3 the status card: two lines at most", hud)
     assert "ダブルクリック" not in page.inner_text("#hud")
     cover = page.evaluate(
         """() => {
-          const sels = ['.lil-gui.lil-root', '#tree-panel', '#measure-panel', '#props-panel', '#hud', '#triad']
+          const sels = ['#toolbar', '.lil-gui.lil-root', '#tree-panel', '#measure-panel', '#props-panel', '#hud', '#triad']
           const rs = sels.map(s => document.querySelector(s)).filter(e => e && e.getClientRects().length).map(e => e.getBoundingClientRect())
           let n = 0
           for (let y = 0.5; y < innerHeight; y++) for (let x = 0.5; x < innerWidth; x++)

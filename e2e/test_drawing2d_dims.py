@@ -417,7 +417,7 @@ try:
         o = check_view("767 again")
 
         # ---- PNG export: the layer at the same place and size -----------------------------
-        save_btn = ctl("画像を保存").locator("button")
+        save_btn = page.locator("#toolbar button[data-action='png']")
         bg_select = ctl("画像の背景").locator("select")
         screen_img = shot()
         screen_cap = check_pixels("screen", screen_img, o, cover=covers())
