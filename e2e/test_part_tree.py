@@ -27,6 +27,7 @@ lighting scales a colour, it does not turn it), the DOM (boxes, texts,
 computed styles, rects), nav_common's free-area rule for the fits, a saved
 PNG.
 """
+import math
 import re
 
 from PIL import Image
@@ -342,7 +343,8 @@ with nav_session() as n:
     zoom2.evaluate("b => b.click()")
     n.settle()
     v2 = n.view()
-    assert v1["target"] == v2["target"] and v1["position"] == v2["position"], ("7 a hidden part moved the view", v1, v2)
+    # the view stays: the controls' update each frame may round it by 1e-13, no more
+    assert all(math.dist(v1[k], v2[k]) < 1e-6 for k in ("target", "position")), ("7 a hidden part moved the view", v1, v2)
     page.get_by_role("button", name="全部表示", exact=True).click()
     page.mouse.move(*away)
     print("7 zoom ok")
