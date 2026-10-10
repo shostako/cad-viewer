@@ -12,9 +12,14 @@ A distance request may also carry "nearA" / "nearB": the points the user
 clicked. They never change the value; they choose where the dimension line
 is drawn when the minimum is reached at many places (two parallel faces:
 anywhere they overlap), so that the line stands where the user clicked.
+
+Between two flat things (planar faces, straight edges, one of each) that are
+not parallel, the distance's answer also carries "angle": their angle in
+degrees, 0 to 90 (angle_between).
 """
 from __future__ import annotations
 
+import math
 from typing import Any
 
 from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
@@ -26,12 +31,13 @@ from OCP.GeomAbs import (
     GeomAbs_Circle,
     GeomAbs_CurveType,
     GeomAbs_Cylinder,
+    GeomAbs_Line,
     GeomAbs_Plane,
     GeomAbs_SurfaceType,
 )
 from OCP.gp import gp_Pln, gp_Pnt, gp_Vec
 from OCP.GProp import GProp_GProps
-from OCP.TopAbs import TopAbs_FACE, TopAbs_IN, TopAbs_ON
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON
 from OCP.TopoDS import TopoDS, TopoDS_Face, TopoDS_Shape
 
 from .tessellation import PartMesh
@@ -45,6 +51,8 @@ class MeasureError(Exception):
 PARALLEL_SIN = 1e-9
 # mm: a dimension line put through a click must be as long as the value, this closely
 LINE_TOL = 1e-7
+# degrees: at or below this, two flat things are parallel and no angle is given
+ANGLE_MIN_DEG = 1e-6
 
 
 def _resolve(ref: dict[str, Any], meshes: list[PartMesh]) -> TopoDS_Shape:
@@ -95,12 +103,45 @@ def distance(
         i = _nearest_solution(ext, near_a, near_b)
         line = (ext.PointOnShape1(i), ext.PointOnShape2(i))
     pa, pb = line
-    return {
+    out: dict[str, Any] = {
         "type": "distance",
         "value": value,
         "pointA": [pa.X(), pa.Y(), pa.Z()],
         "pointB": [pb.X(), pb.Y(), pb.Z()],
     }
+    ang = angle_between(sa, sb)
+    if ang is not None and ang > ANGLE_MIN_DEG:
+        out["angle"] = ang
+    return out
+
+
+def _flat(shape: TopoDS_Shape) -> tuple[str, gp_Vec] | None:
+    """('plane', its normal) for a planar face, ('line', its direction) for a
+    straight edge; None for anything else (a cylinder, a circle, a vertex)"""
+    if shape.ShapeType() == TopAbs_FACE:
+        surf = BRepAdaptor_Surface(TopoDS.Face_s(shape))
+        if surf.GetType() == GeomAbs_Plane:
+            return "plane", gp_Vec(surf.Plane().Axis().Direction())
+    elif shape.ShapeType() == TopAbs_EDGE:
+        curve = BRepAdaptor_Curve(TopoDS.Edge_s(shape))
+        if curve.GetType() == GeomAbs_Line:
+            return "line", gp_Vec(curve.Line().Direction())
+    return None
+
+
+def angle_between(sa: TopoDS_Shape, sb: TopoDS_Shape) -> float | None:
+    """The angle in degrees (0..90) between two planes, two straight lines, or a
+    line and a plane; None when either is not flat. Between planes it is the
+    angle of their normals, between lines that of their directions (either way
+    round: 0..90), and a line's angle to a plane is 90 less its angle to the
+    plane's normal. atan2 of |cross| and |dot| keeps small angles exact (acos
+    loses them near 1)."""
+    fa, fb = _flat(sa), _flat(sb)
+    if fa is None or fb is None:
+        return None
+    (ka, va), (kb, vb) = fa, fb
+    deg = math.degrees(math.atan2(va.Crossed(vb).Magnitude(), abs(va.Dot(vb))))
+    return 90.0 - deg if ka != kb else deg
 
 
 def _nearest_solution(ext: BRepExtrema_DistShapeShape, near_a, near_b) -> int:
