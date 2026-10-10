@@ -26,6 +26,7 @@ import { DRAFT_CLASS_NAMES, DRAFT_COLORS } from './draft'
 import { ICON, icon } from './icons'
 import { fmtNum } from './properties'
 import { draftSpots, spotText, thinSpots, type Spot, type SpotPart } from './spots'
+import { cell, copyText } from './measurelist'
 import { ONLY_ICON } from './tree'
 
 export type CheckKind = 'thin' | 'short' | 'opposite'
@@ -222,14 +223,16 @@ export class CheckPanel {
     if (!r || !this.conditions) return ''
     const cond = conditionsText(this.conditions)
     const out = [['種類', '値', '単位', '部品', 'X', 'Y', 'Z', '面積 (mm²)', '条件'].join('\t')]
+    // a part's name comes from the file: a tab or a line break in it would split the cells
+    const line = (cells: string[]) => cells.map(cell).join('\t')
     for (const row of r.rows) {
       const s = row.spot
       const value = row.kind === 'thin' ? fixed(s.value, 3) : fixed(s.value, 2)
       const unit = row.kind === 'thin' ? 'mm' : '°'
       const area = row.kind === 'thin' ? '' : s.area.toFixed(1)
-      out.push([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond].join('\t'))
+      out.push(line([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond]))
     }
-    for (const u of r.undecided) out.push(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond].join('\t'))
+    for (const u of r.undecided) out.push(line(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond]))
     return out.join('\n')
   }
 
@@ -246,11 +249,11 @@ export class CheckPanel {
     copy.className = 'check-copy-all'
     copy.title = 'すべてコピー（Excel に貼れる形: 種類・値・単位・部品・X・Y・Z・面積・条件）'
     copy.append(icon(ICON.copy, 13), document.createTextNode('すべてコピー'))
+    // as the measure list's: a hidden text area stands in when the clipboard API is refused
     copy.addEventListener('click', () => {
-      void navigator.clipboard.writeText(this.tsv()).then(
-        () => flash(copy),
-        () => undefined,
-      )
+      void copyText(this.tsv()).then((ok) => {
+        if (ok) flash(copy)
+      })
     })
     head.appendChild(copy)
     return head

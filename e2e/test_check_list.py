@@ -169,7 +169,7 @@ def no_value_count(page, path):
 
 
 tmp = tempfile.mkdtemp(prefix="cad_check_")
-open_box = Path(tmp) / "open_box.stl"
+open_box = Path(tmp) / "open\tbox.stl"  # a tab in its name: the copy must keep its cells
 open_box_stl(open_box)
 
 with nav_session() as n:
@@ -213,8 +213,15 @@ with nav_session() as n:
     def shown(sel):
         return page.evaluate(f"(() => {{ const e = document.querySelector({sel!r}); return !!e && !e.classList.contains('hidden') }})()")
 
+    def folder_shown():
+        return gui_common.folder_title(page, "問題の一覧").is_visible()
+
+    # the empty screen: no folder for a list there is nothing to make from
+    assert not folder_shown(), "no 問題の一覧 on the empty screen"
+
     # ================= ribbed_plate: all three kinds, and what has no thickness =======
     n.load(TESTDATA / "ribbed_plate.stl", props="live", box=RIBBED)
+    assert folder_shown()
     gui_common.open_folder(page, "問題の一覧")
     set_box("一覧を出す", True)
     c = wait_list()
@@ -304,9 +311,15 @@ with nav_session() as n:
     page.locator("#tree-show-all").click()
     print("5 the plate alone: nothing found")
 
-    # ---- すべてコピー
+    # ---- すべてコピー, the clipboard API refused: the measure list's stand-in copies it
     c = wait_list("c.rows.length === 14")
+    page.evaluate(
+        "async () => { await navigator.clipboard.writeText('before');"
+        " window.__write = navigator.clipboard.writeText; navigator.clipboard.writeText = () => Promise.reject(new DOMException('no', 'NotAllowedError')) }"
+    )
     page.locator("#check-panel .check-copy-all").click()
+    page.wait_for_function("document.querySelector('#check-panel .check-copy-all').classList.contains('done')", timeout=5000)
+    page.evaluate("() => { navigator.clipboard.writeText = window.__write }")
     lines = page.evaluate("navigator.clipboard.readText()").split("\n")
     assert lines[0] == "種類\t値\t単位\t部品\tX\tY\tZ\t面積 (mm²)\t条件", lines[0]
     assert len(lines) == 1 + len(c["rows"]) + len(c["undecided"]), (len(lines), c)
@@ -348,5 +361,27 @@ with nav_session() as n:
     c = wait_list()
     assert c["rows"] == [] and c["undecided"] == [{"partId": 0, "why": "閉じていない"}], c
     assert page.inner_text("#check-panel .check-counts") == "薄肉 0・勾配不足 0・反対側 0・判定できない 1"
-    print("9 an open box: 閉じていない")
+    # its name has a tab: the copy keeps nine cells a line
+    page.locator("#check-panel .check-copy-all").click()
+    page.wait_for_timeout(300)
+    lines = [l.split("\t") for l in page.evaluate("navigator.clipboard.readText()").split("\n")]
+    assert len(lines) == 2 and all(len(l) == 9 for l in lines) and "box" in lines[1][3], lines
+    print("9 an open box: 閉じていない", lines[1][3])
+
+    # ================= /properties fails: said, not waited for ==========================
+    page.route("**/properties", lambda r: r.fulfill(status=500, body="no"))
+    n.load(TESTDATA / "ribbed_plate.stl", props="unheld", box=RIBBED)
+    set_box("一覧を出す", True)
+    page.wait_for_function(
+        "document.querySelector('#check-panel')?.textContent.includes('部品が閉じているかを調べられなかった')", timeout=30000
+    )
+    page.unroute("**/properties")
+    # the 500 asked for here logs "Failed to load resource": expected here only
+    n.errors[:] = [e for e in n.errors if "status of 500" not in e]
+    print("10 no properties: said")
+
+    # ================= a drawing: no folder ==============================================
+    n.load(TESTDATA / "plate_drawing.dxf", wait_text="2D 図面")
+    assert not folder_shown() and not shown("#check-panel"), "a drawing has no 問題の一覧"
+    print("11 drawing: no folder")
 print("CHECK LIST E2E OK")

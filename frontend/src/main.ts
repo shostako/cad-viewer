@@ -241,7 +241,7 @@ let modelPanel = false
 function applyEmptyPanel(empty: boolean): void {
   modelPanel = !empty
   for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
-  for (const f of [sectionFolder, thicknessFolder, draftFolder, propsFolder]) f.show(!empty && !is2D)
+  for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -945,6 +945,8 @@ draftFolder
 const checkState = { enabled: false, thickness: true, draft: true }
 /** the loaded model's part names (the part tree's), for the list's rows */
 let checkPartNames = new Map<number, string>()
+/** why /properties failed for this model (the list cannot tell open parts from closed ones), or null */
+let propsFailed: string | null = null
 const checkPanel = new CheckPanel(checkPanelEl, {
   go: (row) => goToCheck(row),
   only: (partId) => partTree.showOnly([partId]),
@@ -980,9 +982,11 @@ async function updateChecks(): Promise<void> {
     layoutCorner()
     return
   }
-  // which parts can be judged comes with /properties
+  // which parts can be judged comes with /properties (and without it, nothing can be)
   if (!modelProps) {
-    checkPanel.showBusy('部品を調べている…')
+    checkPanel.showBusy(
+      propsFailed === null ? '部品を調べている…' : `部品が閉じているかを調べられなかった（${propsFailed}）。一覧は作れない`,
+    )
     layoutCorner()
     return // propsRequest's answer runs it again
   }
@@ -1519,7 +1523,7 @@ panelsShow.addEventListener('click', () => setPanelsHidden(false))
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder]
+const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -1747,9 +1751,12 @@ function showProperties(
       propsPanel.setData(r.value)
       modelProps = r.value
       if (draftState.enabled) renderLegend() // the note on open parts may be due now
+      propsFailed = null
       if (checkState.enabled) void updateChecks() // it waited for which parts can be judged
     } else {
       propsPanel.showError(r.error instanceof Error ? r.error.message : String(r.error))
+      propsFailed = r.error instanceof Error ? r.error.message : String(r.error)
+      if (checkState.enabled) void updateChecks() // it waited: say why there is no list
     }
   }
   if (done) {
@@ -2357,6 +2364,7 @@ async function loadFile(file: File): Promise<void> {
       modeHud = ''
       modelSummary = ''
       modelProps = null
+      propsFailed = null
       propsPanel.hide()
       cancelProjection()
       // Clear the stale 3D scene for BOTH branches: while the new model's
