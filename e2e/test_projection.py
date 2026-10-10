@@ -20,6 +20,7 @@ plate 100 x 60 x 15 at the origin; core pins r 4, z 15..40 at (25, 30) and
 - while the area is asked for, 計算中…; no rows on a 2D drawing
   (along Y without the plate: block 40 x 20 + pins 2 x 8 x 25 = 1200 mm²)
 """
+import math
 import os
 import tempfile
 from pathlib import Path
@@ -34,6 +35,10 @@ G = 9.80665
 # the area is an estimate from a rasterised shadow (backend/app/projection.py):
 # mini_mold's lands within 0.03 %; the rows round to 0.01 cm², 0.1 kN, 0.1 tf
 REL = 5e-4
+# the GUI's smallest height above the right-hand stack (README, 体積・重量) and
+# the gap between the two
+GUI_MIN = 160
+COLUMN_GAP = 8
 
 tmp = tempfile.mkdtemp(prefix="cad_proj_")
 # a private copy (its own content hash, so its own sidecar): the measurements
@@ -135,15 +140,33 @@ def main():
         page.get_by_role("button", name="全部表示", exact=True).click()
         shown("X", 1540, 75)
 
-        # 4b. a window too short for the GUI's minimum (160 px) above the panel:
-        # the area's row folds, the force's stays; the GUI and the panel do not meet
-        page.set_viewport_size({"width": 1280, "height": 420})
-        page.wait_for_timeout(300)
-        shown("X", 1540, 75, area_row=False)
+        # 4b. a window too short for the GUI's minimum (GUI_MIN, the README's
+        # 160 px) above the panel: the area's row folds, the force's stays. The
+        # window heights come from the page as it is now (no measurements, so
+        # the panel is all of the stack): the GUI's top, the panel's height with
+        # both rows, the room under it, and the area row's height (from its top
+        # to the force row's top). Both rows fit from `full` up; below it the
+        # area row folds, and half a row less is still roomy enough folded.
+        assert page.locator("#measure-panel").is_hidden(), "the stack must be the panel alone"
+        H0 = page.viewport_size["height"]
         g = page.locator(".lil-gui.lil-root").bounding_box()
         pr = page.locator("#props-panel").bounding_box()
-        assert g["y"] + g["height"] <= pr["y"] + 0.5, ("the GUI over the panel", g, pr)
-        page.set_viewport_size({"width": 1280, "height": 900})
+        row = page.locator("#props-total-clamp").bounding_box()["y"] - page.locator("#props-total-proj").bounding_box()["y"]
+        margin = H0 - (pr["y"] + pr["height"])
+        assert 15 <= row <= 30 and 0 < margin <= 20, (row, margin)
+        full = g["y"] + GUI_MIN + COLUMN_GAP + pr["height"] + margin
+        for height, area_row in ((math.ceil(full) + 1, True), (round(full - row / 2), False)):
+            page.set_viewport_size({"width": 1280, "height": height})
+            page.wait_for_timeout(300)
+            shown("X", 1540, 75, area_row=area_row)
+            gb = page.locator(".lil-gui.lil-root").bounding_box()
+            pb = page.locator("#props-panel").bounding_box()
+            # the GUI keeps its minimum and the two do not meet; the panel stays on screen
+            assert gb["height"] >= GUI_MIN - 0.5, ("the GUI under its minimum", height, gb)
+            assert gb["y"] + gb["height"] <= pb["y"] + 0.5, ("the GUI over the panel", height, gb, pb)
+            assert pb["y"] + pb["height"] <= height + 0.5, ("the panel off the screen", height, pb)
+            print("4b", height, "area row" if area_row else "folded", round(gb["height"]), round(pb["height"]))
+        page.set_viewport_size({"width": 1280, "height": H0})
         page.wait_for_timeout(300)
         shown("X", 1540, 75)
 
