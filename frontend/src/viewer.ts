@@ -1076,25 +1076,35 @@ export class Viewer {
     else this.fitToView()
   }
 
+  /** the ids of the visible parts with faces (what a list of places is made from: spotnav.ts's key) */
+  spotPartIds(): number[] {
+    const out: number[] = []
+    for (const [partId, mesh] of this.partMeshes) if (mesh.geometry.index?.count && this.isPartVisible(partId)) out.push(partId)
+    return out
+  }
+
   /** the visible parts with faces, for spots.ts (the part meshes carry no transform: world positions) */
   spotParts(): SpotPart[] {
     const out: SpotPart[] = []
-    for (const [partId, mesh] of this.partMeshes) {
-      const index = mesh.geometry.index
-      if (!index?.count || !this.isPartVisible(partId)) continue
+    for (const partId of this.spotPartIds()) {
+      const mesh = this.partMeshes.get(partId)!
+      const index = mesh.geometry.index!
       const positions = mesh.geometry.getAttribute('position').array
-      let sign: 1 | -1 = 1
-      if (mesh.userData.meshFormat) {
-        // the sign the draft colouring used (its flat copy), else the same rule here
-        sign = (this.flatCopies.get(partId)?.userData.windingSign as 1 | -1 | undefined) ?? windingSign(expandTriangles(positions, index.array))
-      }
       out.push({
         partId,
         positions,
         normals: mesh.geometry.getAttribute('normal').array,
         indices: index.array,
         faceRanges: (mesh.userData.faceRanges as FaceRange[] | undefined) ?? [],
-        windingSign: sign,
+        // asked for by the draft places of a mesh-format part only: the sign the
+        // colouring used (its flat copy), else the same rule, once per part
+        windingSign: () => {
+          if (!mesh.userData.meshFormat) return 1
+          const copy = this.flatCopies.get(partId)?.userData.windingSign as 1 | -1 | undefined
+          if (copy) return copy
+          mesh.userData.spotWinding ??= windingSign(expandTriangles(positions, index.array))
+          return mesh.userData.spotWinding as 1 | -1
+        },
       })
     }
     return out
@@ -1139,8 +1149,17 @@ export class Viewer {
     this.animateFrom(from)
   }
 
-  /** take the marker of goToSpot away (the colours changed or went) */
+  /**
+   * take the marker of goToSpot away (the colours changed or went, a part was
+   * hidden): H no longer frames its place, it fits the visible model again
+   */
   clearSpot(): void {
+    if (this.lastFit?.box) this.lastFit.box = null
+    this.removeSpotMarker()
+  }
+
+  /** the marker only (goToSpot puts the next one up; what H frames stays) */
+  private removeSpotMarker(): void {
     if (!this.spotMarker) return
     this.wake()
     this.scene.remove(this.spotMarker)
@@ -1149,7 +1168,7 @@ export class Viewer {
   }
 
   private showSpotMarker(at: THREE.Vector3, text: string): void {
-    this.clearSpot()
+    this.removeSpotMarker()
     const marker = this.makeLabel('', at, 'spot-marker')
     const ring = document.createElement('span')
     ring.className = 'spot-ring'
@@ -1916,7 +1935,7 @@ export class Viewer {
     this.controls.object = to
     this.trackball.object = to
     this.setTarget(target)
-    if (wasAtFit) this.rememberFit(this.lastFit?.parts ?? null)
+    if (wasAtFit) this.rememberFit(this.lastFit?.parts ?? null, this.lastFit?.box ?? null)
   }
 
   /**

@@ -9,7 +9,12 @@
 - A change that makes another list (the required angle, a part hidden in the
   tree) takes the marker and the count away; the next press counts again
   (with the block hidden: six walls).
-- H (the panels hidden, the view fitted again) keeps the place framed.
+- H (the panels hidden, the view fitted again) keeps the place framed, also
+  after a switch to the parallel projection. With the place's part hidden, H
+  fits the visible model instead.
+- curved_part.step at 3°: every place of 勾配不足 seen on screen is drawn in
+  its colour where the marker is, the 2° boss among them (curved faces, whose
+  class changes inside a face).
 - A saved image leaves the marker out (it points at where the view went).
 - 肉厚 on ribbed_plate.stl: at 1.5 mm the three 1.2 mm ribs are three places
   (both sides of a rib are one place); at 1.0 mm none is thinner, and the
@@ -36,6 +41,7 @@ import tempfile
 from PIL import Image
 
 import gui_common
+from draft_cases import cls as pixel_class
 from nav_common import TESTDATA, nav_session
 
 PLATE = ((0, 0, 0), (100, 60, 15))
@@ -45,6 +51,8 @@ PIN_R = 4
 RIBS = (-25, 0, 25)
 RIB_T = 1.2
 RIBBED = ((-40, -25, 0), (40, 25, 12))
+CURVED = ((0, 0, 0), (78, 40, 18))
+BOSS = (38, 20, 6.0, 8.0, 2.0)  # make_step_assembly.py: (x, y, radius at the foot, height, draft °) on the top z 10
 
 TOL = 1e-3
 YELLOW = (0xFF, 0xD0, 0x60)  # the marker's ring and label (--cv-measure)
@@ -209,7 +217,10 @@ with nav_session() as n:
     print("2b the saved image has no marker")
 
     # ---- H: the panels hidden, the view fitted again, the same place framed
+    # (in the parallel projection: the switch keeps what the last fit framed)
     at = spot()["spot"]["at"]
+    n.set_projection("平行")
+    n.settle()
     page.keyboard.press("h")
     n.settle()
     page.wait_for_timeout(450)
@@ -218,9 +229,43 @@ with nav_session() as n:
     x, y = n.project(at)
     assert cl <= x <= cl + cw and ct <= y <= ct + ch, ("H keeps the place on screen", (x, y))
     assert math.dist(marker_xy(), (x, y)) <= 3
+    # still the close view of the place (a pin's bottom), not the whole model: some of the plate is off screen
+    lo, hi = PLATE
+    corners = [n.project((x_, y_, z_)) for x_ in (lo[0], hi[0]) for y_ in (lo[1], hi[1]) for z_ in (lo[2], hi[2])]
+    assert any(not (cl <= u <= cl + cw and ct <= v <= ct + ch) for u, v in corners), ("H keeps the place's close view", corners)
     page.keyboard.press("h")
     n.settle()
     page.wait_for_timeout(450)
+    n.set_projection("透視")
+    n.settle()
+
+    # ---- the place's part hidden: H fits the visible model, not the place's box
+    labels = page.locator("#tree-panel label")
+    texts = labels.all_text_contents()
+    block_row = labels.nth(texts.index("cavity_block")).locator("xpath=..").locator("input")
+    for _ in range(10):
+        press("short")
+        if wall_of(spot()["spot"]["at"], spot()["spot"]["normal"])[0].startswith("block"):
+            break
+    assert wall_of(spot()["spot"]["at"], spot()["spot"]["normal"])[0].startswith("block"), spot()
+    block_row.uncheck()
+    n.settle()
+    assert marker_xy() is None, "hiding the place's part takes the marker away"
+    page.keyboard.press("h")
+    n.settle()
+    page.wait_for_timeout(450)
+    n.settle()
+    cl, ct, cw, ch = n.canvas_rect()
+    lo, hi = PLATE
+    for c in [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]:
+        x, y = n.project(c)
+        assert cl <= x <= cl + cw and ct <= y <= ct + ch, ("H fits the visible model, not the hidden part's place", c, (x, y))
+    page.keyboard.press("h")
+    n.settle()
+    page.wait_for_timeout(450)
+    block_row.check()
+    n.settle()
+    print("2c H after hiding the place's part ok")
 
     # ---- another list: the required angle, then a hidden part
     req = gui_common.ctl(page, "必要な勾配 (°)").locator("input").last
@@ -229,8 +274,6 @@ with nav_session() as n:
     n.settle()
     assert spot() is None and marker_xy() is None, "a new angle takes the marker away"
     assert state("opposite") == "", state("opposite")
-    labels = page.locator("#tree-panel label")
-    texts = labels.all_text_contents()
     labels.nth(texts.index("cavity_block")).locator("xpath=..").locator("input").uncheck()
     n.settle()
     press("short")
@@ -252,6 +295,44 @@ with nav_session() as n:
     gui_common.ctl(page, "色分け").locator("input").uncheck()
     n.settle()
     assert marker_xy() is None and spot() is None, "the colouring off takes the marker away"
+
+    # ================= 抜き勾配 on curved_part.step: curved faces ======================
+    n.load(str(TESTDATA / "curved_part.step"), box=CURVED)
+    gui_common.ctl(page, "色分け").locator("input").check()
+    req = gui_common.ctl(page, "必要な勾配 (°)").locator("input").last
+    req.fill("3")
+    req.press("Enter")
+    n.settle()
+    seen, faces, on_boss = 0, set(), False
+    press("short")
+    count = spot()["count"]
+    for i in range(count):
+        if i:
+            press("short")
+        s = spot()
+        faces.add((s["spot"]["partId"], s["spot"]["faceId"]))
+        at = s["spot"]["at"]
+        xy = n.project(at)
+        hit = n.pick(xy)
+        if not hit or math.dist(hit["point"], at) > 0.05:
+            continue  # the marker's point is behind another face from here (a hole's wall)
+        seen += 1
+        img = n.canvas_image()
+        cl, ct, cw, ch = n.canvas_rect()
+        cx, cy = int((xy[0] - cl) * img.width / cw), int((xy[1] - ct) * img.height / ch)
+        # the colour around the marker (a marker on a corner can sit on the outline)
+        around = [pixel_class(img.getpixel((cx + dx, cy + dy))) for dx in range(-2, 3) for dy in range(-2, 3)]
+        assert "short" in around, ("the marker of a 勾配不足 place must be on its colour", s, around)
+        r = math.hypot(at[0] - BOSS[0], at[1] - BOSS[1])
+        foot = BOSS[2]
+        top = foot - BOSS[3] * math.tan(math.radians(BOSS[4]))
+        if 10 + 0.5 <= at[2] <= 10 + BOSS[3] - 0.5 and top - 0.05 <= r <= foot + 0.05:
+            on_boss = True
+            assert abs(s["spot"]["value"] - BOSS[4]) <= 0.2, ("the boss's draft", s)
+    assert len(faces) == count, ("one place per face", faces)
+    assert seen >= 3 and on_boss, ("places seen, the 2° boss among them", seen, on_boss)
+    gui_common.ctl(page, "色分け").locator("input").uncheck()
+    print("3b curved faces", count, "places,", seen, "seen")
 
     # ================= 肉厚 on ribbed_plate.stl =======================================
     n.load(str(TESTDATA / "ribbed_plate.stl"), box=RIBBED)

@@ -60,10 +60,8 @@ export class SpotNav {
 
   /** the inputs of a list of this kind, as a string; null when that colouring is off */
   private keyOf(kind: SpotKind): string | null {
-    const parts = `${this.viewer.modelGen}:${this.viewer
-      .spotParts()
-      .map((p) => p.partId)
-      .join(',')}`
+    // light: the ids only (the places themselves are made at the press)
+    const parts = `${this.viewer.modelGen}:${this.viewer.spotPartIds().join(',')}`
     if (kind === 'thin') {
       const t = this.source.thin()
       if (!t) return null

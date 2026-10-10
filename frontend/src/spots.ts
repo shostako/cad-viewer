@@ -4,9 +4,10 @@
  *
  * - thinSpots: where the wall is thinner than the threshold (肉厚), the
  *   thinnest first. A place is a run of thin vertices joined by triangles and
- *   by nearness: the two sides of a thin wall are different B-rep faces that
- *   share no vertex, but they are less than the threshold apart. With none
- *   thinner than the threshold, the one thinnest point.
+ *   by nearness (on a grid of cells the threshold across: up to about twice
+ *   the threshold apart). The two sides of a thin wall are different B-rep
+ *   faces that share no vertex, but they are nearer than the threshold. With
+ *   none thinner than the threshold, the one thinnest point.
  * - draftSpots: the faces of one draft class (勾配不足, 反対側), the largest
  *   first. A B-rep face is one place (only its triangles of that class count:
  *   a curved face can be partly short); a mesh-format part has no faces, so a
@@ -16,8 +17,9 @@
  * (the view looks at it from outside, along -normal), its extent (framed) and
  * its value (the thickness in mm, the draft angle in degrees there).
  *
- * The draft classes are those of the colouring (draft.ts): a B-rep triangle by
- * the mean of its vertex normals, a mesh-format triangle by its winding.
+ * The draft classes are those of the colouring (draft.ts): a B-rep vertex by
+ * its normal (a triangle counts for a class when one of its corners has it:
+ * the class's colour shows in it), a mesh-format triangle by its winding.
  */
 import { draftClass, draftSine, type DraftClass } from './draft'
 import type { FaceRange } from './model'
@@ -33,8 +35,8 @@ export interface SpotPart {
   indices: ArrayLike<number>
   /** B-rep faces; empty for mesh formats */
   faceRanges: readonly FaceRange[]
-  /** mesh formats: the winding sign of the part (draft.ts windingSign) */
-  windingSign: 1 | -1
+  /** mesh formats: the winding sign of the part (draft.ts windingSign); asked for by draftSpots only */
+  windingSign(): 1 | -1
 }
 
 export interface Spot {
@@ -221,51 +223,88 @@ export function thinSpots(parts: readonly SpotPart[], values: ReadonlyMap<number
   return spots.sort((a, b) => a.value - b.value)
 }
 
-/** a triangle's class, area, centre and outward normal */
+/** a triangle of a place: its area, and where the marker would go on it */
 interface Tri {
-  cls: DraftClass
   area: number
-  centre: Vec3
+  /** all of it has the class (B-rep: all three corners; a mesh-format triangle always) */
+  full: boolean
+  at: Vec3
   normal: Vec3
+  /** sine of the draft angle at `at` */
   sine: number
 }
 
-function triangle(part: SpotPart, t: number, dir: readonly [number, number, number], sinRequired: number): Tri {
-  const P = part.positions
-  const I = part.indices
-  const a = I[t * 3] * 3
-  const b = I[t * 3 + 1] * 3
-  const c = I[t * 3 + 2] * 3
+/**
+ * The class of each vertex of a B-rep part, by its display normal: what
+ * draftColors paints it.
+ */
+function vertexClasses(part: SpotPart, dir: readonly [number, number, number], sinRequired: number): DraftClass[] {
+  const N = part.normals
+  const n = Math.floor(part.positions.length / 3)
+  const out: DraftClass[] = new Array(n)
+  for (let i = 0; i < n; i++) out[i] = draftClass(draftSine(N[i * 3], N[i * 3 + 1], N[i * 3 + 2], dir), sinRequired)
+  return out
+}
+
+function area(P: ArrayLike<number>, a: number, b: number, c: number): { area: number; cross: Vec3 } {
   const ux = P[b] - P[a]
   const uy = P[b + 1] - P[a + 1]
   const uz = P[b + 2] - P[a + 2]
   const vx = P[c] - P[a]
   const vy = P[c + 1] - P[a + 1]
   const vz = P[c + 2] - P[a + 2]
-  const cx = uy * vz - uz * vy
-  const cy = uz * vx - ux * vz
-  const cz = ux * vy - uy * vx
-  const area = Math.hypot(cx, cy, cz) / 2
-  let normal: Vec3
-  if (part.faceRanges.length) {
-    // a B-rep triangle: by its display normals, as draftColors colours it
-    const N = part.normals
-    normal = unit(N[a] + N[b] + N[c], N[a + 1] + N[b + 1] + N[c + 1], N[a + 2] + N[b + 2] + N[c + 2])
-  } else {
-    // a mesh-format triangle: by its winding (draftColorsFlat)
-    normal = unit(cx * part.windingSign, cy * part.windingSign, cz * part.windingSign)
-  }
-  const sine = draftSine(normal[0], normal[1], normal[2], dir)
-  return {
-    cls: draftClass(sine, sinRequired),
-    area,
-    centre: [(P[a] + P[b] + P[c]) / 3, (P[a + 1] + P[b + 1] + P[c + 1]) / 3, (P[a + 2] + P[b + 2] + P[c + 2]) / 3],
-    normal,
-    sine,
-  }
+  const cross: Vec3 = [uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx]
+  return { area: Math.hypot(...cross) / 2, cross }
 }
 
-/** a place being collected: its box, area, and its largest triangle (the marker goes there) */
+/**
+ * Triangle t of a B-rep part, if one of its corners has the class (the class's
+ * colour shows in it): the marker goes in its middle, along its corners' mean
+ * normal, when all three have the class; else on a corner that has it.
+ */
+function brepTriangle(part: SpotPart, t: number, cls: DraftClass, vcls: DraftClass[], dir: readonly [number, number, number]): Tri | null {
+  const I = part.indices
+  const v = [I[t * 3], I[t * 3 + 1], I[t * 3 + 2]]
+  const of = v.map((i) => vcls[i] === cls)
+  if (!of.some(Boolean)) return null
+  const P = part.positions
+  const N = part.normals
+  const [a, b, c] = v.map((i) => i * 3)
+  const full = of.every(Boolean)
+  let at: Vec3
+  let normal: Vec3
+  if (full) {
+    at = [(P[a] + P[b] + P[c]) / 3, (P[a + 1] + P[b + 1] + P[c + 1]) / 3, (P[a + 2] + P[b + 2] + P[c + 2]) / 3]
+    normal = unit(N[a] + N[b] + N[c], N[a + 1] + N[b + 1] + N[c + 1], N[a + 2] + N[b + 2] + N[c + 2])
+  } else {
+    const k = v[of.indexOf(true)] * 3
+    at = [P[k], P[k + 1], P[k + 2]]
+    normal = unit(N[k], N[k + 1], N[k + 2])
+  }
+  return { area: area(P, a, b, c).area, full, at, normal, sine: draftSine(normal[0], normal[1], normal[2], dir) }
+}
+
+/** triangle t of a mesh-format part, if it has the class (by its winding, as draftColorsFlat paints it) */
+function meshTriangle(
+  part: SpotPart,
+  t: number,
+  cls: DraftClass,
+  sign: 1 | -1,
+  dir: readonly [number, number, number],
+  sinRequired: number,
+): Tri | null {
+  const I = part.indices
+  const P = part.positions
+  const [a, b, c] = [I[t * 3] * 3, I[t * 3 + 1] * 3, I[t * 3 + 2] * 3]
+  const { area: ar, cross } = area(P, a, b, c)
+  const normal = unit(cross[0] * sign, cross[1] * sign, cross[2] * sign)
+  const sine = draftSine(normal[0], normal[1], normal[2], dir)
+  if (draftClass(sine, sinRequired) !== cls) return null
+  const at: Vec3 = [(P[a] + P[b] + P[c]) / 3, (P[a + 1] + P[b + 1] + P[c + 1]) / 3, (P[a + 2] + P[b + 2] + P[c + 2]) / 3]
+  return { area: ar, full: true, at, normal, sine }
+}
+
+/** a place being collected: its box, area, and the triangle the marker goes on */
 interface Gather {
   partId: number
   faceId: number | null
@@ -283,7 +322,9 @@ function gather(g: Gather, part: SpotPart, t: number, tri: Tri): void {
     grow(g.min, g.max, P[i], P[i + 1], P[i + 2])
   }
   g.area += tri.area
-  if (!g.best || tri.area > g.best.area) g.best = tri
+  // the marker on the largest triangle that is all of the class (else the largest one)
+  const b = g.best
+  if (!b || (tri.full && !b.full) || (tri.full === b.full && tri.area > b.area)) g.best = tri
 }
 
 function newGather(partId: number, faceId: number | null): Gather {
@@ -295,7 +336,7 @@ function toSpot(g: Gather): Spot {
   return {
     partId: g.partId,
     faceId: g.faceId,
-    at: b.centre,
+    at: b.at,
     normal: b.normal,
     min: g.min,
     max: g.max,
@@ -319,25 +360,23 @@ export function draftSpots(
   for (const part of parts) {
     const nTri = Math.floor(part.indices.length / 3)
     if (part.faceRanges.length) {
+      const vcls = vertexClasses(part, dir, sinRequired)
       for (const f of part.faceRanges) {
         const g = newGather(part.partId, f.faceId)
         for (let t = f.triStart; t < Math.min(f.triStart + f.triCount, nTri); t++) {
-          const tri = triangle(part, t, dir, sinRequired)
-          if (tri.cls === cls) gather(g, part, t, tri)
+          const tri = brepTriangle(part, t, cls, vcls, dir)
+          if (tri) gather(g, part, t, tri)
         }
         if (g.best) out.push(toSpot(g))
       }
       continue
     }
     // a mesh-format part: runs of triangles of the class joined by their corners
+    const sign = part.windingSign()
     const tris: (Tri | null)[] = []
-    for (let t = 0; t < nTri; t++) {
-      const tri = triangle(part, t, dir, sinRequired)
-      tris.push(tri.cls === cls ? tri : null)
-    }
-    const nVert = Math.floor(part.positions.length / 3)
+    for (let t = 0; t < nTri; t++) tris.push(meshTriangle(part, t, cls, sign, dir, sinRequired))
     const same = samePoint(part.positions)
-    const joins = new Joins(nVert)
+    const joins = new Joins(Math.floor(part.positions.length / 3))
     const I = part.indices
     for (let t = 0; t < nTri; t++) {
       if (!tris[t]) continue
