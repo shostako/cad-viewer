@@ -86,25 +86,48 @@ export interface DistanceResult {
   angle?: number
 }
 
+/** a point, or a direction */
+type Xyz = [number, number, number]
+
 export interface EdgeInfoResult {
   type: 'edge'
   length: number
   curve: string
   radius?: number
   diameter?: number
-  center?: [number, number, number]
-  axis?: [number, number, number]
+  center?: Xyz
+  axis?: Xyz
+  /** a circle: a whole turn (⌀) or a part of one (R) */
+  full?: boolean
+  /** a B-spline that is a circle within the backend's tolerance */
+  recognized?: boolean
+  /** anything else, given the click: the radius of curvature there, and the curve's point there */
+  localRadius?: number
+  at?: Xyz
 }
 
 export interface FaceInfoResult {
   type: 'face'
   area: number
   surface: string
+  /** a cylinder's, a sphere's, or a torus's small one */
   radius?: number
   diameter?: number
-  center?: [number, number, number]
-  axis?: [number, number, number]
-  normal?: [number, number, number]
+  /** a torus's large radius */
+  majorRadius?: number
+  center?: Xyz
+  axis?: Xyz
+  normal?: Xyz
+  /** a cylinder: a whole turn (⌀) or a part of one (R) */
+  full?: boolean
+  /** a cone: its half angle, degrees */
+  angle?: number
+  apex?: Xyz
+  /** a B-spline that is a plane, a cylinder, a cone or a sphere within the backend's tolerance */
+  recognized?: boolean
+  /** anything else curved, given the click: the smallest radius of curvature there, and the surface's point there */
+  localRadius?: number
+  at?: Xyz
 }
 
 async function measureRequest<T>(modelId: string, body: unknown): Promise<T> {
@@ -147,12 +170,14 @@ export async function measureDistance(
   return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b, nearA, nearB })
 }
 
-export function measureEdgeInfo(modelId: string, ref: EntityRef) {
-  return measureRequest<EdgeInfoResult>(modelId, { type: 'edge_info', ref })
+/** near: the clicked point, for the radius of curvature there (what is not a circle) */
+export function measureEdgeInfo(modelId: string, ref: EntityRef, near?: Xyz) {
+  return measureRequest<EdgeInfoResult>(modelId, { type: 'edge_info', ref, near })
 }
 
-export function measureFaceInfo(modelId: string, ref: EntityRef) {
-  return measureRequest<FaceInfoResult>(modelId, { type: 'face_info', ref })
+/** near: the clicked point, for the radius of curvature there (a surface of no simple kind) */
+export function measureFaceInfo(modelId: string, ref: EntityRef, near?: Xyz) {
+  return measureRequest<FaceInfoResult>(modelId, { type: 'face_info', ref, near })
 }
 
 /** Per-vertex thickness per part (0 = no data). method: ray=fast, ball=rolling ball (exact at junctions) */

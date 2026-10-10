@@ -2,7 +2,7 @@
  * The 計測 list as a record to copy into a report or Excel (issue #23 item 8).
  *
  * A row shows its value first, with its unit ("20.000 mm"), a mark of its
- * kind (distance, ⌀, note), and what was measured on a second, smaller line
+ * kind (distance, ⌀, R, angle, draft, note), and what was measured on a second, smaller line
  * ("cavity_block 面#6 ↔ plate 面#6"). Each row copies its own line, the
  * list's head copies all of them: tab separated (種類, 値, 単位, 対象 A,
  * 対象 B), which Excel pastes into cells.
@@ -16,13 +16,15 @@ import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { LENGTH_UNIT, type EntryData } from './measure'
 
-export type RowKind = 'distance' | 'diameter' | 'angle' | 'note' | 'other'
+export type RowKind = 'distance' | 'diameter' | 'radius' | 'angle' | 'draft' | 'note' | 'other'
 
 export interface RowView {
   kind: RowKind
   /** the number (or a note's text); '' when there is none */
   value: string
   unit: string
+  /** shown before the number (⌀, R, SR, 勾配); the copy keeps the bare number, for Excel */
+  mark?: string
   /** the second line: what was measured */
   what: string
   /** for the copy: the two things measured (a diameter or a note has one) */
@@ -30,7 +32,15 @@ export interface RowView {
   b: string
 }
 
-const KIND_NAME: Record<RowKind, string> = { distance: '距離', diameter: '直径', angle: '角度', note: '注記', other: '' }
+const KIND_NAME: Record<RowKind, string> = {
+  distance: '距離',
+  diameter: '直径',
+  radius: '半径',
+  angle: '角度',
+  draft: '勾配',
+  note: '注記',
+  other: '',
+}
 
 /** a 3D entry (as saved) as a row */
 export function entryRow(raw: EntryData): RowView {
@@ -46,7 +56,19 @@ export function entryRow(raw: EntryData): RowView {
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
   if (d.labelText.startsWith('⌀') && dia) {
     const what = `${dia[1]}${dia[3]}`.trim()
-    return { kind: 'diameter', value: dia[2], unit: LENGTH_UNIT, what, a: what, b: '' }
+    return { kind: 'diameter', value: dia[2], unit: LENGTH_UNIT, mark: '⌀', what, a: what, b: '' }
+  }
+  // "body 円筒面 R5.000", "body 円弧 R5.000 (L=7.854)", "body 球面 SR4.000",
+  // "pin 曲面 R1.000（クリックした点）": the last R of the text (a part's name may have one)
+  const rad = /^(.*) (S?R)([\d.]+)((?:（[^）]*）)?(?: \(L=[\d.]+\))?)$/.exec(d.text)
+  if (/^S?R[\d.]+$/.test(d.labelText) && rad) {
+    const what = `${rad[1]}${rad[4]}`
+    return { kind: 'radius', value: rad[3], unit: LENGTH_UNIT, mark: rad[2], what, a: what, b: '' }
+  }
+  // "body 円錐面 勾配 2.000°": a cone's half angle
+  const draft = /^(.*) 勾配 ([\d.]+)°$/.exec(d.text)
+  if (d.labelText.startsWith('勾配') && draft) {
+    return { kind: 'draft', value: draft[2], unit: '°', mark: '勾配 ', what: draft[1], a: draft[1], b: '' }
   }
   // "cavity_block 面#6 ∠ cavity_block 面#3 : 90.000°"
   const ang = /^(.*) ∠ (.*) : ([-\d.]+)°$/.exec(d.text)
@@ -91,7 +113,9 @@ export function listText(rows: readonly RowView[]): string {
 const KIND_ICON: Record<RowKind, IconNode | null> = {
   distance: ICON.distance,
   diameter: ICON.diameter,
+  radius: ICON.radius,
   angle: ICON.angle,
+  draft: ICON.draft,
   note: ICON.note,
   other: null,
 }
@@ -163,9 +187,9 @@ export function rowElement(
   main.className = 'm-main'
   const value = document.createElement('span')
   value.className = 'm-value'
-  // file-supplied text (a note): textContent only. A diameter shows its ⌀
-  // (the copy keeps the bare number, for Excel)
-  value.textContent = r.value ? `${r.kind === 'diameter' ? '⌀' : ''}${r.value}` : r.what
+  // file-supplied text (a note): textContent only. A diameter shows its ⌀, a
+  // radius its R or SR (the copy keeps the bare number, for Excel)
+  value.textContent = r.value ? `${r.mark ?? ''}${r.value}` : r.what
   if (r.unit) {
     const u = document.createElement('span')
     u.className = 'm-unit'

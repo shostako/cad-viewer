@@ -1,9 +1,11 @@
-/** Measurement mode: two-click exact distance + entity info on circular picks.
+/** Measurement mode: two-click exact distance + the size of a curved pick.
  *
  * Click A → marker. Click B → server computes exact B-rep distance
  * (BRepExtrema) and we draw the dimension between the true nearest points.
- * Picking a circular edge / cylindrical face also reports its exact
- * diameter (hole/boss measurement, the injection-molding bread & butter).
+ * Picking a curved edge or face also reports its exact size by its kind
+ * (sizes.ts): the ⌀ of a hole or a boss (the injection-molding bread &
+ * butter), the R of a fillet, the SR of a sphere, a cone's draft, or the
+ * radius of curvature at the click on a B-spline.
  */
 import * as THREE from 'three'
 import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
@@ -14,6 +16,7 @@ import {
   type EntityRef,
 } from './api'
 import type { PickResult } from './picking'
+import { LOCAL_NOTE, edgeSize, faceSize, fmt, fmtDeg, sizeText, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** Serializable form of an entry — persisted to the model's sidecar. */
@@ -292,28 +295,28 @@ export class MeasureTool {
     // same stale-response hazard as handlePick: drop late results after a model switch
     const requestedModelId = this.modelId
     const requestedSession = this.session
+    // the click: where a B-spline's radius of curvature is asked, and the label of an R
+    const near = pick.point.toArray() as [number, number, number]
     try {
+      let size: Size | null = null
+      // an edge says its length too: "円エッジ ⌀8.000 (L=25.133)", "円弧 R5.000 (L=7.854)"
+      let length = ''
       if (pick.kind === 'edge') {
-        const info = await measureEdgeInfo(requestedModelId, toRef(pick))
-        if (this.modelId !== requestedModelId || this.session !== requestedSession) return
-        if (info.curve === 'circle' && info.diameter !== undefined && info.center) {
-          this.addFromData({
-            text: `${this.partPrefix(pick)}円エッジ ⌀${fmt(info.diameter)} (L=${fmt(info.length)})`,
-            labelText: `⌀${fmt(info.diameter)}`,
-            labelPos: info.center,
-          })
-        }
+        const info = await measureEdgeInfo(requestedModelId, toRef(pick), near)
+        size = edgeSize(info)
+        length = ` (L=${fmt(info.length)})`
       } else if (pick.kind === 'face') {
-        const info = await measureFaceInfo(requestedModelId, toRef(pick))
-        if (this.modelId !== requestedModelId || this.session !== requestedSession) return
-        if (info.surface === 'cylinder' && info.diameter !== undefined) {
-          this.addFromData({
-            text: `${this.partPrefix(pick)}円筒面 ⌀${fmt(info.diameter)}`,
-            labelText: `⌀${fmt(info.diameter)}`,
-            labelPos: pick.point.toArray() as [number, number, number],
-          })
-        }
+        size = faceSize(await measureFaceInfo(requestedModelId, toRef(pick), near))
       }
+      if (this.modelId !== requestedModelId || this.session !== requestedSession) return
+      if (!size) return
+      const tag = sizeText(size)
+      this.addFromData({
+        text: `${this.partPrefix(pick)}${size.name} ${tag}${size.local ? LOCAL_NOTE : ''}${length}`,
+        labelText: tag,
+        // a whole circle's label at its centre (a hole's middle), the rest where it was measured
+        labelPos: size.centre ?? size.at ?? near,
+      })
     } catch {
       /* info is best-effort; distance flow continues regardless */
     }
@@ -421,13 +424,4 @@ function toRef(pick: PickResult): EntityRef {
   // exact B-rep measurement. The id IS the 1-based TopTools vertex map index,
   // which the backend resolves to the exact vertex.
   return { partId: pick.partId, kind: pick.kind, id: pick.id }
-}
-
-function fmt(v: number): string {
-  return v.toFixed(3)
-}
-
-/** an angle: degrees, 3 decimals, with its ° */
-function fmtDeg(v: number): string {
-  return `${v.toFixed(3)}°`
 }

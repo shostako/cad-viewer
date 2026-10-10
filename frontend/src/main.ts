@@ -26,9 +26,10 @@ import { MeasureTool, type EntryData } from './measure'
 import { copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickResult } from './picking'
-import { DiameterCache, Preselect } from './preselect'
+import { Preselect, SizeCache } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { sizeText } from './sizes'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { PartTree } from './tree'
@@ -824,11 +825,11 @@ draftFolder
 const cursorTip = new CursorTip(document.body)
 const probe = new HoverProbe(viewport, cursorTip, underCursor)
 const preselect = new Preselect(viewer)
-// an answer for the entity under a still cursor: its label gets the ⌀ now
-const diameters = new DiameterCache(() => probe.refresh())
+// an answer for the entity under a still cursor: its label gets the ⌀ (R, SR, 勾配) now
+const sizeCache = new SizeCache(() => probe.refresh())
 probe.onStop(() => {
   preselect.hide()
-  diameters.rest(null)
+  sizeCache.rest(null)
   lastPickTip = null
   clearTimeout(hoverPickTimer)
   clearTimeout(rowPickTimer)
@@ -845,7 +846,7 @@ function underCursor(clientX: number, clientY: number): TipContent {
     }
   } else lastPickTip = null
   preselect.hide()
-  diameters.rest(null)
+  sizeCache.rest(null)
   // 計測 / 注記 point at faces, edges and vertices, not at parts: the row mark is for なし
   const markRow = !is2D && state.mode === 'なし' && partTree.hasRows
   partTree.markFrom3D(markRow ? partUnderCursor(clientX, clientY) : null)
@@ -900,11 +901,12 @@ function forgetHoverPick(): void {
 /**
  * 計測 / 注記: the pick a click here would make (the click's own call,
  * picker.pick at this point with the same snap radii), highlighted, and its
- * name as the measure list gives it, with the exact ⌀ of a circular edge or a
- * cylindrical face once the backend has told it. null (no highlight) where a
- * click picks no B-rep entity: off the model, while a measurement is in flight
- * (busy: the click is dropped), in 計測 on a mesh model (the click only says
- * it cannot measure), on a face of a mesh model (no entity to show).
+ * name as the measure list gives it, with the exact size of a curved edge or
+ * face (sizes.ts: ⌀, R, SR, 勾配) once the backend has told it. null (no
+ * highlight) where a click picks no B-rep entity: off the model, while a
+ * measurement is in flight (busy: the click is dropped), in 計測 on a mesh
+ * model (the click only says it cannot measure), on a face of a mesh model
+ * (no entity to show).
  */
 function pickUnderCursor(clientX: number, clientY: number): TipContent {
   const live = !measureTool.busy && (state.mode === '注記' || measureTool.available)
@@ -927,9 +929,9 @@ function pickTip(pick: PickResult | null): TipContent {
   if (!pick || pick.id < 1) return null // the caller hides the highlight
   preselect.show(pick, state.mode === '計測' ? measureTool.pendingPoint : null)
   if (!preselect.shown) return null
-  diameters.rest(pick)
-  const d = diameters.get(pick)
-  return { text: measureTool.label(pick) + (d === null ? '' : ` ⌀${d.toFixed(3)}`), kind: 'pick' }
+  sizeCache.rest(pick)
+  const size = sizeCache.get(pick)
+  return { text: measureTool.label(pick) + (size === null ? '' : ` ${sizeText(size)}`), kind: 'pick' }
 }
 // The value: the thickness, or the draft angle and its class. Read from the
 // triangle under the cursor by the rule that coloured it (the same vertex
@@ -1878,7 +1880,7 @@ async function loadFile(file: File): Promise<void> {
       thicknessLegend.classList.add('hidden')
       probe.stop()
       preselect.setModel([])
-      diameters.setModel(null)
+      sizeCache.setModel(null)
       thicknessHud = ''
       modeHud = ''
       modelSummary = ''
@@ -1952,8 +1954,8 @@ async function loadFile(file: File): Promise<void> {
         showEmpty(false)
         picker.setModel(model.parts)
         preselect.setModel(model.parts)
-        // a mesh model has no B-rep to ask for a diameter
-        diameters.setModel(meta.format === 'brep' ? meta.id : null)
+        // a mesh model has no B-rep to ask for a size
+        sizeCache.setModel(meta.format === 'brep' ? meta.id : null)
         measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         sectionRange()

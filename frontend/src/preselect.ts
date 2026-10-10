@@ -1,6 +1,6 @@
 /**
  * What a click would pick in 計測 / 注記, shown before the click (hover
- * preselection), and the exact diameter for its label.
+ * preselection), and the exact size (⌀, R, SR, 勾配) for its label.
  *
  * The highlight is light blue (水色), apart from the orange / yellow of the
  * measurements and the green of the notes: a face is tinted, an edge drawn
@@ -17,6 +17,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { measureEdgeInfo, measureFaceInfo } from './api'
 import type { PartData } from './model'
 import type { PickResult } from './picking'
+import { edgeSize, faceSize, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** 水色; #cursor-tip[data-kind='pick'] (style.css) frames the label in the same colour */
@@ -248,22 +249,24 @@ export class Preselect {
 
 const X_AXIS = new THREE.Vector3(1, 0, 0)
 
-/** ms the cursor stays on one face or edge before its diameter is asked for */
-export const DIAMETER_REST_MS = 150
+/** ms the cursor stays on one face or edge before its size is asked for */
+export const SIZE_REST_MS = 150
 
 /**
- * The exact diameter of a circular edge or a cylindrical face for the label,
- * from the backend (edge_info / face_info: the B-rep, not the display mesh).
- * Asked once the cursor has stayed on the entity for DIAMETER_REST_MS, not
- * for every entity it passes over, and once per entity of a model: the answer
- * (a diameter, or none: not circular, or the request failed) is kept until
- * another model is opened. `learned` is called when an answer comes for the
- * entity under the cursor.
+ * The exact size of a face or an edge for the label (sizes.ts: ⌀, R, SR,
+ * 勾配), from the backend (edge_info / face_info: the B-rep, not the display
+ * mesh). Only a size the whole face or edge has: the radius of curvature at a
+ * point of a B-spline is not asked for (it would change along it; a click
+ * tells it). Asked once the cursor has stayed on the entity for SIZE_REST_MS,
+ * not for every entity it passes over, and once per entity of a model: the
+ * answer (a size, or none: flat, or the request failed) is kept until another
+ * model is opened. `learned` is called when an answer comes for the entity
+ * under the cursor.
  */
-export class DiameterCache {
+export class SizeCache {
   private modelId: string | null = null
   /** per model (a new map on setModel: a late answer for the old model goes to the old map) */
-  private known = new Map<string, number | null>()
+  private known = new Map<string, Size | null>()
   private asked = new Set<string>()
   /** the face / edge the cursor is on; null: none (or a vertex) */
   private restKey: string | null = null
@@ -282,8 +285,8 @@ export class DiameterCache {
     this.asked = new Set()
   }
 
-  /** the diameter (mm) of a circular edge / cylindrical face; null: none, or not known yet */
-  get(pick: PickResult): number | null {
+  /** the size of the face / edge; null: none, or not known yet */
+  get(pick: PickResult): Size | null {
     return this.known.get(keyOf(pick)) ?? null
   }
 
@@ -301,13 +304,11 @@ export class DiameterCache {
       this.timer = undefined
       const known = this.known
       this.asked.add(key)
-      const answer =
-        ref.kind === 'edge'
-          ? measureEdgeInfo(modelId, ref).then((i) => (i.curve === 'circle' ? (i.diameter ?? null) : null))
-          : measureFaceInfo(modelId, ref).then((i) => (i.surface === 'cylinder' ? (i.diameter ?? null) : null))
+      // no click point: no radius of curvature at a point is asked for
+      const answer = ref.kind === 'edge' ? measureEdgeInfo(modelId, ref).then(edgeSize) : measureFaceInfo(modelId, ref).then(faceSize)
       void answer.then(
-        (d) => {
-          known.set(key, d)
+        (s) => {
+          known.set(key, s)
           if (known === this.known && this.restKey === key) this.learned()
         },
         // a failed request is no answer (the backend may be back): ask again
@@ -316,7 +317,7 @@ export class DiameterCache {
           if (known === this.known) this.asked.delete(key)
         },
       )
-    }, DIAMETER_REST_MS)
+    }, SIZE_REST_MS)
   }
 }
 
