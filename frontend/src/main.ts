@@ -21,6 +21,7 @@ import {
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
+import { foldButton } from './cardfold'
 import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_LABELS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
@@ -2371,6 +2372,13 @@ function renderMeasureList(): void {
 /** the rows on show, for すべてコピー */
 let listRows: RowView[] = []
 const measureCount = document.querySelector<HTMLSpanElement>('#measure-count')!
+// the title folds the card to its head: 計測, the count and すべてコピー (cardfold.ts)
+{
+  const title = document.querySelector<HTMLSpanElement>('#measure-title')!
+  const fold = foldButton(measurePanel, title, 'cad-viewer:measure-folded')
+  fold.id = 'measure-fold'
+  document.querySelector('#measure-head')!.prepend(fold)
+}
 const copyAll = document.querySelector<HTMLButtonElement>('#measure-copy-all')!
 function copyAllLabel(done: boolean): void {
   const text = document.createElement('span')
