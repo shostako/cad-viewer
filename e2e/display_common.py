@@ -196,7 +196,7 @@ class Disp:
         self.errors = []
 
     # -- loading and the GUI
-    def load(self, path, wait_text="tris"):
+    def load(self, path, wait_text="三角形"):
         self.page.set_input_files("#file-input", path)
         self.page.wait_for_function(
             "([w, n]) => { const t = document.querySelector('#hud-info').textContent;"

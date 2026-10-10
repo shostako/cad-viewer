@@ -20,7 +20,7 @@ with sync_playwright() as p:
 
     page.set_input_files("#file-input", STEP)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')",
+        "document.querySelector('#hud-info').textContent.includes('三角形')",
         timeout=60000,
     )
     page.wait_for_timeout(1000)
@@ -41,7 +41,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(500)
     page.screenshot(path="/tmp/cad_viewer_step_toggled.png")
 
-    assert "4 parts" in hud, hud
+    assert "4 部品" in hud, hud
     if errors:
         print("PAGE ERRORS:", errors)
     assert not errors

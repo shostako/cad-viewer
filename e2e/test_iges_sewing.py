@@ -33,14 +33,14 @@ with sync_playwright() as p:
     page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", IGES)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
     page.wait_for_timeout(800)
     print("HUD:", page.text_content("#hud-info"))
 
     labels = page.locator("#tree-panel label span").all_text_contents()
     print("tree:", labels)
     assert labels == ["ソリッド", "曲線（3 本）"], labels
-    assert "サイズ 10.0 × 20.0 × 30.0" in page.text_content("#hud-info")
+    assert "10.0 × 20.0 × 30.0 mm" in page.text_content("#hud-info"), page.text_content("#hud-info")
 
     # framing: the box's projected size on screen
     corners = [[x, y, z] for x in (0, 10) for y in (0, 20) for z in (0, 30)]

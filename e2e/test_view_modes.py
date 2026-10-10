@@ -31,7 +31,7 @@ with sync_playwright() as p:
     page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
 
-    def load(path, wait_text="tris"):
+    def load(path, wait_text="三角形"):
         page.set_input_files("#file-input", path)
         page.wait_for_function(
             "([w, n]) => { const t = document.querySelector('#hud-info').textContent;"
@@ -97,7 +97,7 @@ with sync_playwright() as p:
     with page.expect_file_chooser() as fc:
         page.click("#empty-open")
     fc.value.set_files(STEP)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
     check_3d()
 
     # 2. a drawing: 3D-only controls go away, the key help changes
@@ -116,7 +116,7 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('ヒートマップ表示中')", timeout=60000)
 
     mode_select().select_option("注記")
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     check_2d()
     assert selected_mode() == "なし", ("注記 must fall back to なし on a drawing", selected_mode())
     # 計測 still works on drawings
@@ -132,7 +132,7 @@ with sync_playwright() as p:
             has=page.locator(".lil-name", has_text=re.compile("^" + name))
         ).first.locator("input")
         assert not box.is_checked(), (name, "still on after a drawing")
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     check_2d()
     load(STEP)
     check_3d()
@@ -175,7 +175,7 @@ with sync_playwright() as p:
     # 6. the same with a drawing on screen: the old drawing must not stay
     #    visible (and clickable) under the card, and the 3D-only folders stay
     #    hidden only while a drawing is shown
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     # the drawing; its measurement layer (another svg over it) goes with it below
     assert page.locator("#viewport2d > svg:not(.overlay2d-layer)").count() == 1
     page.route("**/drawing.svg", lambda route: route.abort())
@@ -190,7 +190,7 @@ with sync_playwright() as p:
     assert not visible("#viewport2d")
     check_keys_3d = keys()
     assert "回転" in check_keys_3d, check_keys_3d  # the empty screen is the 3D one again
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     check_2d()
 
     page.screenshot(path="/tmp/cad_viewer_view_modes.png")

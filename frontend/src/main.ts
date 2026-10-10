@@ -16,7 +16,6 @@ import {
   __stallNextProjection,
   ProjectionSuperseded,
   type Axis as PullAxis,
-  type ModelMeta,
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
@@ -33,6 +32,7 @@ import { Picker, type FaceHit, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { PartTree } from './tree'
@@ -194,7 +194,19 @@ function updateTriad(): void {
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
   applyFolders(on)
+  applyEmptyPanel(on)
   placeCentreCards()
+}
+
+/**
+ * Before a file is open the panel holds only what can be set ahead: 表示
+ * (kept for the next file). The mode, the measurements, the image and the
+ * folders that work on a model (断面, 肉厚, 抜き勾配, 体積・重量) come with it;
+ * a drawing keeps its 3D folders hidden (show2D).
+ */
+function applyEmptyPanel(empty: boolean): void {
+  for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
+  for (const f of [sectionFolder, thicknessFolder, draftFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -269,7 +281,7 @@ const modeCtl = gui
     refreshToolbar()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
-gui.add(actions, 'clearMeasure').name('計測クリア')
+const clearCtl = gui.add(actions, 'clearMeasure').name('計測クリア')
 
 // ---- save the view as a PNG
 // The background choice survives a reload, like the view preferences.
@@ -290,7 +302,7 @@ function saveExportPrefs(): void {
 }
 // a select, not a checkbox: E2E scripts click the first checkbox of the panel.
 // Labelled 画像の背景 so nobody takes it for the screen's own background.
-gui
+const exportBgCtl = gui
   .add(exportPrefs, 'background', { 画面のまま: 'screen', 白: 'white' })
   .name('画像の背景')
   .onChange(saveExportPrefs)
@@ -584,7 +596,7 @@ sectionFolder
 // line (#hud-info) shows the model summary; the heatmap writes its own line,
 // which goes back to the summary when the heatmap goes away.
 
-/** the status line of the loaded model (name, parts, tris, size) */
+/** the status line of the loaded model (summary.ts: name, parts, triangles, size) */
 let modelSummary = ''
 /** the last 肉厚 line updateThickness wrote; put back to modelSummary when the heatmap goes away */
 let thicknessHud = ''
@@ -1431,6 +1443,7 @@ folderDefaults = new Map(
   [viewFolder, presetFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder].map((f) => [f, !f._closed]),
 )
 applyFolders(!contentShown)
+applyEmptyPanel(!contentShown)
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
@@ -1911,11 +1924,6 @@ function showTree(model: ModelData): void {
   }
 }
 
-function fmtBBox(meta: ModelMeta): string {
-  const d = meta.bbox.max.map((v, i) => v - meta.bbox.min[i])
-  return d.map((v) => v.toFixed(1)).join(' × ')
-}
-
 // generation token: a newer loadFile call supersedes older in-flight ones
 let loadGen = 0
 
@@ -1990,10 +1998,7 @@ async function loadFile(file: File): Promise<void> {
       treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {
-        const d = meta.bbox2d
-          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
-          : '?'
-        modelSummary = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+        modelSummary = drawingSummaryText(meta)
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
         sectionTool.enabled = false
@@ -2010,10 +2015,7 @@ async function loadFile(file: File): Promise<void> {
       show2D(false)
       // known from the upload already: the heatmap / draft can restore it at any
       // point of the load
-      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
-      modelSummary =
-        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
-        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
+      modelSummary = modelSummaryText(meta)
       // The mesh, the sidecar and the 体積・重量 values at once. The restored
       // measurement list and the values panel are panels the one fit of this
       // load must keep clear of, so both are wanted before the fit. (The

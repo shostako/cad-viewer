@@ -21,7 +21,7 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", STEP)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000
+        "document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000
     )
     page.wait_for_timeout(800)
 

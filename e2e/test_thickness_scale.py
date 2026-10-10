@@ -563,7 +563,7 @@ def run(page, nav, TAPER, FRUSTUM, INSIDE_OUT):
     assert not legend_shown(), "thickness legend under the draft colouring"
     toggle("色分け", False)
     heat_on()
-    nav.load(DXF, wait_text="2D図面")
+    nav.load(DXF, wait_text="2D 図面")
     assert not legend_shown(), "legend on a drawing"
     assert_hidden("drawing")
     nav.load(STL)

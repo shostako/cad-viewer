@@ -142,7 +142,7 @@ with nav_session() as n:
     assert not hidden(".lil-gui.lil-root")
 
     # ---- 6. a drawing: the toggle works there too
-    n.load(DXF, wait_text="2D図面", props="live")
+    n.load(DXF, wait_text="2D 図面", props="live")
     page.keyboard.press("h")
     n.settle()
     assert hidden(".lil-gui.lil-root") and not hidden("#panels-show")

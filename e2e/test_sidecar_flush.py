@@ -27,7 +27,7 @@ NOTE = f"flush検証{int(time.time())}"
 def load(page, path):
     page.set_input_files("#file-input", path)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')",
+        "document.querySelector('#hud-info').textContent.includes('三角形')",
         timeout=15000,
     )
 

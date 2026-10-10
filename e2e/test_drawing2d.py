@@ -21,7 +21,7 @@ with sync_playwright() as p:
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", DXF)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('2D図面')", timeout=60000
+        "document.querySelector('#hud-info').textContent.includes('2D 図面')", timeout=60000
     )
     hud = page.text_content("#hud-info")
     print("HUD:", hud)

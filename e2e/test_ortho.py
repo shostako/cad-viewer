@@ -313,7 +313,7 @@ try:
         grid(True)
 
         # ---- T7. 2D drawings hide the row; back in 3D the projection is kept --------
-        load(DXF, wait_text="2D図面")
+        load(DXF, wait_text="2D 図面")
         assert not ctl("投影").is_visible(), "the projection row must be hidden on a drawing"
         load(STEP)
         assert ctl("投影").is_visible()

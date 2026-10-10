@@ -203,7 +203,7 @@ try:
 
         # ---- the drawing on the dark page ------------------------------------------
         page.set_input_files("#file-input", DXF)
-        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D図面')", timeout=60000)
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D 図面')", timeout=60000)
         settle()
 
         def check_page(tag, img, origin=(0, 0), scale=1.0, white=False, cover=()):

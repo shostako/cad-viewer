@@ -240,7 +240,7 @@ class Nav:
         self.fit_view = None  # the camera at the last fit: the free area depends on its direction
         self.box = None  # the loaded model's box (KNOWN_BOXES, or given to load)
 
-    def load(self, path, wait_text="tris", props="frozen", box=None):
+    def load(self, path, wait_text="三角形", props="frozen", box=None):
         """Open a file and wait for its HUD text (set in the same task as the load fit).
 
         box: the model's (lo, hi), for the checks that are not given one;

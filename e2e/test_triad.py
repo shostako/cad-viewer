@@ -107,7 +107,7 @@ with nav_session() as n:
     assert box("#hud")["x"] == 12, box("#hud")
     load(STEP)
     assert triad_visible() and box("#hud")["x"] == 108, (box("#triad"), box("#hud"))
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     assert not triad_visible() and box("#hud")["x"] == 12, "hidden on a drawing"
     load(STEP)
     assert triad_visible()

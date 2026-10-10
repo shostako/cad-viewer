@@ -61,7 +61,7 @@ with sync_playwright() as p:
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
 
-    def load(path, done="tris"):
+    def load(path, done="三角形"):
         page.set_input_files("#file-input", path)
         page.wait_for_function(
             "([d, n]) => { const t = document.querySelector('#hud-info').textContent; return t.includes(d) && t.includes(n) }",
@@ -315,7 +315,7 @@ with sync_playwright() as p:
     print("8 over a model ok")
 
     # ---- 9. a drawing: its own list
-    load(DXF, done="2D図面")
+    load(DXF, done="2D 図面")
     page.click("#help-open")
     assert help_shown()
     keys = page.inner_text("#help-keys")

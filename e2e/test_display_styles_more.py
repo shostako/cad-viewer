@@ -210,7 +210,7 @@ with display_session() as d:
     d.load(d.mold)
     see_through("2 after a reload")
 
-    d.load(DXF, wait_text="2D図面")
+    d.load(DXF, wait_text="2D 図面")
     assert not d.ctl("表示スタイル").is_visible(), "表示スタイル is a 3D control"
     d.load(d.mold)
     assert d.style_label() == "半透明", d.style_label()

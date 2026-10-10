@@ -49,7 +49,7 @@ with sync_playwright() as p:
         page.wait_for_load_state("networkidle")
         page.set_input_files("#file-input", STEP)
         page.wait_for_function(
-            "document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000
+            "document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000
         )
         page.wait_for_timeout(500)
 
@@ -287,7 +287,7 @@ with sync_playwright() as p:
     tpage.wait_for_load_state("networkidle")
     tpage.set_input_files("#file-input", STEP)
     tpage.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000
+        "document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000
     )
     page = tpage  # helpers above read the module-level `page`
     ctl("回転方式").locator("select").select_option(label="自由回転")
