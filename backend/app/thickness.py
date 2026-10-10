@@ -17,10 +17,11 @@ ball — rolling ball / maximal tangent sphere: the largest sphere tangent to
        ~10 batched nearest-point queries; slower but honest at junctions.
 
 Both run on the display mesh, so they work for B-rep parts and plain mesh
-uploads alike. With `ball`, no sphere fits at a sharp corner or on a sharp
-edge: those vertices get 0, which the heatmap shows as "no data" (a sphere
-within the search's tolerance counts as none: it would read as a wall a few
-thousandths of a mm thin).
+uploads alike. With `ball`, no sphere fits at a vertex where the surface
+turns away (a corner, a convex edge however shallow, the flat strips of a
+convex curved surface): those vertices get 0, which the heatmap shows as
+"no data". The search's tolerance would let a small sphere "fit" there and
+read as a wall a fraction of a mm thin.
 """
 from __future__ import annotations
 
@@ -79,7 +80,8 @@ def vertex_thickness_ball(
     """Rolling-ball thickness per vertex (sphere diameter), float32.
 
     Vertices whose ray probe found nothing stay +inf; vertices where no
-    tangent sphere fits (a sharp corner or edge) get 0.
+    tangent sphere fits (a corner, a convex edge, a convex curved surface's
+    strips) get 0.
     """
     n_verts = len(positions)
     out = np.full(n_verts, np.inf, dtype=np.float32)
@@ -109,7 +111,8 @@ def vertex_thickness_ball(
     # binary search on sphere center depth t: sphere fits iff
     # nearest-surface distance from center >= t - tol
     lo = np.zeros(hit.sum())
-    hi = d_ray[hit].astype(np.float64) / 2.0
+    hi0 = d_ray[hit].astype(np.float64) / 2.0
+    hi = hi0.copy()
     for _ in range(iterations):
         mid = (lo + hi) / 2.0
         centers = p - n * mid[:, None]
@@ -118,9 +121,18 @@ def vertex_thickness_ball(
         lo = np.where(fits, mid, lo)
         hi = np.where(fits, hi, mid)
 
-    # a sphere no bigger than the tolerance passes the test anywhere (dist >=
-    # t - tol): where none fits (a corner, a sharp edge) the search ends in
-    # that band rather than at 0. Those have no value, as a corner has.
-    lo[lo <= 2.0 * tol] = 0.0
+    # What stopped the sphere: at the first size that did not fit (hi), the
+    # surface nearest its centre is what it ran into. Across the wall, that is
+    # about two radii from the vertex (a parallel wall: 2t, the wedge's bottom:
+    # 1.9t). Beside the vertex, within t of it, the sphere cut the face next to
+    # the vertex: a corner, a convex crease however shallow (the faces t·sin θ
+    # away), the flat strips of a convex curved surface. No sphere fits there;
+    # only the tolerance (dist >= t - tol) let one in, up to tol / (1 - cos θ):
+    # a wall a fraction of a mm thin that is not there (#63). No value.
+    blocked = np.flatnonzero((lo > 0) & (hi < hi0 * (1 - 1e-9)))
+    if blocked.size:
+        q, _, _ = pq.on_surface(p[blocked] - n[blocked] * hi[blocked][:, None])
+        beside = np.linalg.norm(q - p[blocked], axis=1) < 1.2 * hi[blocked]
+        lo[blocked[beside]] = 0.0
     out[hit] = (2.0 * lo).astype(np.float32)
     return out
