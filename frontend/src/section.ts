@@ -19,6 +19,7 @@
  * between writes the stencil, so the cut stays closed.
  */
 import * as THREE from 'three'
+import { onTheme, palette } from './theme'
 import type { Viewer } from './viewer'
 
 const CAP_COLOR = 0x9aa4b0
@@ -33,8 +34,7 @@ const NORMALS: Record<Axis, THREE.Vector3> = {
   Z: new THREE.Vector3(0, 0, -1),
 }
 const AXIS_INDEX: Record<Axis, number> = { X: 0, Y: 1, Z: 2 }
-/** the plane's frame: a thin outline just outside the model's cross-section */
-const FRAME_COLOR = 0xffd060
+/** the plane's frame: a thin outline just outside the model's cross-section, in the palette's sectionFrame */
 const FRAME_OPACITY = 0.55
 
 export class SectionTool {
@@ -57,6 +57,7 @@ export class SectionTool {
     this.viewer = viewer
     viewer.renderer.localClippingEnabled = true
     viewer.onDisplayStyleChange(() => this.styleCap())
+    onTheme((p) => (this.helper?.material as THREE.LineBasicMaterial | undefined)?.color.set(p.sectionFrame))
   }
 
   /** the model's extent along the axis: the plane's range (model units, mm) */
@@ -234,7 +235,7 @@ export class SectionTool {
       return p
     })
     const geo = new THREE.BufferGeometry().setFromPoints(corners)
-    const mat = new THREE.LineBasicMaterial({ color: FRAME_COLOR, transparent: true, opacity: FRAME_OPACITY })
+    const mat = new THREE.LineBasicMaterial({ color: palette().sectionFrame, transparent: true, opacity: FRAME_OPACITY })
     this.helper = new THREE.LineLoop(geo, mat)
     this.helper.name = 'section-frame'
     this.viewer.scene.add(this.helper)

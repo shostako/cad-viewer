@@ -24,6 +24,8 @@
   --cv-on-accent: #0b1220;
   /* meaning */
   --cv-measure: #ffd060;
+  /* the measure colour as a line or text on the panels and the 3D view (theme.ts ring) */
+  --cv-measure-ink: var(--cv-measure);
   --cv-pick: #55d6ff; /* what the cursor is on: preselect.ts PRESELECT_COLOR */
   --cv-pick-weak: rgba(85, 214, 255, 0.16);
   --cv-on-measure: #1d2126; /* text on a dimension's yellow label */
@@ -54,6 +56,56 @@
   /* the toolbar at the top of the right-hand column; the operation panel under it */
   --cv-toolbar-h: 36px;
   --cv-column-top: calc(var(--cv-edge) + var(--cv-toolbar-h) + 8px);
+  /* the 2D drawing's page on screen (theme.ts page2d), the drop zone's veil,
+     the triad's disc, lil-gui's focused widget, a pressed tool's fill */
+  --cv-page2d: var(--cv-scene);
+  --cv-veil: rgba(21, 25, 31, 0.6);
+  --cv-triad-bg: rgba(20, 24, 30, 0.35);
+  --cv-focus: #36404d;
+  --cv-accent-press: rgba(76, 154, 255, 0.26);
+  --cv-ink-strong: #ffffff;
+}
+
+/* 配色 ライト (theme.ts): the same roles on a light page. Text 4.5:1 or more
+   on the surfaces (--cv-text-3 on --cv-surface-sunk too), lines and marks 3:1
+   on the 3D background. The 3D / 2D views take theirs from theme.ts. */
+:root[data-theme='light'] {
+  color-scheme: light;
+  --cv-scene: #e4e8ed;
+  --cv-surface: rgba(255, 255, 255, 0.94);
+  --cv-surface-solid: #ffffff;
+  --cv-surface-sunk: #f1f3f6;
+  --cv-raised: #eef1f5;
+  --cv-hover: #e3e8ef;
+  --cv-border: #d3d9e1;
+  --cv-border-strong: #aeb8c5;
+  --cv-text: #1b2129;
+  --cv-text-2: #4a5564;
+  --cv-text-3: #657080;
+  --cv-accent: #1f6fd6;
+  --cv-accent-hover: #175bb3;
+  --cv-accent-weak: rgba(31, 111, 214, 0.12);
+  --cv-accent-line: rgba(31, 111, 214, 0.5);
+  --cv-on-accent: #ffffff;
+  --cv-measure: #f0b400;
+  --cv-measure-ink: #9a6a00;
+  --cv-pick: #0a87b8;
+  --cv-pick-weak: rgba(10, 135, 184, 0.14);
+  --cv-on-measure: #1d2126;
+  --cv-note: #2f8556;
+  --cv-note-bg: rgba(232, 245, 237, 0.96);
+  --cv-note-text: #14361f;
+  --cv-ok: #1f8a3c;
+  --cv-danger: #c93030;
+  --cv-danger-text: #b3261e;
+  --cv-warn: #8f6200;
+  --cv-shadow: 0 8px 24px rgba(20, 30, 45, 0.16);
+  --cv-page2d: #ffffff;
+  --cv-veil: rgba(255, 255, 255, 0.6);
+  --cv-triad-bg: rgba(255, 255, 255, 0.55);
+  --cv-focus: #dfe6ef;
+  --cv-accent-press: rgba(31, 111, 214, 0.2);
+  --cv-ink-strong: #1b2129;
 }
 
 * {
@@ -110,7 +162,7 @@ body,
   inset: 0;
   /* the 3D view's background (viewer.ts); a drawing's own page is made this
      colour too (drawing2d.ts PAGE_COLOUR) */
-  background: #1d2126;
+  background: var(--cv-page2d);
   touch-action: none;
   overflow: hidden;
 }
@@ -457,7 +509,7 @@ body,
   font-size: var(--cv-fs-xl);
   font-weight: 600;
   color: var(--cv-text);
-  background: rgba(21, 25, 31, 0.6);
+  background: var(--cv-veil);
   pointer-events: none;
   z-index: 10;
 }
@@ -791,7 +843,7 @@ body,
   display: grid;
   place-items: center;
   height: 20px;
-  color: var(--cv-measure);
+  color: var(--cv-measure-ink);
 }
 
 #measure-list li[data-kind='note'] .m-icon {
@@ -941,7 +993,7 @@ body,
 .pivot-marker {
   width: 14px;
   height: 14px;
-  border: 2px solid #ffd060;
+  border: 2px solid var(--cv-measure-ink);
   border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
   pointer-events: none;
@@ -1451,7 +1503,7 @@ body,
 }
 
 #triad .triad-bg {
-  fill: rgba(20, 24, 30, 0.35);
+  fill: var(--cv-triad-bg);
   pointer-events: none;
 }
 
@@ -1466,7 +1518,7 @@ body,
 }
 
 #triad .triad-end:hover circle {
-  stroke: #fff;
+  stroke: var(--cv-ink-strong);
   stroke-width: 2;
 }
 
@@ -1508,7 +1560,7 @@ body,
 }
 
 #undo-btn:hover {
-  background: rgba(76, 154, 255, 0.26);
+  background: var(--cv-accent-press);
 }
 
 /* ---- the operation panel (lil-gui), themed from the tokens through its own
@@ -1521,7 +1573,7 @@ body,
   --title-text-color: var(--cv-text-2);
   --widget-color: var(--cv-raised);
   --hover-color: var(--cv-hover);
-  --focus-color: #36404d;
+  --focus-color: var(--cv-focus);
   --number-color: var(--cv-accent);
   --string-color: var(--cv-text);
   --font-family: var(--cv-font);
@@ -1753,7 +1805,7 @@ body.panels-hidden #corner-br {
   top: -9px;
   width: 14px;
   height: 14px;
-  border: 2px solid var(--cv-measure);
+  border: 2px solid var(--cv-measure-ink);
   border-radius: 50%;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
 }
@@ -1764,8 +1816,8 @@ body.panels-hidden #corner-br {
   padding: 1px 6px;
   border-radius: var(--cv-r-sm);
   background: var(--cv-surface);
-  border: 1px solid var(--cv-measure);
-  color: var(--cv-measure);
+  border: 1px solid var(--cv-measure-ink);
+  color: var(--cv-measure-ink);
   font-family: var(--cv-font);
   font-size: var(--cv-fs-sm);
   line-height: 18px;
@@ -1801,7 +1853,7 @@ body.panels-hidden #corner-br {
   margin-left: auto;
 }
 .go-state {
-  color: var(--cv-measure);
+  color: var(--cv-measure-ink);
   white-space: nowrap;
 }
 /* the thickness row's state can be a sentence (閾値より薄い所は無い…): it wraps */

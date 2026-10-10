@@ -1,4 +1,5 @@
 """E2E: the empty-screen card, and 3D-only controls hidden on 2D drawings (A2).
+表示 stays on a drawing with 配色 alone (the drawing has the theme's page too).
 
 A failed load shows its own card (#load-card, see test_load_card.py) in place
 of the empty-screen card; closing it brings the empty-screen card back when
@@ -21,6 +22,8 @@ STEP = str(TESTDATA / "mini_mold.step")
 STL = str(TESTDATA / "ribbed_plate.stl")
 DXF = str(TESTDATA / "plate_drawing.dxf")
 FOLDERS_3D = ["表示", "断面", "肉厚", "抜き勾配", "体積・重量"]
+# hidden on a drawing (表示 stays, with 配色 alone)
+FOLDERS_3D_ONLY = ["断面", "肉厚", "抜き勾配", "体積・重量"]
 
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
@@ -71,13 +74,29 @@ with sync_playwright() as p:
     def check_3d():
         for f in FOLDERS_3D:
             assert folder_visible(f), ("3D folder hidden", f)
+        rows = view_rows()
+        assert {"表示スタイル", "投影", "配色", "視点"} <= set(rows), ("表示 on a model: its rows back", rows)
         assert not note_disabled()
         assert "回転" in keys() and "ダブルクリック" in keys(), keys()
         assert not visible("#empty-hint")
 
+    def view_rows():
+        """the rows of 表示 on screen (opened first): its controllers' names and its sub-folders' titles"""
+        gui_common.open_folder(page, "表示")
+        return page.evaluate(
+            """() => {
+                const f = [...document.querySelectorAll('.lil-gui .lil-title')].find((t) => t.textContent.trim() === '表示').parentElement
+                const vis = (e) => e.getClientRects().length > 0
+                return [...f.querySelectorAll('.lil-controller .lil-name, .lil-gui .lil-title')]
+                  .filter((e) => vis(e) && e.textContent.trim() !== '表示').map((e) => e.textContent.trim())
+            }"""
+        )
+
     def check_2d():
-        for f in FOLDERS_3D:
+        for f in FOLDERS_3D_ONLY:
             assert not folder_visible(f), ("3D folder shown on a drawing", f)
+        assert folder_visible("表示")
+        assert view_rows() == ["配色"], ("表示 on a drawing: 配色 alone", view_rows())
         assert folder_visible("操作")
         assert note_disabled(), "注記 must be disabled on a drawing"
         k = keys()

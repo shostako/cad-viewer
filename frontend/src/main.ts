@@ -49,6 +49,7 @@ import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, typ
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
 import { Toolbar, type Mode } from './toolbar'
+import { THEME_CHOICES, setThemeChoice, themeChoice, type ThemeChoice } from './theme'
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
@@ -185,7 +186,8 @@ let is2D = false
 /**
  * Switch between the 3D view and a 2D drawing. In 2D the 3D-only controls are
  * hidden (view, section, thickness, volume) and 注記 is disabled: the drawing
- * viewer only measures.
+ * viewer only measures. 表示 stays with its 配色 alone (the drawing has the
+ * theme's page too).
  */
 function show2D(on: boolean): void {
   is2D = on
@@ -193,7 +195,9 @@ function show2D(on: boolean): void {
   viewport.classList.toggle('hidden', on)
   treePanel.classList.toggle('hidden', on || !partTree.hasRows)
   // 表示 always in 3D; the model's folders only while the panel is for a model (applyEmptyPanel)
-  for (const f of folders3D) f.show(!on && (f === viewFolder || modelPanel))
+  for (const f of folders3D) f.show(f === viewFolder || (!on && modelPanel))
+  for (const c of viewFolder.controllers) c.show(c === themeCtl || (!on && (c !== speedCtl || viewPrefs.autoRotate)))
+  presetFolder.show(!on)
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
@@ -798,6 +802,13 @@ viewFolder
   .add(viewPrefs, 'digits', Object.fromEntries(Array.from({ length: DIGITS_MAX - DIGITS_MIN + 1 }, (_, i) => [`小数 ${i + DIGITS_MIN} 桁`, i + DIGITS_MIN])))
   .name('計測の桁')
   .onChange(applyShown)
+// 配色 (theme.ts): ダーク (as it always was), ライト, or the PC's own setting.
+// Kept in this browser on its own key: index.html reads it before the first paint.
+const themePrefs = { theme: themeChoice() }
+const themeCtl = viewFolder
+  .add(themePrefs, 'theme', THEME_CHOICES)
+  .name('配色')
+  .onChange((v: ThemeChoice) => setThemeChoice(v))
 /** show the measured numbers again in the unit and decimals chosen */
 function applyShown(): void {
   setShown(viewPrefs.unit, viewPrefs.digits)

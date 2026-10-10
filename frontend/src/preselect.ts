@@ -18,10 +18,12 @@ import { measureEdgeInfo, measureFaceInfo, measureVertexInfo } from './api'
 import type { PartData } from './model'
 import type { PickResult } from './picking'
 import { edgeSize, faceSize, showPoint, showSize, unitTag, type Size } from './sizes'
+import { onTheme, palette } from './theme'
 import type { Viewer } from './viewer'
 
-/** 水色; #cursor-tip[data-kind='pick'] (style.css) frames the label in the same colour */
-export const PRESELECT_COLOR = 0x55d6ff
+// The preselection's colour is the palette's pick colour (theme.ts), 水色 on
+// the dark page: #cursor-tip[data-kind='pick'] (style.css --cv-pick) frames
+// the label in the same colour.
 /** a face's tint: lit like the parts, so it reads as light blue over any part colour (red pins too) */
 const FACE_OPACITY = 0.7
 /** CSS px */
@@ -65,7 +67,7 @@ export class Preselect {
     viewer.cues.add(this.group)
 
     this.faceMaterial = new THREE.MeshStandardMaterial({
-      color: PRESELECT_COLOR,
+      color: palette().pick,
       metalness: 0.1,
       roughness: 0.65,
       side: THREE.DoubleSide,
@@ -82,14 +84,14 @@ export class Preselect {
     // depth test would be cut down to a hairline along a concave edge (the
     // faces beside it are nearer), and the whole of the edge is what a click takes.
     this.edgeMaterial = new LineMaterial({
-      color: PRESELECT_COLOR,
+      color: palette().pick,
       linewidth: EDGE_WIDTH,
       transparent: true,
       depthTest: false,
       depthWrite: false,
     })
     const ringMaterial = new THREE.MeshBasicMaterial({
-      color: PRESELECT_COLOR,
+      color: palette().pick,
       side: THREE.DoubleSide,
       transparent: true,
       depthTest: false,
@@ -110,7 +112,7 @@ export class Preselect {
     // the dotted line: a unit segment along +X, placed and stretched from the
     // first point to the candidate, so moving it writes no buffer
     this.dashMaterial = new LineMaterial({
-      color: PRESELECT_COLOR,
+      color: palette().pick,
       linewidth: DASH_WIDTH,
       dashed: true,
       dashSize: DASH_PX,
@@ -135,6 +137,9 @@ export class Preselect {
       this.dashMaterial.dashScale = this.dash.scale.x / this.viewer.worldPerPixel(mid)
     }
     this.group.add(this.dash)
+    onTheme((p) => {
+      for (const m of [this.faceMaterial, this.edgeMaterial, this.ring.material as THREE.MeshBasicMaterial, this.dashMaterial]) m.color.set(p.pick)
+    })
   }
 
   /** The parts of a new model (none: an empty screen or a drawing). Drops what was drawn. */
