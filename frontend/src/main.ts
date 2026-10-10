@@ -772,6 +772,9 @@ probe.onStop(() => {
   diameters.rest(null)
   lastPickTip = null
   clearTimeout(hoverPickTimer)
+  clearTimeout(rowPickTimer)
+  lastRowPart = null
+  rowPickReady = 0
   partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
@@ -786,10 +789,33 @@ function underCursor(clientX: number, clientY: number): TipContent {
   diameters.rest(null)
   // 計測 / 注記 point at faces, edges and vertices, not at parts: the row mark is for なし
   const markRow = !is2D && state.mode === 'なし' && partTree.hasRows
+  partTree.markFrom3D(markRow ? partUnderCursor(clientX, clientY) : null)
+  // the value is read off the triangle under the cursor
   const giveValue = !is2D && colorOwner !== 'none'
-  const hit = markRow || giveValue ? picker.faceHit(toNdc(clientX, clientY)) : null
-  partTree.markFrom3D(markRow && hit ? hit.partId : null)
-  return giveValue ? valueAt(hit) : null
+  return giveValue ? valueAt(picker.faceHit(toNdc(clientX, clientY))) : null
+}
+/**
+ * The part whose row the tree marks: the one the view draws under the cursor
+ * (Picker.partAt: a drawn line first, as a click takes it, so a curve-only
+ * part and, in 半透明 / ワイヤーフレーム, an edge behind another part count).
+ * Those styles scan every drawn line: as for the 計測 hover, after a scan
+ * that took a while the next waits HOVER_PICK_WAIT times as long, and the
+ * last part stays marked meanwhile.
+ */
+let rowPickReady = 0
+let rowPickTimer: ReturnType<typeof setTimeout> | undefined
+let lastRowPart: number | null = null
+function partUnderCursor(clientX: number, clientY: number): number | null {
+  const now = performance.now()
+  if (viewer.seeThrough && now < rowPickReady) {
+    clearTimeout(rowPickTimer)
+    rowPickTimer = setTimeout(() => probe.refresh(), rowPickReady - now)
+    return lastRowPart
+  }
+  lastRowPart = picker.partAt(toNdc(clientX, clientY))
+  const end = performance.now()
+  rowPickReady = viewer.seeThrough ? end + HOVER_PICK_WAIT * (end - now) : 0
+  return lastRowPart
 }
 /**
  * In 半透明 / ワイヤーフレーム a pick scans every drawn edge and vertex

@@ -691,6 +691,11 @@ export class Viewer {
     return this.partEdges.has(partId)
   }
 
+  /** the part is loose curves, drawn as lines in every style */
+  hasCurveLines(partId: number): boolean {
+    return this.partCurves.has(partId)
+  }
+
   /**
    * Switch how the model is drawn. Only material flags, uniforms and
    * visibility change: no geometry is built, and nothing is added per frame.

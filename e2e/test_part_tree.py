@@ -253,6 +253,32 @@ with nav_session() as n:
     base = rgb_at(pts)
     print("5 3D hover ok, seen", seen)
 
+    # ---- 5b. ワイヤーフレーム: a drawn line under the cursor marks its part's row, also
+    #      behind another part (as a click takes it: Codex on #35)
+    plate_id = n.pick(pts["plate"])["partId"]
+    block_id = n.pick(pts["block"])["partId"]
+    behind = None
+    for x in (40, 45, 50, 55, 60):
+        xy = n.project((x, 60, 15))  # the plate's back top edge, behind the block from here
+        h = n.pick(xy)
+        if h and h["partId"] == block_id:  # shaded: the block's face is in front there
+            behind = xy
+            break
+    assert behind, "5b no point of the plate's back edge behind the block"
+    n.ctl("表示スタイル").locator("select").select_option("ワイヤーフレーム")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    n.settle()
+    h = n.pick(behind)
+    assert h and h["kind"] == "edge" and h["partId"] == plate_id, ("5b a click there takes the plate's edge", h)
+    page.mouse.move(*behind)
+    n.settle()
+    n.settle()
+    assert marked() == [ROWS["plate"]], ("5b the drawn edge's part, not the block in front", marked())
+    page.mouse.move(*away)
+    n.ctl("表示スタイル").locator("select").select_option("陰影＋稜線")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    n.settle()
+
     # ---- 6. これだけ表示, 全部表示 -------------------------------------------------
     show_all = page.get_by_role("button", name="全部表示", exact=True)
     assert show_all.is_disabled(), "6 全部表示 with every part shown"
@@ -423,6 +449,12 @@ with nav_session() as n:
     a2 = amber_count()
     print("11 amber pixels", a0, a1, a2)
     assert a0 > 100 and a1 < 0.2 * a0 and abs(a2 - a0) <= 0.02 * a0, ("11 the curves' highlight", a0, a1, a2)
+    # the cursor on a curve in the 3D view (陰影＋稜線: a curve has no face to hit) marks its row
+    page.mouse.move(*n.project((-30, 0, 0)))  # on the x axis line, clear of the box
+    n.settle()
+    n.settle()
+    assert marked() == [("曲線（3 本）", "")], ("11 the curve under the cursor marks its row", marked())
+    page.mouse.move(*away)
 
     page.screenshot(path="/tmp/cad_viewer_part_tree.png")
     print("PART TREE E2E OK")
