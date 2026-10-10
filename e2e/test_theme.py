@@ -78,6 +78,16 @@ def near(px, col, tol=6):
     return all(abs(int(a) - b) <= tol for a, b in zip(px, col))
 
 
+def dist(a, b):
+    return sum(abs(int(x) - y) for x, y in zip(a, b))
+
+
+def like(px, want, other, tol=48):
+    """a thin line's pixel: within tol of its colour, and nearer it than the other
+    theme's (a 1 px line blends with what is behind it on some GPUs)"""
+    return near(px, want, tol) and dist(px, want) < dist(px, other)
+
+
 with nav_session() as n:
     page = n.page
     page.set_viewport_size({"width": 1280, "height": 800})
@@ -128,9 +138,10 @@ with nav_session() as n:
         pa, pb, q1, q3 = dimension(img)
         for p in (pa, pb):
             assert near(at(img, p), marker), (what, "an end point", at(img, p), marker)
+        other = LIGHT_DIM if dim == DARK_DIM else DARK_DIM
         for q in (q1, q3):
             c = closest(img, q, dim)
-            assert near(c, dim, 10), (what, "the line", c, dim)
+            assert like(c, dim, other), (what, "the line", c, dim)
         return img
 
     # ---- the default: ダーク, as always
@@ -219,7 +230,7 @@ with nav_session() as n:
         return c
 
     c = edge_under_cursor(LIGHT_PICK)
-    assert near(c, LIGHT_PICK, 10), ("light: the edge under the cursor", c)
+    assert like(c, LIGHT_PICK, DARK_PICK), ("light: the edge under the cursor", c)
     pf = None
     for p in FIRSTS:
         q = n.project(p)
@@ -243,7 +254,7 @@ with nav_session() as n:
     page.keyboard.press("Escape")
     n.settle()
     c = edge_under_cursor(DARK_PICK)
-    assert near(c, DARK_PICK, 10), ("dark again: the edge under the cursor", c)
+    assert like(c, DARK_PICK, LIGHT_PICK), ("dark again: the edge under the cursor", c)
     print("4 the first point, the saved dimension and the edge under the cursor repainted both ways")
 
     # ---- 半透明 on the light page: the edge lines stay dark
@@ -255,7 +266,8 @@ with nav_session() as n:
     away()
     pe = n.project(EDGE_MID)
     c = closest(shot(), pe, EDGE, 3)
-    assert near(c, EDGE, 24), ("light 半透明: a dark edge", c)
+    # lifted for the dark page it would be the plate's grey (about 150 a channel)
+    assert near(c, EDGE, 48), ("light 半透明: a dark edge", c)
     gui_common.ctl(page, "表示スタイル").locator("select").select_option(label="陰影＋稜線")
     page.evaluate("document.activeElement && document.activeElement.blur()")
     n.settle()
