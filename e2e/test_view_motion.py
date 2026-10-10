@@ -139,6 +139,39 @@ with nav_session() as n:
     print("4 after ← mid-way", [round(x, 4) for x in d], round(angle(d, front), 2))
     assert 4.5 <= angle(d, front) <= 5.5 and abs(d[2]) < 1e-6, ("4 5 degrees from 正面", d)
 
+    # ---- 4b. 投影 switched while a fit moves: the fit still counts (H fits again);
+    #      a double-click while a preset moves: the preset first (Codex on #41)
+    for _ in range(3):
+        page.keyboard.press("ArrowLeft")
+    n.settle()
+    page.evaluate(
+        "() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f' }));"
+        " const s = [...document.querySelectorAll('.lil-controller')].find(c => c.querySelector('.lil-name')?.textContent === '投影').querySelector('select');"
+        " s.value = '平行'; s.dispatchEvent(new Event('change')) }"
+    )
+    page.wait_for_timeout(600)
+    assert n.view()["projection"] == "orthographic", n.view()["projection"]
+    page.keyboard.press("h")
+    page.wait_for_timeout(600)
+    n.mark_fit()
+    print("4b H after a switch mid-fit", n.fill_check(*MOLD, "refit after a switch mid-fit", fallback=False))
+    page.keyboard.press("h")
+    page.wait_for_timeout(600)
+    n.set_projection("透視")
+    n.settle()
+    press_preset("等角")
+    n.settle()
+    centre = n.project((50, 30, 20))
+    # 正面 clicked, and a real double-click straight after (well inside its 0.3 s)
+    page.evaluate("() => [...document.querySelectorAll('.lil-controller button')].find(b => b.textContent.trim() === '正面').click()")
+    page.mouse.dblclick(*centre)
+    assert page.evaluate("!!document.querySelector('.pivot-marker')"), "4b the double-click must set a rotation centre"
+    page.wait_for_timeout(700)
+    d = direction(n.view())
+    assert angle(d, [0, -1, 0]) < 1e-6, ("4b a double-click mid-preset: the preset first", d)
+    press_preset("等角")
+    n.settle()
+
     # ---- 5. a load frames at once: watched from before the load, every frame
     #      after 読み込み中 has gone is the same pose
     # (kept on window: evaluate would wait for the promise, before the load ran)
