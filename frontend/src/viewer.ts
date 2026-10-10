@@ -11,6 +11,31 @@ import type { ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
 import { thicknessColors } from './thickness'
 
+/**
+ * The room's soft light, from every side but unevenly: three.js's
+ * RoomEnvironment (r185) seen from its centre, as spherical harmonics. Made
+ * once: a CubeCamera at the room's centre renders it into a 512 px half-float
+ * WebGLCubeRenderTarget, and LightProbeGenerator.fromCubeRenderTarget turns
+ * that into the probe's coefficients (256 px gives the same to 0.5 %). The
+ * room is grey, so each term is one number for r, g and b.
+ *
+ * The room is built +Y up and is left so on the +Z-up model: the top faces get
+ * its big panel, the four sides each a different share, the bottom the least.
+ * Turned to put its ceiling over the model, the big panel lit the front as
+ * much as the top.
+ *
+ * Numbers, not the room itself: made at start-up the probe needs a cube render
+ * and a read-back that lands after the first frames. As an environment map
+ * the room also reflects (a grey sheen), but that doubled the cost of a frame
+ * in software rendering (the E2E) for little to see on a moulded part.
+ */
+const ROOM_SH = [3.7886, 1.7412, 1.5959, 0.2548, 0.189, 1.0426, 1.196, -0.342, -0.6349]
+/** the lights (see the constructor): the room, the sky / ground, the key and the fill */
+const ROOM_INTENSITY = 0.35
+const HEMI_INTENSITY = 0.35
+const KEY_INTENSITY = 1.05
+const FILL_INTENSITY = 0.3
+
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
 /** loose curves (parts with no faces) — the dark edge color would vanish on the background */
@@ -293,12 +318,16 @@ export class Viewer {
       downAt.clear()
     })
 
-    // CAD-ish lighting: hemisphere + key + fill
-    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, 1.2))
-    const key = new THREE.DirectionalLight(0xffffff, 1.4)
+    // Lighting: a soft room around the model (ROOM_SH: faces that look
+    // different ways read apart) under a key light for the shape and a dim fill
+    const room = new THREE.SphericalHarmonics3()
+    ROOM_SH.forEach((v, i) => room.coefficients[i].setScalar(v))
+    this.scene.add(new THREE.LightProbe(room, ROOM_INTENSITY))
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x445566, HEMI_INTENSITY))
+    const key = new THREE.DirectionalLight(0xffffff, KEY_INTENSITY)
     key.position.set(1, -1.5, 2)
     this.scene.add(key)
-    const fill = new THREE.DirectionalLight(0xffffff, 0.5)
+    const fill = new THREE.DirectionalLight(0xffffff, FILL_INTENSITY)
     fill.position.set(-1.5, 1, -1)
     this.scene.add(fill)
 

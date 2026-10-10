@@ -59,9 +59,13 @@ with nav_session(boxes=("runner",)) as n:
                window.__sampling = true; requestAnimationFrame(tick) }""",
             P,
         )
+        # no marker left from before: the one awaited below is this click's
+        page.wait_for_selector(".pivot-marker", state="detached", timeout=2000)
         page.mouse.dblclick(*cur)
-        assert marker_rect() is not None, "marker must show"
-        page.wait_for_timeout(450)  # the slide takes 250 ms; the marker stays 1 s
+        # the marker enters the page with the next drawn frame (on a loaded machine, after the
+        # double-click has returned) and stays 1 s from the click: read at most 500 + 300 ms in
+        page.wait_for_selector(".pivot-marker", state="attached", timeout=500)
+        page.wait_for_timeout(300)  # the slide (250 ms from the click) is over
         m = marker_rect()
         assert m and math.dist(m, centre) <= 3, (mode, "marker", m)
         page.wait_for_timeout(250)
