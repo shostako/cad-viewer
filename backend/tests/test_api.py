@@ -149,8 +149,9 @@ def test_store_lru_eviction_and_dedup(client):
         s.add(ModelEntry(model_id=f"m{i}", name=f"n{i}", fmt="mesh", meta={}, extra={"hash": f"h{i}"}))
     assert s.get("m0") is None and s.get("m1") is None  # evicted
     assert s.get("m4") is not None
-    assert s.get_by_hash("h0") is None  # hash index cleaned up
-    assert s.get_by_hash("h3").model_id == "m3"
+    assert s.get_by_hash("h0", "n0") is None  # hash index cleaned up
+    assert s.get_by_hash("h3", "n3").model_id == "m3"
+    assert s.get_by_hash("h3", "n4") is None  # the same content under another name is another entry
 
 
 def test_upload_dedup_same_content(client):
@@ -184,6 +185,9 @@ def test_upload_same_content_another_name(client):
     assert _mesh_header(client, first["id"])["parts"][0]["name"] == "first.stl"
     again = client.post("/api/models", files={"file": ("second.stl", stl, "model/stl")}).json()
     assert again["id"] == second["id"], "the same bytes under the same name must reuse the entry"
+    # back to the first name: its entry is still there and is reused (no third copy)
+    back = client.post("/api/models", files={"file": ("first.stl", stl, "model/stl")}).json()
+    assert back["id"] == first["id"], (back, first)
 
 
 @pytest.mark.skipif(not STEP_ASSEMBLY.exists(), reason="run testdata/make_step_assembly.py first")

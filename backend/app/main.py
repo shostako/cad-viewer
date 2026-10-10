@@ -62,8 +62,8 @@ async def upload_model(file: UploadFile) -> dict:
     # of duplicating. Under another name it is read again (a B-rep from the
     # disk cache): the name is what the status line and the browser tab show,
     # and a mesh's one part is named after its file
-    existing = store.get_by_hash(content_hash)
-    if existing is not None and existing.fmt == route and existing.name == name:
+    existing = store.get_by_hash(content_hash, name)
+    if existing is not None and existing.fmt == route:
         return {
             "id": existing.model_id,
             "name": existing.name,

@@ -2,8 +2,9 @@
 
 Entries can be heavy (packed mesh blob, raw file bytes, OCCT shapes), so the
 store keeps at most MAX_ENTRIES models — least-recently-used beyond that are
-evicted. Re-uploading identical content reuses the existing entry instead of
-duplicating it.
+evicted. Re-uploading identical content under the same name reuses the
+existing entry instead of duplicating it (the index is keyed by the content
+hash and the name: the name is shown, and names a mesh's one part).
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ class ModelStore:
     def __init__(self, max_entries: int = MAX_ENTRIES) -> None:
         self._lock = threading.Lock()
         self._models: OrderedDict[str, ModelEntry] = OrderedDict()
-        self._by_hash: dict[str, str] = {}
+        self._by_hash: dict[tuple[str, str], str] = {}
         self._max = max_entries
 
     def add(self, entry: ModelEntry) -> None:
@@ -44,7 +45,7 @@ class ModelStore:
             self._models.move_to_end(entry.model_id)
             content_hash = entry.extra.get("hash")
             if content_hash:
-                self._by_hash[content_hash] = entry.model_id
+                self._by_hash[(content_hash, entry.name)] = entry.model_id
             while len(self._models) > self._max:
                 _mid, evicted = self._models.popitem(last=False)
                 self._drop_hash(evicted)
@@ -56,9 +57,10 @@ class ModelStore:
                 self._models.move_to_end(model_id)
             return entry
 
-    def get_by_hash(self, content_hash: str) -> ModelEntry | None:
+    def get_by_hash(self, content_hash: str, name: str) -> ModelEntry | None:
+        """the entry of this content opened under this name, if it is still here"""
         with self._lock:
-            model_id = self._by_hash.get(content_hash)
+            model_id = self._by_hash.get((content_hash, name))
             if model_id is None:
                 return None
             entry = self._models.get(model_id)
@@ -74,8 +76,9 @@ class ModelStore:
 
     def _drop_hash(self, entry: ModelEntry) -> None:
         content_hash = entry.extra.get("hash")
-        if content_hash and self._by_hash.get(content_hash) == entry.model_id:
-            del self._by_hash[content_hash]
+        key = (content_hash, entry.name)
+        if content_hash and self._by_hash.get(key) == entry.model_id:
+            del self._by_hash[key]
 
     def list_meta(self) -> list[dict[str, Any]]:
         with self._lock:
