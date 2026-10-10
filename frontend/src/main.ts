@@ -7,11 +7,14 @@ import {
   fetchDrawingSvg,
   fetchThickness,
   fetchProperties,
+  fetchProjectedArea,
   getSidecar,
   putSidecar,
   __stallNextMeasure,
   __stallNextSidecar,
   __stallNextProperties,
+  __stallNextProjection,
+  type Axis as PullAxis,
   type ModelMeta,
   type ModelProperties,
 } from './api'
@@ -127,6 +130,7 @@ const partTree = new PartTree(treePanel, {
   setVisible: (changes) => {
     for (const [id, on] of changes) viewer.setPartVisible(id, on)
     propsPanel.refresh()
+    updateProjection()
     probe.refresh() // a part under a still cursor may have gone (its row mark, its value)
   },
   highlight: (ids) => viewer.setHighlight(ids),
@@ -802,6 +806,7 @@ draftFolder
     // the arrows on the still-focused select move the view (isTextEntry)
     saveDraftPrefs()
     updateDraft()
+    updateProjection() // the clamping force's projected area follows the direction
   })
 draftFolder
   .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
@@ -977,11 +982,17 @@ function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
 }
 
 // ---- volume / area / weight
-// Resin and specific gravity survive a reload, like the view preferences.
+// Resin, specific gravity and cavity pressure survive a reload, like the view
+// preferences.
 const PROPS_PREFS_KEY = 'cad-viewer:props'
-const propsPrefs = { resin: 'PMMA', density: RESIN_DENSITY.PMMA }
+/** cavity pressure (MPa) for the clamping force: the default, and the range accepted */
+const PRESSURE_DEFAULT = 40
+const PRESSURE_MAX = 500
+const propsPrefs = { resin: 'PMMA', density: RESIN_DENSITY.PMMA, pressure: PRESSURE_DEFAULT }
 try {
   const saved = JSON.parse(localStorage.getItem(PROPS_PREFS_KEY) ?? '{}')
+  const p = saved.pressure
+  if (typeof p === 'number' && Number.isFinite(p) && p > 0 && p <= PRESSURE_MAX) propsPrefs.pressure = p
   if (RESIN_NAMES.includes(saved.resin)) {
     propsPrefs.resin = saved.resin
     propsPrefs.density = RESIN_DENSITY[saved.resin]
@@ -1271,6 +1282,71 @@ function applyDensity(): void {
   savePropsPrefs()
 }
 applyDensity()
+// the clamping force: projected area (along the 抜き勾配 direction) x this
+const pressureCtl = propsFolder
+  .add(propsPrefs, 'pressure')
+  .min(0.1)
+  .max(PRESSURE_MAX)
+  .step(0.1)
+  .name('型内圧 (MPa)')
+  .onChange(() => {
+    // lil-gui clamps to min..max; an emptied field reads as NaN
+    if (!Number.isFinite(propsPrefs.pressure) || propsPrefs.pressure <= 0) {
+      propsPrefs.pressure = PRESSURE_DEFAULT
+      pressureCtl.updateDisplay()
+    }
+    propsPanel.setPressure(propsPrefs.pressure)
+    savePropsPrefs()
+  })
+propsPanel.setPressure(propsPrefs.pressure)
+
+// ---- projected area along the mold-opening direction (for the clamping force)
+// Asked again when the visible parts or the direction change; the latest
+// request wins, and answers are kept per model, axis and set of parts.
+const PROJECTION_DEBOUNCE_MS = 150
+let projectionRequest = 0
+let projectionTimer: ReturnType<typeof setTimeout> | undefined
+const projectionCache = new Map<string, number>()
+function pullAxis(): PullAxis {
+  return draftState.dir[1] as PullAxis
+}
+/** no rows, and no answer in flight or waiting to be asked will bring them back (teardown) */
+function cancelProjection(): void {
+  clearTimeout(projectionTimer)
+  projectionRequest++
+  propsPanel.setProjection(null)
+}
+function updateProjection(): void {
+  const modelId = currentModelId
+  if (!modelId || is2D || !viewer.hasFaces()) {
+    cancelProjection()
+    return
+  }
+  clearTimeout(projectionTimer)
+  const n = ++projectionRequest
+  const axis = pullAxis()
+  const ids = [...viewer.getPartMeshes().keys()].filter((id) => viewer.isPartVisible(id)).sort((a, b) => a - b)
+  const key = `${modelId}:${axis}:${ids.join(',')}`
+  const known = projectionCache.get(key)
+  if (known !== undefined) {
+    propsPanel.setProjection({ state: 'ok', axis, area: known })
+    return
+  }
+  propsPanel.setProjection({ state: 'loading', axis })
+  // a tree group toggles its children one by one: ask once they are all set
+  projectionTimer = setTimeout(() => {
+    fetchProjectedArea(modelId, axis, ids).then(
+      (r) => {
+        projectionCache.set(key, r.area)
+        if (n === projectionRequest) propsPanel.setProjection({ state: 'ok', axis, area: r.area })
+      },
+      (e: unknown) => {
+        if (n === projectionRequest)
+          propsPanel.setProjection({ state: 'error', axis, message: e instanceof Error ? e.message : String(e) })
+      },
+    )
+  }, PROJECTION_DEBOUNCE_MS)
+}
 
 // ---- the toolbar (top of the right-hand column) and its keys M N S W
 function setMode(mode: Mode): void {
@@ -1884,6 +1960,7 @@ async function loadFile(file: File): Promise<void> {
       modelSummary = ''
       modelProps = null
       propsPanel.hide()
+      cancelProjection()
       // Clear the stale 3D scene for BOTH branches: while the new model's
       // fetch is in flight (or if it fails), the old geometry must not stay
       // visible and pickable — clicks on it would be saved under the NEW
@@ -1964,6 +2041,7 @@ async function loadFile(file: File): Promise<void> {
         showTree(model)
         // after setModel: isPartVisible is ready for the values
         showProperties(meta.id, propsReq, props)
+        updateProjection()
 
         // the note goes on the line once; the heatmap and the draft colouring
         // restore the plain summary
@@ -2065,6 +2143,7 @@ testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 // presets and fits move smoothly for the user; off under automation unless turned on here
 testHooks.__cadViewMotion = (on: boolean) => viewer.setViewMotion(on)
 testHooks.__cadStallProperties = (ms: number) => __stallNextProperties(ms)
+testHooks.__cadStallProjection = (ms: number) => __stallNextProjection(ms)
 // how long a load waits for the 体積・重量 values before its fit (no argument: the app's own)
 testHooks.__cadPropsWait = (ms?: number) => {
   propsWaitMs = ms ?? PROPS_WAIT_MS

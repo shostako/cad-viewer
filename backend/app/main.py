@@ -18,7 +18,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, cache, measure, properties
+from . import __version__, cache, measure, projection, properties
 from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
@@ -264,6 +264,48 @@ def get_properties(model_id: str) -> dict:
     else:
         result = properties.mesh_properties(entry.mesh_blob)
     entry.extra["properties"] = result
+    return result
+
+
+# projected areas kept per model (one per axis and set of visible parts)
+_PROJECTION_CACHE_MAX = 32
+
+
+@app.get("/api/models/{model_id}/projected_area")
+def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None) -> dict:
+    """The model's shadow along an axis (X / Y / Z), for a clamping-force estimate.
+
+    parts: comma-separated part ids to include (the visible ones); omitted for
+    every part, empty for none. mm², from the display mesh (projection.py): an
+    estimate, like the wall thickness. "pixel" is the finer bitmap's pixel (mm).
+    """
+    if axis not in projection.AXES:
+        raise HTTPException(422, "axis must be X, Y or Z")
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "projected area requires a 3D model (mesh or B-rep)")
+    wanted: set[int] | None = None
+    if parts is not None:
+        try:
+            wanted = {int(x) for x in parts.split(",") if x.strip()}
+        except ValueError as e:
+            raise HTTPException(422, "parts must be comma-separated part ids") from e
+    from .meshpack import unpack_parts
+
+    meshes = [p for p in unpack_parts(entry.mesh_blob)[1] if wanted is None or p["id"] in wanted]
+    ids = sorted(p["id"] for p in meshes)
+    key = f"projection:{axis}:{','.join(map(str, ids))}"
+    cached = entry.extra.get(key)
+    if cached is not None:
+        return cached
+    # no entry.lock: a pure result, like /properties (two requests compute it twice)
+    result = {**projection.projected_area([(p["positions"], p["indices"]) for p in meshes], axis), "parts": ids}
+    keys = [k for k in list(entry.extra) if k.startswith("projection:")]  # a snapshot: other requests add keys
+    for k in keys[: max(0, len(keys) - _PROJECTION_CACHE_MAX + 1)]:
+        entry.extra.pop(k, None)
+    entry.extra[key] = result
     return result
 
 
