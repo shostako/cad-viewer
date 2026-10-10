@@ -357,6 +357,48 @@ export class Viewer {
     })
   }
 
+  /**
+   * The measurements' labels never cover one another: where two would, the
+   * later one (in the order they were made) moves down, below the one it
+   * would cover. Kept in that order, a label does not jump about while the
+   * view turns. Only the measure layer's labels (dimensions, notes); the
+   * saved image reads their places from the page, so it shows them so too.
+   */
+  private spreadLabels(): void {
+    const labels: HTMLElement[] = []
+    for (const o of this.overlay.children) {
+      if (o instanceof CSS2DObject && o.element.style.display !== 'none') labels.push(o.element)
+    }
+    if (labels.length === 0) return
+    for (const el of labels) el.style.marginTop = ''
+    if (labels.length === 1) return
+    const GAP = 2
+    const placed: DOMRect[] = []
+    const shifts: number[] = []
+    for (const el of labels) {
+      const r = el.getBoundingClientRect()
+      let dy = 0
+      if (r.width > 0) {
+        // down past every placed label it would touch, until it touches none
+        for (let moved = true; moved; ) {
+          moved = false
+          for (const p of placed) {
+            const top = r.top + dy
+            if (r.left < p.right + GAP && r.right > p.left - GAP && top < p.bottom + GAP && top + r.height > p.top - GAP) {
+              dy = p.bottom + GAP - r.top
+              moved = true
+            }
+          }
+        }
+        placed.push(new DOMRect(r.left, r.top + dy, r.width, r.height))
+      }
+      shifts.push(dy)
+    }
+    labels.forEach((el, i) => {
+      if (shifts[i] > 0) el.style.marginTop = `${shifts[i]}px`
+    })
+  }
+
   /** frames go on for at least ms from now (something changed, or is about to) */
   wake(ms = AWAKE_MS): void {
     this.awakeUntil = Math.max(this.awakeUntil, performance.now() + ms)
@@ -367,6 +409,7 @@ export class Viewer {
     this.prepareCamera()
     this.renderer.render(this.scene, this.camera)
     this.labelRenderer.render(this.scene, this.camera)
+    this.spreadLabels()
     this.lastDrawn = now
     this.framesDrawn++
     for (const fn of this.frameListeners) fn()
