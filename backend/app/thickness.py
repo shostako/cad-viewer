@@ -17,8 +17,10 @@ ball — rolling ball / maximal tangent sphere: the largest sphere tangent to
        ~10 batched nearest-point queries; slower but honest at junctions.
 
 Both run on the display mesh, so they work for B-rep parts and plain mesh
-uploads alike. Sharp corners legitimately measure ~0 with `ball` (no sphere
-can be tangent at a corner) — the heatmap treats <=0 as "no data".
+uploads alike. With `ball`, no sphere fits at a sharp corner or on a sharp
+edge: those vertices get 0, which the heatmap shows as "no data" (a sphere
+within the search's tolerance counts as none: it would read as a wall a few
+thousandths of a mm thin).
 """
 from __future__ import annotations
 
@@ -77,7 +79,7 @@ def vertex_thickness_ball(
     """Rolling-ball thickness per vertex (sphere diameter), float32.
 
     Vertices whose ray probe found nothing stay +inf; vertices where no
-    tangent sphere fits (sharp corners) go to ~0.
+    tangent sphere fits (a sharp corner or edge) get 0.
     """
     n_verts = len(positions)
     out = np.full(n_verts, np.inf, dtype=np.float32)
@@ -116,5 +118,9 @@ def vertex_thickness_ball(
         lo = np.where(fits, mid, lo)
         hi = np.where(fits, hi, mid)
 
+    # a sphere no bigger than the tolerance passes the test anywhere (dist >=
+    # t - tol): where none fits (a corner, a sharp edge) the search ends in
+    # that band rather than at 0. Those have no value, as a corner has.
+    lo[lo <= 2.0 * tol] = 0.0
     out[hit] = (2.0 * lo).astype(np.float32)
     return out

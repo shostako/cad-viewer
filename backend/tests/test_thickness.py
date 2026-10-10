@@ -149,3 +149,29 @@ def test_thickness_endpoint_ball_method():
     r = client.get(f"/api/models/{mid}/thickness.bin?method=ball")
     assert r.status_code == 200
     assert client.get(f"/api/models/{mid}/thickness.bin?method=nope").status_code == 422
+
+
+def test_ball_gives_no_value_where_no_sphere_fits():
+    """On a sharp edge or at a corner no tangent sphere fits inside: no value
+    (0, shown as データなし), not a sliver the width of the search's
+    tolerance (that one showed as a wall 0.0015 mm thin, issue #63)."""
+    from app.thickness import vertex_thickness_ball
+
+    def no_value(t):
+        # 0 from the sphere, +inf from a ray that found no wall (the endpoint sends both as 0)
+        return (t == 0) | ~np.isfinite(t)
+
+    # a thin plate whose display mesh has corners only
+    pos, nrm, idx = _facet_arrays(trimesh.creation.box(extents=(20, 20, 1.2)))
+    t = vertex_thickness_ball(pos, nrm, idx)
+    assert np.all(no_value(t)), t
+    # a finer one: no value on the edges of its top, 1 mm inside them
+    plate = trimesh.creation.box(extents=(40, 40, 1)).subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(plate)
+    t = vertex_thickness_ball(pos, nrm, idx)
+    top = np.abs(pos[:, 2] - 0.5) < 1e-6
+    rim = top & ((np.abs(np.abs(pos[:, 0]) - 20) < 1e-6) | (np.abs(np.abs(pos[:, 1]) - 20) < 1e-6))
+    inside = top & (np.abs(pos[:, 0]) < 15) & (np.abs(pos[:, 1]) < 15)
+    assert rim.sum() > 0 and inside.sum() > 0
+    assert np.all(no_value(t[rim])), t[rim]
+    assert np.allclose(t[inside], 1.0, atol=0.02), t[inside]
