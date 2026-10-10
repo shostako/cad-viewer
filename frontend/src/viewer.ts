@@ -187,7 +187,7 @@ export class Viewer {
    * A running change of view: the double-click pivot slide, a preset, a fit.
    * The view is already decided (to); the frames go there from where it was.
    */
-  private viewAnim: { from: Pose; to: Pose; start: number; ms: number } | null = null
+  private viewAnim: { from: Pose; to: Pose; start: number; ms: number; pivot: boolean } | null = null
   /**
    * Presets and fits move smoothly (VIEW_MS). Off under automation (the E2E
    * read the camera right after a click; __cadViewMotion turns it on for the
@@ -1182,7 +1182,7 @@ export class Viewer {
     const depth = Math.max(point.clone().sub(this.camera.position).dot(forward), this.camera.near * MIN_ZOOM_NEARS)
     // the same turn and zoom: only the target, and the distance to it, move
     const to = { ...from, target: point.clone(), dist: depth }
-    this.viewAnim = { from, to, start: performance.now(), ms: PIVOT_MS }
+    this.viewAnim = { from, to, start: performance.now(), ms: PIVOT_MS, pivot: true }
     this.showPivotMarker(point)
   }
 
@@ -1233,7 +1233,7 @@ export class Viewer {
       Math.abs(from.zoom / to.zoom - 1) < 1e-9 &&
       from.shift.distanceTo(to.shift) < 1e-6
     if (still) return
-    this.viewAnim = { from, to, start: performance.now(), ms: VIEW_MS }
+    this.viewAnim = { from, to, start: performance.now(), ms: VIEW_MS, pivot: false }
     this.applyPose(from, from.up)
   }
 
@@ -1269,6 +1269,15 @@ export class Viewer {
   /** the view where it is going (a running change of view ends now): before reading it */
   settleView(): void {
     this.finishViewAnim()
+  }
+
+  /**
+   * A preset or a fit on its way ends now, before a double-click picks its
+   * point (as a key, the wheel or a drag first reach where it was going). A
+   * pivot slide goes on: the next double-click starts from where it got to.
+   */
+  settleChange(): void {
+    if (this.viewAnim && !this.viewAnim.pivot) this.finishViewAnim()
   }
 
   /** turn the smooth changes of view on or off (E2E: they are off under automation) */
@@ -1598,9 +1607,10 @@ export class Viewer {
   setProjection(p: Projection): void {
     if (p === this._projection) return
     // the switch keeps the view: a view still as the last fit left it stays so
-    // (atLastFit compares within one projection)
-    const wasAtFit = this.atLastFit
+    // (atLastFit compares within one projection). A fit still on its way ends
+    // first: where it ends is the fit (atLastFit says no while it moves)
     this.finishViewAnim()
+    const wasAtFit = this.atLastFit
     this.stopInertia()
     const from = this.camera
     const target = this.target.clone()

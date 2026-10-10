@@ -1801,6 +1801,7 @@ viewport.addEventListener('pointerup', (e) => {
 viewport.addEventListener('dblclick', (e) => {
   if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > DRAG_PX) return
   const ndc = toNdc(e.clientX, e.clientY)
+  viewer.settleChange() // a preset or a fit on its way: from where it goes
   viewer.prepareCamera()
   const p = picker.surfacePoint(ndc)
   if (p) viewer.orbitAround(p)
