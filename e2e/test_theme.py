@@ -17,6 +17,9 @@ The specification, written out here (not read from the code):
   (index.html: no dark flash on a light page)
 - PC に合わせる follows the system's setting (prefers-color-scheme), also when
   it changes while the page is open
+- a loose-curve part (loose_faces_box.igs: 曲線（3 本）) is drawn in the
+  theme's curve colour, #e0b050 dark and #9a6a00 light, and its mark in the
+  part tree follows a switch
 - a 2D drawing: ダーク its page is the 3D background, ライト a white page with
   the drawing's white lines black (as the white export); switching with a
   drawing open keeps its measurement, in the theme's colours (#9a6a00 on the
@@ -292,8 +295,21 @@ with nav_session() as n:
     page.wait_for_function("document.documentElement.dataset.theme === 'light'", timeout=5000)
     print("6 PC に合わせる follows the system")
 
-    # ---- a 2D drawing: its page, its lines, a measurement kept across a switch
+    # ---- a loose-curve part: its mark in the part tree follows the switch
     choose("ダーク")
+    n.load(str(TESTDATA / "loose_faces_box.igs"))
+    mark = """(() => {
+        const row = [...document.querySelectorAll('#tree-panel .tree-row')].find((r) => r.textContent.includes('曲線'))
+        return row && getComputedStyle(row.querySelector('.tree-mark')).backgroundColor
+    })()"""
+    assert page.evaluate(mark) == "rgb(224, 176, 80)", page.evaluate(mark)
+    choose("ライト")
+    assert page.evaluate(mark) == "rgb(154, 106, 0)", ("light: the curves' mark", page.evaluate(mark))
+    choose("ダーク")
+    assert page.evaluate(mark) == "rgb(224, 176, 80)", ("dark again: the curves' mark", page.evaluate(mark))
+    print("6b the loose curves' mark in the tree follows the theme")
+
+    # ---- a 2D drawing: its page, its lines, a measurement kept across a switch
     page.set_input_files("#file-input", str(TESTDATA / "plate_drawing.dxf"))
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D 図面')", timeout=60000)
     page.wait_for_timeout(300)

@@ -49,7 +49,7 @@ import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, typ
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
 import { Toolbar, type Mode } from './toolbar'
-import { THEME_CHOICES, setThemeChoice, themeChoice, type ThemeChoice } from './theme'
+import { THEME_CHOICES, onTheme, setThemeChoice, themeChoice, type ThemeChoice } from './theme'
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
@@ -174,6 +174,8 @@ const partTree = new PartTree(treePanel, {
   zoomTo: (ids) => viewer.fitToParts(ids),
   colorOf: (id) => `#${viewer.partColor(id)?.getHexString() ?? '8fb4d8'}`,
 })
+// the marks of loose curves follow the theme's curve colour (after the viewer's own repaint: it was made first, so it hears first)
+onTheme(() => partTree.recolour())
 
 // what the mouse and the keys do (? or the ? at the end of the status line):
 // a card above the status line, which used to carry these lines all the time
