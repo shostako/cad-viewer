@@ -7,8 +7,9 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import { draftColors, draftColorsFlat, draftSine, triangleDraftSine, windingSign } from './draft'
 import { MIN_FREE, type ScreenRect } from './freearea'
-import type { ModelData, PartData } from './model'
+import type { FaceRange, ModelData, PartData } from './model'
 import { paintLabels, type ExportBackground } from './snapshot'
+import type { Spot, SpotPart } from './spots'
 import { thicknessColors } from './thickness'
 
 /**
@@ -55,6 +56,12 @@ const WORLD_UP = new THREE.Vector3(0, 0, 1)
  * margin, so a key turn right after them doesn't snap.
  */
 const POLE_MARGIN = 1e-3
+/** a place a legend goes to is framed at least this share of the model's size across (it keeps its surroundings) */
+const SPOT_MIN_SHARE = 0.15
+/** and a place that is one point (the thinnest point, with none below the threshold) this share */
+const SPOT_POINT_SHARE = 0.3
+/** a place on a face that looks sideways is seen from this much above (about 22°): the faces around it are not edge-on */
+const SPOT_TILT = 0.4
 /** share of the limiting dimension of the fit area a fit fills; the rest is margin */
 const FIT_FILL = 0.88
 /**
@@ -161,6 +168,21 @@ const PRESETS: Record<ViewPreset, { dir: [number, number, number]; up: [number, 
   iso: { dir: [1, -1, 1], up: [0, 0, 1] },
 }
 
+/** the triangles of an indexed mesh as a flat list: 9 floats (a, b, c) per triangle */
+function expandTriangles(pos: ArrayLike<number>, idx: ArrayLike<number>): Float32Array {
+  const nTri = Math.floor(idx.length / 3)
+  const P = new Float32Array(nTri * 9)
+  for (let t = 0; t < nTri; t++) {
+    for (let v = 0; v < 3; v++) {
+      const a = idx[t * 3 + v] * 3
+      P[t * 9 + v * 3] = pos[a]
+      P[t * 9 + v * 3 + 1] = pos[a + 1]
+      P[t * 9 + v * 3 + 2] = pos[a + 2]
+    }
+  }
+  return P
+}
+
 export class Viewer {
   readonly scene = new THREE.Scene()
   private readonly persp: THREE.PerspectiveCamera
@@ -232,6 +254,8 @@ export class Viewer {
    */
   private viewMotion = !navigator.webdriver
   private pivotMarker: CSS2DObject | null = null
+  /** the marker of the place a legend went to (goToSpot), until clearSpot */
+  private spotMarker: CSS2DObject | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
   private container: HTMLElement
   /**
@@ -648,18 +672,7 @@ export class Viewer {
   private flatCopy(partId: number, mesh: THREE.Mesh): THREE.Mesh {
     const have = this.flatCopies.get(partId)
     if (have) return have
-    const pos = mesh.geometry.getAttribute('position').array
-    const idx = mesh.geometry.index!.array
-    const nTri = Math.floor(idx.length / 3)
-    const P = new Float32Array(nTri * 9)
-    for (let t = 0; t < nTri; t++) {
-      for (let v = 0; v < 3; v++) {
-        const a = idx[t * 3 + v] * 3
-        P[t * 9 + v * 3] = pos[a]
-        P[t * 9 + v * 3 + 1] = pos[a + 1]
-        P[t * 9 + v * 3 + 2] = pos[a + 2]
-      }
-    }
+    const P = expandTriangles(mesh.geometry.getAttribute('position').array, mesh.geometry.index!.array)
     const geo = new THREE.BufferGeometry()
     geo.setAttribute('position', new THREE.BufferAttribute(P, 3))
     const src = mesh.material as THREE.MeshStandardMaterial
@@ -796,6 +809,7 @@ export class Viewer {
     const mesh = new THREE.Mesh(geo, mat)
     // mesh formats (STL, 3MF, ...) carry no B-rep faces: their triangles are the shape
     mesh.userData.meshFormat = part.faceRanges.length === 0
+    mesh.userData.faceRanges = part.faceRanges
     group.add(mesh)
     this.partMeshes.set(part.id, mesh)
     const curveOnly = part.indices.length === 0
@@ -975,8 +989,15 @@ export class Viewer {
     if (g) g.visible = visible
   }
 
+  /** counts the models shown (clearModel): a list made for one model is not the next one's */
+  get modelGen(): number {
+    return this._modelGen
+  }
+  private _modelGen = 0
+
   clearModel(): void {
     this.wake()
+    this._modelGen++
     for (const child of [...this.modelGroup.children]) {
       this.modelGroup.remove(child)
       child.traverse((o) => {
@@ -997,6 +1018,7 @@ export class Viewer {
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     this.viewAnim = null
     this.removePivotMarker()
+    this.clearSpot()
     if (this.gridHelper) {
       this.scene.remove(this.gridHelper)
       this.gridHelper.dispose()
@@ -1039,9 +1061,125 @@ export class Viewer {
    * that have since been hidden are not framed; none left: nothing moves.
    */
   refit(): void {
+    const box = this.lastFit?.box
+    if (box) {
+      // a place a legend went to: the same place, from the same direction
+      this.wake()
+      const from = this.pose()
+      this.frameFromHere(box)
+      this.rememberFit(null, box)
+      this.animateFrom(from)
+      return
+    }
     const parts = this.lastFit?.parts
     if (parts) this.fitToParts(parts)
     else this.fitToView()
+  }
+
+  /** the ids of the visible parts with faces (what a list of places is made from: spotnav.ts's key) */
+  spotPartIds(): number[] {
+    const out: number[] = []
+    for (const [partId, mesh] of this.partMeshes) if (mesh.geometry.index?.count && this.isPartVisible(partId)) out.push(partId)
+    return out
+  }
+
+  /** the visible parts with faces, for spots.ts (the part meshes carry no transform: world positions) */
+  spotParts(): SpotPart[] {
+    const out: SpotPart[] = []
+    for (const partId of this.spotPartIds()) {
+      const mesh = this.partMeshes.get(partId)!
+      const index = mesh.geometry.index!
+      const positions = mesh.geometry.getAttribute('position').array
+      out.push({
+        partId,
+        positions,
+        normals: mesh.geometry.getAttribute('normal').array,
+        indices: index.array,
+        faceRanges: (mesh.userData.faceRanges as FaceRange[] | undefined) ?? [],
+        // asked for by the draft places of a mesh-format part only: the sign the
+        // colouring used (its flat copy), else the same rule, once per part
+        windingSign: () => {
+          if (!mesh.userData.meshFormat) return 1
+          const copy = this.flatCopies.get(partId)?.userData.windingSign as 1 | -1 | undefined
+          if (copy) return copy
+          mesh.userData.spotWinding ??= windingSign(expandTriangles(positions, index.array))
+          return mesh.userData.spotWinding as 1 | -1
+        },
+      })
+    }
+    return out
+  }
+
+  /**
+   * Go to a place a legend points at (spots.ts): look at it from outside, along
+   * -normal (a face that looks sideways from SPOT_TILT above, as the load view
+   * is), with its extent framed in the fit area (at least SPOT_MIN_SHARE of
+   * the model's size across, a point SPOT_POINT_SHARE: it keeps its
+   * surroundings), and a marker that says `text` on the place's point. In
+   * turntable the camera keeps Z up: a place that faces straight up or down is
+   * seen from just off the pole, as 上・下 are (+X to the right). H frames the
+   * same place again.
+   */
+  goToSpot(spot: Spot, text: string): void {
+    this.wake()
+    const from = this.pose()
+    this.finishViewAnim()
+    this.stopInertia()
+    const dir = new THREE.Vector3(...spot.normal).normalize() // from the place toward the camera
+    if (Math.abs(dir.z) < 0.9) dir.addScaledVector(WORLD_UP, SPOT_TILT).normalize()
+    const pole = new THREE.Vector3(...PRESETS[dir.z > 0 ? 'top' : 'bottom'].up)
+    if (this._rotateMode === 'turntable') {
+      this.camera.up.copy(WORLD_UP)
+      if (Math.abs(dir.z) > 0.999) dir.addScaledVector(pole, -Math.sign(dir.z) * POLE_MARGIN).normalize()
+    } else if (Math.abs(dir.dot(this.camera.up)) > 0.999) {
+      // free rotation keeps its roll, unless the view would look along it
+      this.camera.up.copy(Math.abs(dir.z) > 0.9 ? pole : WORLD_UP)
+    }
+    const box = new THREE.Box3(new THREE.Vector3(...spot.min), new THREE.Vector3(...spot.max))
+    const model = this.modelBBox()
+    const centre = box.getCenter(new THREE.Vector3())
+    const size = box.getSize(new THREE.Vector3())
+    const share = size.lengthSq() > 0 ? SPOT_MIN_SHARE : SPOT_POINT_SHARE
+    const least = model.isEmpty() ? 0 : model.getSize(new THREE.Vector3()).length() * share
+    const half = new THREE.Vector3(Math.max(size.x, least), Math.max(size.y, least), Math.max(size.z, least)).multiplyScalar(0.5)
+    box.set(centre.clone().sub(half), centre.clone().add(half))
+    this.frameBox(box, dir.clone().negate())
+    this.rememberFit(null, box)
+    this.showSpotMarker(new THREE.Vector3(...spot.at), text)
+    this.animateFrom(from)
+  }
+
+  /**
+   * take the marker of goToSpot away (the colours changed or went, a part was
+   * hidden): H no longer frames its place, it fits the visible model again
+   */
+  clearSpot(): void {
+    if (this.lastFit?.box) this.lastFit.box = null
+    this.removeSpotMarker()
+  }
+
+  /** the marker only (goToSpot puts the next one up; what H frames stays) */
+  private removeSpotMarker(): void {
+    if (!this.spotMarker) return
+    this.wake()
+    this.scene.remove(this.spotMarker)
+    this.spotMarker.element.remove()
+    this.spotMarker = null
+  }
+
+  private showSpotMarker(at: THREE.Vector3, text: string): void {
+    this.removeSpotMarker()
+    const marker = this.makeLabel('', at, 'spot-marker')
+    const ring = document.createElement('span')
+    ring.className = 'spot-ring'
+    const label = document.createElement('span')
+    label.className = 'spot-text'
+    label.textContent = text
+    marker.element.append(ring, label)
+    // a pointer to where the view went, not content: a saved image leaves it out
+    marker.element.dataset.noExport = ''
+    this.scene.add(marker)
+    this.spotMarker = marker
   }
 
   /** frame the box from the current view direction (a fit that keeps the direction and roll) */
@@ -1089,13 +1227,15 @@ export class Viewer {
     dist: number
     zoom: number
     parts: number[] | null
+    /** the box a place a legend went to was framed by (goToSpot), instead of parts */
+    box: THREE.Box3 | null
   } | null = null
 
-  private rememberFit(parts: number[] | null): void {
+  private rememberFit(parts: number[] | null, box: THREE.Box3 | null = null): void {
     const cam = this.camera
     const target = this.target.clone()
     const off = target.clone().sub(cam.position)
-    this.lastFit = { target, dir: off.clone().normalize(), up: cam.up.clone(), dist: off.length(), zoom: cam.zoom, parts }
+    this.lastFit = { target, dir: off.clone().normalize(), up: cam.up.clone(), dist: off.length(), zoom: cam.zoom, parts, box }
   }
 
   /**
@@ -1795,7 +1935,7 @@ export class Viewer {
     this.controls.object = to
     this.trackball.object = to
     this.setTarget(target)
-    if (wasAtFit) this.rememberFit(this.lastFit?.parts ?? null)
+    if (wasAtFit) this.rememberFit(this.lastFit?.parts ?? null, this.lastFit?.box ?? null)
   }
 
   /**

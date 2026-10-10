@@ -1719,3 +1719,76 @@ body.panels-hidden #corner-br {
 #panels-show:hover {
   background: var(--cv-hover);
 }
+
+/* the place a legend went to (肉厚の薄い所、抜き勾配の面): a ring on the point and its value */
+.spot-marker {
+  position: relative;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+}
+.spot-ring {
+  position: absolute;
+  left: -9px;
+  top: -9px;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--cv-measure);
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+.spot-text {
+  position: absolute;
+  left: 12px;
+  top: -22px;
+  padding: 1px 6px;
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-measure);
+  color: var(--cv-measure);
+  font-family: var(--cv-font);
+  font-size: var(--cv-fs-sm);
+  line-height: 18px;
+  white-space: nowrap;
+}
+
+/* the legends' buttons that go to the places their colours point at (spotnav.ts) */
+.go-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+}
+.go-btn {
+  flex: none;
+  pointer-events: auto; /* the HUD lets the pointer through to the model */
+  padding: 1px 8px;
+  color: var(--cv-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border-strong);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-xs);
+  line-height: 18px;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+.go-btn:hover {
+  background: var(--cv-accent-weak);
+  border-color: var(--cv-accent-line);
+}
+.draft-row .go-btn {
+  margin-left: auto;
+}
+.go-state {
+  color: var(--cv-measure);
+  white-space: nowrap;
+}
+/* the thickness row's state can be a sentence (閾値より薄い所は無い…): it wraps */
+.go-row .go-state {
+  white-space: normal;
+  min-width: 0;
+}
+.go-state:empty {
+  display: none;
+}

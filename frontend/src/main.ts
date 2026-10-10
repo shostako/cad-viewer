@@ -32,6 +32,7 @@ import { Picker, type FaceHit, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { SpotNav } from './spotnav'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
@@ -130,6 +131,7 @@ const drawing2d = new Drawing2D(viewport2d, (msg) => {
 const partTree = new PartTree(treePanel, {
   setVisible: (changes) => {
     for (const [id, on] of changes) viewer.setPartVisible(id, on)
+    spotNav.revalidate() // a list of places holds for the parts it was made from
     propsPanel.refresh()
     updateProjection()
     probe.refresh() // a part under a still cursor may have gone (its row mark, its value)
@@ -674,6 +676,7 @@ function heatmapHud(): string {
 function clearThickness(): void {
   releaseColors('thickness')
   thicknessLegend.classList.add('hidden')
+  spotNav.revalidate()
   dropThicknessHud()
   probe.refresh()
 }
@@ -749,6 +752,7 @@ async function updateThickness(): Promise<void> {
     // the method named is thicknessState.method, equal to requestedMethod here
     // (a fetch that a method change overtook returned above)
     renderThicknessLegend(thicknessLegend, thicknessState.threshold, thicknessState.method)
+    spotNav.decorateThickness(thicknessLegend)
     thicknessLegend.classList.remove('hidden')
     setThicknessHud(heatmapHud())
     probe.refresh() // other values under a cursor that stays where it is
@@ -762,6 +766,7 @@ async function updateThickness(): Promise<void> {
     releaseColors('thickness')
     shownThickness = null
     thicknessLegend.classList.add('hidden')
+    spotNav.revalidate()
     probe.refresh()
     hudInfo.textContent = `肉厚計算エラー: ${e instanceof Error ? e.message : e}`
   }
@@ -797,6 +802,7 @@ function updateDraft(): void {
   if (!draftState.enabled) {
     releaseColors('draft')
     draftLegend.classList.add('hidden')
+    spotNav.revalidate()
     probe.refresh()
     return
   }
@@ -812,7 +818,17 @@ function renderLegend(): void {
   // Counted once /properties has answered; until then (or if it fails) no note.
   const unoriented = modelProps?.parts.filter((p) => p.volume === null && p.reason !== 'no_faces').length ?? 0
   renderDraftLegend(draftLegend, draftState.dir, draftState.required, unoriented)
+  spotNav.decorateDraft(draftLegend)
 }
+// the legends' buttons that go to the places their colours point at (spotnav.ts)
+const spotNav = new SpotNav(viewer, {
+  thin: () =>
+    thicknessState.enabled && colorOwner === 'thickness' && shownThickness
+      ? { values: shownThickness, threshold: thicknessState.threshold }
+      : null,
+  draft: () =>
+    draftState.enabled && colorOwner === 'draft' ? { dir: PULL_DIRS[draftState.dir], required: draftState.required } : null,
+})
 const draftFolder = gui.addFolder('抜き勾配')
 draftFolder.close()
 draftFolder
@@ -2143,6 +2159,8 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
   }
 }
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
+/** the place a legend's button went to last (spotnav.ts), or null */
+testHooks.__cadSpot = () => spotNav.current()
 testHooks.__cadView = () => {
   viewer.prepareCamera() // the pose the next frame draws (parallel: the camera's depth)
   return {
