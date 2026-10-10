@@ -1209,7 +1209,8 @@ function pickUnderCursor(clientX: number, clientY: number): TipContent {
   return lastPickTip
 }
 function pickTip(pick: PickResult | null): TipContent {
-  if (!pick || pick.id < 1) return null // the caller hides the highlight
+  // a mesh model's face (id -1) is no entity; a whole part (id 0) is one
+  if (!pick || (pick.id < 1 && pick.kind !== 'part')) return null // the caller hides the highlight
   preselect.show(pick, state.mode === '計測' ? measureTool.pendingPoint : null)
   if (!preselect.shown) return null
   infoCache.rest(pick)

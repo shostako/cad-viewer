@@ -178,7 +178,8 @@ export class Picker {
     const partId = hit.object.userData.partId as number
     const part = this.parts.get(partId)
     if (!part || hit.faceIndex === undefined || hit.faceIndex === null) return null
-    if (f === 'part') return { partId, kind: 'part', id: partId, point: hit.point.clone() }
+    // a whole part: id 0, never a face's, edge's or vertex's number (those start at 1)
+    if (f === 'part') return { partId, kind: 'part', id: 0, point: hit.point.clone() }
 
     // snap candidates must respect the same clipping planes as the hit —
     // a clipped-away vertex/edge within snap radius must not win

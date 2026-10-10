@@ -117,15 +117,13 @@ with nav_session() as n:
     assert p and p["kind"] == "part", p
     # the highlight is the whole pin: on its side under the cursor, its top too
     # (with 面 only the side is tinted: the top keeps the pin's own colour)
-    pin2_top = (75, 30, 40)
-    page.mouse.move(10, 10)
-    n.settle()
-    plain = blueness(pin2_top)
+    pin2_top, pin2_low = (75, 30, 40), (75, 26, 18)  # its top, and its side below the cursor
+    plain, plain_low = blueness(pin2_top), blueness(pin2_low)  # before the cursor is on the pin
     page.mouse.move(*xy)
     n.settle()
     page.wait_for_timeout(200)
     assert page.inner_text("#cursor-tip") == "core_pin · 全体", page.inner_text("#cursor-tip")
-    lit = blueness(pin2_top)
+    lit, lit_low = blueness(pin2_top), blueness(pin2_low)
     set_filter("面")
     page.mouse.move(xy[0] + 1, xy[1])
     n.settle()
@@ -137,6 +135,7 @@ with nav_session() as n:
     page.wait_for_timeout(200)
     to_blue = lambda c: math.dist(c, LIGHT_BLUE)
     assert to_blue(lit) < to_blue(plain) - 40, ("部品: the pin's top is tinted too", plain, lit)
+    assert to_blue(lit_low) < to_blue(plain_low) - 40, ("部品: and its side", plain_low, lit_low)
     assert to_blue(face_only) > to_blue(lit) + 40, ("面: the top keeps its colour", face_only, lit)
     print("2b the whole pin lit", [round(v) for v in plain], [round(v) for v in lit], [round(v) for v in face_only])
     page.mouse.click(*xy)
