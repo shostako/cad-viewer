@@ -28,7 +28,7 @@ NOTES = [
 
 with nav_session() as n:
     page = n.page
-    page.set_viewport_size({"width": 1280, "height": 760})
+    page.set_viewport_size({"width": 1280, "height": 860})
     put_sidecar(page, mold, NOTES)
 
     def rect(sel):
