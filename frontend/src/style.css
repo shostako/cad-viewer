@@ -1110,12 +1110,23 @@ body,
   text-align: right;
 }
 
-/* the volume's mm³ beside its cm³, smaller and quieter */
+/* the volume's mm³ beside its cm³, the force's tf beside its kN: smaller and quieter */
 #props-total-volume {
   white-space: nowrap;
 }
 
-#props-total-volume .sub {
+#props-total-volume .sub,
+#props-total-clamp .sub {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
+#props-total-proj,
+#props-total-clamp {
+  white-space: nowrap;
+}
+
+#props-total-proj .sub {
   color: var(--cv-text-3);
   font-size: var(--cv-fs-xs);
 }

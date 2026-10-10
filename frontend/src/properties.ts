@@ -5,8 +5,13 @@
  * the chosen resin's specific gravity. A part without a volume (open, curves
  * only, ...) is listed but never counted: a partial total would understate
  * the weight without saying so.
+ *
+ * Below the weight: the projected area along the mold-opening direction (the
+ * draft analysis's setting) of the visible parts, and the clamping force it
+ * takes at the chosen cavity pressure (issue #47 item 4). The area comes from
+ * the display mesh (GET /projected_area): an estimate, like the thickness.
  */
-import type { ModelProperties, PartProperties, PropsReason } from './api'
+import type { Axis, ModelProperties, PartProperties, PropsReason } from './api'
 
 /** specific gravity (g/cm³) of common moulding resins */
 export const RESIN_DENSITY: Record<string, number> = {
@@ -42,6 +47,27 @@ export function fmtNum(x: number, digits: number): string {
 
 /** grams from mm³ and g/cm³ */
 export const massGrams = (mm3: number, density: number): number => (mm3 / 1000) * density
+
+/** standard gravity: 1 tf = 9806.65 N */
+const G = 9.80665
+/** clamping force from a projected area (mm²) and a cavity pressure (MPa = N/mm²) */
+export function clampForce(areaMm2: number, mpa: number): { kN: number; tf: number } {
+  const newtons = areaMm2 * mpa
+  return { kN: newtons / 1000, tf: newtons / (1000 * G) }
+}
+
+/** 40 / 37.5 / 0.25: as typed, without trailing zeros */
+export const fmtPressure = (mpa: number): string => String(Number(mpa.toFixed(3)))
+
+/** what the projected-area rows show */
+export type ProjectionState =
+  | { state: 'loading'; axis: Axis }
+  | { state: 'ok'; axis: Axis; area: number }
+  | { state: 'error'; axis: Axis; message: string }
+
+/** what the projected area is, on its row's tooltip */
+export const projectionTitle = (axis: Axis): string =>
+  `投影面積: 型開き方向（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）`
 
 /** 1.19 / 1.20 / 0.90 / 1.234: three decimals, one trailing zero dropped */
 export function fmtDensity(d: number): string {
@@ -144,6 +170,16 @@ export class PropertiesPanel {
   private totalVolume = el('dd', 'props-total-volume')
   private totalArea = el('dd', 'props-total-area')
   private totalMass = el('dd', 'props-total-mass')
+  private projLabel = el('dt', 'props-proj-label')
+  private totalProj = el('dd', 'props-total-proj')
+  private clampLabel = el('dt', 'props-clamp-label')
+  private totalClamp = el('dd', 'props-total-clamp')
+  private projection: ProjectionState | null = null
+  private pressure = 40
+  /** the projected-area row folded away (a short window): the force's row stays */
+  private compact = false
+  /** that row's height with its gap, last seen while shown */
+  private projRowPx = 20
   private noteEl = el('div', 'props-note')
   /** 部品ごとの値（N 部品）: opens and folds the parts table */
   private partsToggle = el('button', 'props-parts-toggle')
@@ -165,6 +201,7 @@ export class PropertiesPanel {
     dl.append(el('dt', undefined, '体積'), this.totalVolume)
     dl.append(el('dt', undefined, '表面積'), this.totalArea)
     dl.append(el('dt', undefined, '重量'), this.totalMass)
+    dl.append(this.projLabel, this.totalProj, this.clampLabel, this.totalClamp)
     this.totalEl.append(this.totalTitle, dl)
     this.partsToggle.type = 'button'
     this.partsToggle.setAttribute('aria-controls', 'props-parts-wrap')
@@ -209,6 +246,40 @@ export class PropertiesPanel {
     this.densityEl.textContent =
       resin === OTHER_RESIN ? `比重 ${fmtDensity(density)} g/cm³` : `${resin} ${fmtDensity(density)} g/cm³`
     if (this.data) this.refresh()
+  }
+
+  /** cavity pressure (MPa) for the clamping force */
+  setPressure(mpa: number): void {
+    this.pressure = mpa
+    if (this.data) this.refresh()
+  }
+
+  /**
+   * the projected area of the visible parts (null: none to show). Drawn at
+   * once, not on the next microtask: a load fits the view right after asking,
+   * and the rows must already take their room then.
+   */
+  setProjection(p: ProjectionState | null): void {
+    this.projection = p
+    if (this.data) this.render()
+  }
+
+  /**
+   * Fold the projected-area row away (on), or show it again; for the corner
+   * layout, which folds it before the GUI would have to shrink past its minimum.
+   */
+  setCompact(on: boolean): void {
+    if (on === this.compact) return
+    if (on && !this.totalProj.classList.contains('hidden')) {
+      this.projRowPx = this.totalProj.offsetHeight + 2 // the dl's row gap
+    }
+    this.compact = on
+    if (this.data) this.renderProjection()
+  }
+
+  /** what showing the folded row again would add to the panel (0 when it is not folded) */
+  foldedPx(): number {
+    return this.compact && this.projection && this.data && !this.root.classList.contains('hidden') ? this.projRowPx : 0
   }
 
   /** re-render once for any number of calls in the same task (a tree group toggles its children one by one) */
@@ -282,10 +353,46 @@ export class PropertiesPanel {
     }
     this.totalArea.textContent = t.area !== null ? `${fmtNum(t.area / 100, 2)} cm²` : '—'
     this.totalMass.textContent = t.volume !== null ? `${fmtNum(massGrams(t.volume, this.density), 2)} g` : '—'
+    this.renderProjection()
 
     this.noteEl.textContent = v.notes.join(' ／ ')
     this.noteEl.classList.toggle('hidden', v.notes.length === 0)
     this.onLayout()
+  }
+
+  /**
+   * Two rows, one line each (the column is 264 px): 投影 59.99 cm²（Z・目安）
+   * and 型締力 240.0 kN（24.5 tf・40 MPa）. Labels of three characters at most:
+   * the volume's value leaves the label column 49 px, and 投影面積 would wrap.
+   */
+  private renderProjection(): void {
+    const p = this.projection
+    for (const e of [this.clampLabel, this.totalClamp]) e.classList.toggle('hidden', !p)
+    for (const e of [this.projLabel, this.totalProj]) e.classList.toggle('hidden', !p || this.compact)
+    if (!p) return
+    const sub = (text: string): HTMLSpanElement => {
+      const s = el('span', undefined, text)
+      s.className = 'sub'
+      return s
+    }
+    const mpa = `${fmtPressure(this.pressure)} MPa`
+    this.projLabel.textContent = '投影' // 投影面積 (the tooltip says so)
+    this.clampLabel.textContent = '型締力'
+    this.totalProj.title = projectionTitle(p.axis)
+    if (p.state === 'ok') {
+      const cm2 = `${fmtNum(p.area / 100, 2)} cm²`
+      this.totalProj.replaceChildren(cm2, sub(`（${p.axis}・目安）`))
+      const f = clampForce(p.area, this.pressure)
+      this.totalClamp.replaceChildren(`${fmtNum(f.kN, 1)} kN`, sub(`（${fmtNum(f.tf, 1)} tf・${mpa}）`))
+      // the folded row's value stays at hand
+      this.totalClamp.title = `投影面積 ${cm2}（${p.axis}・目安）× 型内圧 ${mpa}`
+    } else {
+      const what = p.state === 'loading' ? '計算中…' : '計算できない'
+      this.totalProj.replaceChildren(what, sub(`（${p.axis}・目安）`))
+      if (p.state === 'error') this.totalProj.title = `計算できない: ${p.message}`
+      this.totalClamp.replaceChildren('—', sub(`（${mpa}）`))
+      this.totalClamp.title = p.state === 'loading' ? '投影面積を計算中' : `投影面積を計算できない: ${p.message}`
+    }
   }
 
   private cells(volume: number | null, area: number | null, reason: PropsReason | null): HTMLTableCellElement[] {

@@ -273,6 +273,55 @@ export interface ModelProperties {
   }
 }
 
+// ---- projected area (GET /projected_area) ----------------------------------------
+
+export type Axis = 'X' | 'Y' | 'Z'
+
+/** the model's shadow along an axis, from the display mesh (an estimate) */
+export interface ProjectedArea {
+  axis: Axis
+  /** mm² */
+  area: number
+  /** the finer bitmap's pixel, mm (null when there was nothing to project) */
+  pixel: number | null
+  /** the part ids it covers */
+  parts: number[]
+}
+
+// test-only: hold the NEXT projected-area request in flight (one-shot, self-clearing)
+let _stallNextProjectionMs = 0
+export function __stallNextProjection(ms: number): void {
+  _stallNextProjectionMs = ms
+}
+
+/**
+ * This page's id for /projected_area: a request of this page still waiting
+ * behind another calculation is given up (409) once the page asks again.
+ * Not crypto.randomUUID: that needs a secure context (http on a LAN address
+ * is not one).
+ */
+const PAGE_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+/** an answer the backend gave up on because this page has asked again since */
+export class ProjectionSuperseded extends Error {}
+
+/** parts: the ids to include (the visible ones) */
+export async function fetchProjectedArea(modelId: string, axis: Axis, parts: readonly number[]): Promise<ProjectedArea> {
+  if (_stallNextProjectionMs > 0) {
+    const ms = _stallNextProjectionMs
+    _stallNextProjectionMs = 0
+    await new Promise((r) => setTimeout(r, ms))
+  }
+  const q = new URLSearchParams({ axis, parts: parts.join(','), client: PAGE_ID })
+  const res = await fetch(`/api/models/${modelId}/projected_area?${q}`)
+  if (res.status === 409) throw new ProjectionSuperseded('superseded')
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(detail.detail ?? `projected area failed: ${res.status}`)
+  }
+  return res.json()
+}
+
 // test-only: hold the NEXT properties request in flight (one-shot, self-clearing)
 let _stallNextPropertiesMs = 0
 export function __stallNextProperties(ms: number): void {

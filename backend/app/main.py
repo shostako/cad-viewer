@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import tempfile
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, cache, measure, properties
+from . import __version__, cache, measure, projection, properties
 from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
@@ -264,6 +265,111 @@ def get_properties(model_id: str) -> dict:
     else:
         result = properties.mesh_properties(entry.mesh_blob)
     entry.extra["properties"] = result
+    return result
+
+
+# projected areas kept per model (one per axis and set of visible parts)
+_PROJECTION_CACHE_MAX = 32
+# pages remembered per model for "a newer request from the same page"
+_PROJECTION_CLIENTS_MAX = 64
+
+
+class _ProjectionGate:
+    """One projection at a time per model, and none that its page no longer wants.
+
+    A calculation holds two bitmaps of up to 64 M and 16 M pixels for about a
+    second (more on a large model). A user flipping the 型開き方向 or the parts
+    shown asks again each time; the page shows only the latest answer. So the
+    calculations run one after another, and a request still waiting when a
+    newer one from the same page (its "client") has come gives up (409): the
+    latest one does not wait behind work nobody will see. Requests from other
+    pages (another tab) are never given up for this one's sake.
+    """
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()  # held while computing
+        self.guard = threading.Lock()  # for the counters below
+        self.count = 0
+        self.latest: dict[str, int] = {}  # client -> its newest ticket
+
+    def ticket(self, client: str | None) -> int:
+        with self.guard:
+            self.count += 1
+            if client:
+                self.latest.pop(client, None)  # re-insert: the oldest page goes first
+                self.latest[client] = self.count
+                while len(self.latest) > _PROJECTION_CLIENTS_MAX:
+                    self.latest.pop(next(iter(self.latest)))
+            return self.count
+
+    def superseded(self, client: str | None, ticket: int) -> bool:
+        with self.guard:
+            return bool(client) and self.latest.get(client, ticket) > ticket
+
+
+_gates_guard = threading.Lock()
+
+
+def _projection_gate(entry: ModelEntry) -> _ProjectionGate:
+    with _gates_guard:
+        gate = entry.extra.get("projection_gate")
+        if gate is None:
+            gate = entry.extra["projection_gate"] = _ProjectionGate()
+        return gate
+
+
+@app.get("/api/models/{model_id}/projected_area")
+def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None, client: str | None = None) -> dict:
+    """The model's shadow along an axis (X / Y / Z), for a clamping-force estimate.
+
+    parts: comma-separated part ids to include (the visible ones); omitted for
+    every part, empty for none. client: the asking page's id; a request of its
+    still waiting for another calculation to end gives up (409) once the page
+    has asked again (_ProjectionGate). mm², from the display mesh
+    (projection.py): an estimate, like the wall thickness. "pixel" is the
+    finer bitmap's pixel (mm).
+    """
+    if axis not in projection.AXES:
+        raise HTTPException(422, "axis must be X, Y or Z")
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "projected area requires a 3D model (mesh or B-rep)")
+    wanted: set[int] | None = None
+    if parts is not None:
+        try:
+            wanted = {int(x) for x in parts.split(",") if x.strip()}
+        except ValueError as e:
+            raise HTTPException(422, "parts must be comma-separated part ids") from e
+    from .meshpack import unpack_parts
+
+    meshes = [p for p in unpack_parts(entry.mesh_blob)[1] if wanted is None or p["id"] in wanted]
+    ids = sorted(p["id"] for p in meshes)
+    key = f"projection:{axis}:{','.join(map(str, ids))}"
+    # The ticket first, even for an answer already known: the page's asking
+    # again must count, or a request of its still waiting would compute an
+    # answer the page has moved on from (hide a part, then show it again).
+    gate = _projection_gate(entry)
+    ticket = gate.ticket(client)
+    cached = entry.extra.get(key)
+    if cached is not None:
+        return cached
+    # not entry.lock: a measure request must not wait behind a projection
+    with gate.lock:
+        cached = entry.extra.get(key)  # computed while this one waited
+        if cached is not None:
+            return cached
+        if gate.superseded(client, ticket):
+            raise HTTPException(409, "superseded by a newer request from the same page")
+        result = {
+            **projection.projected_area([(p["positions"], p["indices"]) for p in meshes], axis),
+            "parts": ids,
+        }
+        keys = [k for k in list(entry.extra) if k.startswith("projection:")]
+        for k in keys[: max(0, len(keys) - _PROJECTION_CACHE_MAX + 1)]:
+            entry.extra.pop(k, None)
+        entry.extra[key] = result
     return result
 
 
