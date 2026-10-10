@@ -157,7 +157,8 @@ function show2D(on: boolean): void {
   viewport2d.classList.toggle('hidden', !on)
   viewport.classList.toggle('hidden', on)
   treePanel.classList.toggle('hidden', on || !partTree.hasRows)
-  for (const f of folders3D) f.show(!on)
+  // 表示 always in 3D; the model's folders only while the panel is for a model (applyEmptyPanel)
+  for (const f of folders3D) f.show(!on && (f === viewFolder || modelPanel))
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
@@ -170,6 +171,9 @@ function show2D(on: boolean): void {
 function setContentShown(on: boolean, fileName = ''): void {
   contentShown = on
   shownFileName = on ? fileName : ''
+  // a model or a drawing on screen brings the model's controls (showEmpty
+  // hides them again; a load that replaces a model keeps them meanwhile)
+  if (on) applyEmptyPanel(false)
   // the tab (and the taskbar) names the file: several windows can be told apart
   document.title = shownFileName ? `${shownFileName} — cad-viewer` : 'cad-viewer'
   updateTriad()
@@ -194,17 +198,25 @@ function updateTriad(): void {
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
   applyFolders(on)
-  applyEmptyPanel(on)
+  // the empty screen hides the model's controls; they come back with content
+  // (setContentShown), not with the start of a load: a first load, or one
+  // that fails, has nothing for them to work on
+  if (on) applyEmptyPanel(true)
   placeCentreCards()
 }
+
+/** the panel shows the model's controls (applyEmptyPanel; show2D keeps to it) */
+let modelPanel = false
 
 /**
  * Before a file is open the panel holds only what can be set ahead: 表示
  * (kept for the next file). The mode, the measurements, the image and the
- * folders that work on a model (断面, 肉厚, 抜き勾配, 体積・重量) come with it;
+ * folders that work on a model (断面, 肉厚, 抜き勾配, 体積・重量) come with
+ * the content on screen (setContentShown), not with the start of its load;
  * a drawing keeps its 3D folders hidden (show2D).
  */
 function applyEmptyPanel(empty: boolean): void {
+  modelPanel = !empty
   for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
   for (const f of [sectionFolder, thicknessFolder, draftFolder, propsFolder]) f.show(!empty && !is2D)
 }
