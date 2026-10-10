@@ -140,6 +140,21 @@ with nav_session() as n:
     assert rows() == kept, ("the rows come back as they were", rows(), kept)
     print("5 copy and kept")
 
+    # ---- a load that fails in 計測 after the old model went leaves the empty
+    # screen: no 距離 there (Codex on #66). The mesh fails after the upload; a
+    # file that fails at the upload keeps the old model (and 距離 with it)
+    page.route("**/mesh.bin", lambda r: r.fulfill(status=500, body="no"))
+    page.set_input_files("#file-input", str(curved))
+    page.wait_for_function("document.querySelector('#load-card')?.textContent.includes('開けなかった')", timeout=30000)
+    n.settle()
+    page.unroute("**/mesh.bin")
+    n.errors[:] = [e for e in n.errors if "status of 500" not in e]  # asked for here
+    assert gui_common.ctl(page, "モード").locator("select").evaluate("s => s.options[s.selectedIndex].text") == "計測", "still in 計測"
+    assert not distance_shown(), "the empty screen has nothing to measure"
+    n.load(str(curved))
+    assert distance_shown(), "a model again: 距離 is back"
+    print("5b a failed load: no 距離 on the empty screen")
+
     # ---- a drawing: no 距離
     gui_common.set_mode(page, "計測")
     n.load(str(TESTDATA / "plate_drawing.dxf"), wait_text="2D 図面")

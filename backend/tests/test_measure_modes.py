@@ -192,3 +192,50 @@ def test_a_mode_must_be_known(mold):
     edge = _ref(mold, "edge", (50, 0, 15))
     r = _post(mold, {"type": "distance", "a": edge, "b": edge, "mode": "far"})
     assert r.status_code == 422, r.text
+
+
+def _spline(xy):
+    """an edge interpolating the points at even parameters (a narrow lobe gets a sliver of the parameter)"""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge
+    from OCP.GeomAPI import GeomAPI_Interpolate
+    from OCP.TColgp import TColgp_HArray1OfPnt
+    from OCP.TColStd import TColStd_HArray1OfReal
+    from OCP.gp import gp_Pnt
+
+    pts = TColgp_HArray1OfPnt(1, len(xy))
+    par = TColStd_HArray1OfReal(1, len(xy))
+    for k, (x, y) in enumerate(xy, start=1):
+        pts.SetValue(k, gp_Pnt(x, y, 0))
+        par.SetValue(k, float(k))
+    interp = GeomAPI_Interpolate(pts, par, False, 1e-9)
+    interp.Perform()
+    assert interp.IsDone()
+    return BRepBuilderAPI_MakeEdge(interp.Curve()).Edge()
+
+
+def test_largest_finds_narrow_lobes_of_two_splines():
+    """Two splines along y 0: A from x 0 to 5.1 with a narrow lobe down to
+    (5, -6), B from x 10 back to 4.9 with a narrow lobe up to (5, 6), each
+    lobe a sliver of the parameter (200 points before it). Their ends at x 0
+    and x 10 are 10 apart and each the other's farthest point: from there,
+    moving each end to the farthest point of the other curve stays put. The
+    lobes' tips are 12 apart (and farther: the interpolation overshoots).
+    The answer is as far as a brute force over 4 000 x 4 000 points finds."""
+    import numpy as np
+    from OCP.BRepAdaptor import BRepAdaptor_Curve
+
+    from app.measure import max_distance
+
+    a = _spline([(5 * i / 199 * 0.98, 0) for i in range(200)] + [(5, -6), (5.02, 0), (5.1, 0)])
+    b = _spline([(10 - 5 * i / 199 * 0.98, 0) for i in range(200)] + [(5, 6), (4.98, 0), (4.9, 0)])
+
+    def dense(edge, n=4000):
+        c = BRepAdaptor_Curve(edge)
+        u0, u1 = c.FirstParameter(), c.LastParameter()
+        return np.array([[q.X(), q.Y(), q.Z()] for q in (c.Value(u0 + (u1 - u0) * i / (n - 1)) for i in range(n))])
+
+    pa, pb = dense(a), dense(b)
+    brute = max(float(np.sqrt(((pa[i : i + 500, None, :] - pb[None, :, :]) ** 2).sum(-1)).max()) for i in range(0, len(pa), 500))
+    assert brute > 12, brute
+    r = max_distance(a, b)
+    assert brute - 1e-6 <= r["value"] <= brute + 1e-2, (r["value"], brute)

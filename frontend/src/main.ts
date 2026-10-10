@@ -243,6 +243,7 @@ let modelPanel = false
 function applyEmptyPanel(empty: boolean): void {
   modelPanel = !empty
   for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
+  showDistanceCtl()
   for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
@@ -328,9 +329,9 @@ const distanceCtl = gui
     // a first point that waits says what its partner will measure
     if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
   })
-/** 距離 shows in 計測 on a 3D model (a drawing measures its own way) */
+/** 距離 shows in 計測 on a 3D model (a drawing measures its own way; the empty screen has nothing to measure) */
 function showDistanceCtl(): void {
-  distanceCtl.show(state.mode === '計測' && !is2D)
+  distanceCtl.show(modelPanel && state.mode === '計測' && !is2D)
 }
 showDistanceCtl()
 const clearCtl = gui.add(actions, 'clearMeasure').name('計測クリア')

@@ -61,6 +61,7 @@ from OCP.BRepExtrema import BRepExtrema_DistShapeShape
 from OCP.BRepGProp import BRepGProp
 from OCP.BRepLProp import BRepLProp_CLProps, BRepLProp_SLProps
 from OCP.Extrema import Extrema_ExtPC
+from OCP.GCPnts import GCPnts_UniformAbscissa
 from OCP.GeomAbs import (
     GeomAbs_BezierCurve,
     GeomAbs_BezierSurface,
@@ -113,8 +114,10 @@ TURN_TOL = 1e-9
 # two axes count as parallel when the sine of their angle is at most this (a
 # micrometre over a metre); the centre distance of axes is that of parallel ones
 AXIS_PARALLEL_SIN = 1e-6
-# points along each edge where the farthest pair of two edges is first looked for
+# points along each edge (evenly by length) where the farthest pair of two edges is first looked for
 MAX_SAMPLES = 64
+# the farthest pairs among those (each a peak of the sampled distances) climbed from
+MAX_STARTS = 16
 
 
 def _resolve(ref: dict[str, Any], meshes: list[PartMesh]) -> TopoDS_Shape:
@@ -291,9 +294,12 @@ def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
     and edges (a face's largest needs a definition first: said so).
 
     A vertex and an edge: the farthest point of the edge, exactly. Two edges:
-    the farthest of MAX_SAMPLES x MAX_SAMPLES points along them, then from each
-    end in turn the exactly farthest point of the other edge, until it grows no
-    more (lines end at their ends, circles at their far points)."""
+    MAX_SAMPLES points along each, evenly by length (a narrow lobe of a spline
+    still has its length: it gets points). Every pair that is farther than the
+    pairs around it is a start (up to MAX_STARTS, the farthest): from there, each
+    end in turn moves to the exactly farthest point of the other edge until the
+    pair grows no more (lines end at their ends, circles at their far points).
+    The farthest pair reached is the answer."""
     kinds = []
     for shape, which in ((sa, "1 点目"), (sb, "2 点目")):
         kind = shape.ShapeType()
@@ -309,12 +315,36 @@ def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
         pb = BRep_Tool.Pnt_s(TopoDS.Vertex_s(sb))
         return _answer("max", _farthest_on(BRepAdaptor_Curve(TopoDS.Edge_s(sa)), pb), pb)
     ca, cb = BRepAdaptor_Curve(TopoDS.Edge_s(sa)), BRepAdaptor_Curve(TopoDS.Edge_s(sb))
+    pts_a, pts_b = _along(ca), _along(cb)
+    d2 = [[p.SquareDistance(q) for q in pts_b] for p in pts_a]
+    n, m = len(pts_a), len(pts_b)
 
-    def along(c: BRepAdaptor_Curve) -> list[gp_Pnt]:
-        u0, u1 = c.FirstParameter(), c.LastParameter()
-        return [c.Value(u0 + (u1 - u0) * i / (MAX_SAMPLES - 1)) for i in range(MAX_SAMPLES)]
+    def peak(i: int, j: int) -> bool:
+        return all(d2[i][j] >= d2[k][l] for k in (i - 1, i, i + 1) for l in (j - 1, j, j + 1) if 0 <= k < n and 0 <= l < m)
 
-    pa, pb = max(((p, q) for p in along(ca) for q in along(cb)), key=lambda pq: pq[0].SquareDistance(pq[1]))
+    starts = sorted((d2[i][j], i, j) for i in range(n) for j in range(m) if peak(i, j))[-MAX_STARTS:]
+    best: tuple[gp_Pnt, gp_Pnt] | None = None
+    for _, i, j in starts:
+        pa, pb = _climb(ca, cb, pts_a[i], pts_b[j])
+        if best is None or pa.SquareDistance(pb) > best[0].SquareDistance(best[1]):
+            best = (pa, pb)
+    return _answer("max", *best)
+
+
+def _along(c: BRepAdaptor_Curve) -> list[gp_Pnt]:
+    """MAX_SAMPLES points evenly spread by length along the curve (by parameter if that fails)"""
+    try:
+        ua = GCPnts_UniformAbscissa(c, MAX_SAMPLES)
+        if ua.IsDone() and ua.NbPoints() >= 2:
+            return [c.Value(ua.Parameter(i)) for i in range(1, ua.NbPoints() + 1)]
+    except Exception:  # an adaptor the length cannot be taken of: by parameter
+        pass
+    u0, u1 = c.FirstParameter(), c.LastParameter()
+    return [c.Value(u0 + (u1 - u0) * i / (MAX_SAMPLES - 1)) for i in range(MAX_SAMPLES)]
+
+
+def _climb(ca: BRepAdaptor_Curve, cb: BRepAdaptor_Curve, pa: gp_Pnt, pb: gp_Pnt) -> tuple[gp_Pnt, gp_Pnt]:
+    """from (pa, pb), each end in turn to the exactly farthest point of the other curve, until it grows no more"""
     for _ in range(100):
         qb = _farthest_on(cb, pa)
         qa = _farthest_on(ca, qb)
@@ -323,7 +353,7 @@ def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
             pa, pb = qa, qb  # the exact points, also when they gained nothing
         if gain <= 1e-12:
             break
-    return _answer("max", pa, pb)
+    return pa, pb
 
 
 def _flat(shape: TopoDS_Shape) -> tuple[str, gp_Vec] | None:
