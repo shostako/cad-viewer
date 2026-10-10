@@ -220,6 +220,14 @@ export class CheckPanel {
     }
   }
 
+  /** a place's row as one line: 「薄肉 1.20 mm · ribbed_plate (-0.6, -23.0, 10.0)」 (the 記録's 該当箇所) */
+  caption(row: CheckRow): string {
+    const s = row.spot
+    const face = s.faceId === null ? '' : ` 面#${s.faceId}`
+    const area = row.kind === 'thin' ? '' : ` ${fmtNum(s.area, 1)} mm²`
+    return `${CHECK_KIND_NAMES[row.kind]} ${spotText(row.kind, s)}${area} · ${this.hooks.partName(s.partId)}${face} ${shortPoint(s.at)}`
+  }
+
   /** the whole list as tab-separated lines with a head line (Excel splits them into cells) */
   tsv(): string {
     const t = this.cells()

@@ -119,6 +119,7 @@ with nav_session() as n:
     n.settle()
     check = page.evaluate("window.__cadCheck()")
     n_check = len(check["rows"]) + len(check["undecided"])
+    n_spots = min(12, len(check["rows"]))  # the page's 該当箇所: the first 12 places (test_report_spots.py)
     list_value = page.inner_text("#measure-list li .m-value")
     panel = {k: page.inner_text(f"#props-total-{k}") for k in ("volume", "mass", "proj", "clamp")}
 
@@ -129,7 +130,7 @@ with nav_session() as n:
     vw, vh = page.evaluate("[innerWidth, innerHeight]")
     assert 0 <= pop[0] and pop[2] <= gui[0] and 0 <= pop[1] and pop[3] <= vh, ("left of the column, in the window", pop, gui, vh)
     what = page.inner_text("#report-what")
-    assert what == f"載せるもの: 計測 1 件・問題の一覧 {n_check} 行・体積・重量・いまの画面", what
+    assert what == f"載せるもの: 計測 1 件・問題の一覧 {n_check} 行・体積・重量・いまの画面・該当箇所の画像 {n_spots} 枚（印刷用のページ）", what
     page.keyboard.press("Escape")
     assert not card_shown(), "Esc closes the card"
     open_card()
@@ -251,7 +252,11 @@ with nav_session() as n:
             assert head_line.startswith("種類値単位部品") and head_line.endswith("出どころ"), (k, [lines[y] for y in above[-2:]])
         assert with_rows >= 2, with_rows
         imgs = [(k, r) for k, pg in enumerate(doc) for info in pg.get_images() for r in pg.get_image_rects(info[0])]
-        assert len(imgs) == 1, ("the image whole, on one page", imgs)
+        # the view's image and the places' (該当箇所): each whole on one page, none twice
+        assert len(imgs) == 1 + n_spots, ("each image whole, on one page", len(imgs), imgs[:3])
+        for k, r in imgs:
+            box = doc[k].rect
+            assert box.x0 - 1 <= r.x0 and r.x1 <= box.x1 + 1 and box.y0 - 1 <= r.y0 and r.y1 <= box.y1 + 1, ("an image within its page", k, r)
         print("3 page", tab.title(), f"{pages} page(s), the long one {long_pages}; head on every page with rows ({with_rows})")
     else:
         print("3 page", tab.title(), f"{pages} page(s), the long one {long_pages} (PyMuPDF not here: the pages' text not read)")

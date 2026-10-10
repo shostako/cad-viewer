@@ -113,7 +113,7 @@ export class SpotNav {
    * of the visible parts, and when a colouring is turned off.
    */
   revalidate(): void {
-    if (this.kind === null) return
+    if (this.held || this.kind === null) return
     if (this.keyOf(this.kind) === this.key) return
     this.viewer.clearSpot()
     this.kind = null
@@ -121,6 +121,24 @@ export class SpotNav {
     this.list = []
     this.index = -1
     this.showStates()
+  }
+
+  /** holding(): revalidate waits */
+  private held = 0
+
+  /**
+   * Run fn with the place gone to kept: colours changed and put back meanwhile
+   * (the 記録's images of the 問題の一覧's places) do not forget it, nor take
+   * its marker away. Checked once fn is done (the colours are back by then).
+   */
+  async holding<T>(fn: () => Promise<T>): Promise<T> {
+    this.held++
+    try {
+      return await fn()
+    } finally {
+      this.held--
+      if (!this.held) this.revalidate()
+    }
   }
 
   /** the place gone to last, for the E2E (null: none since the last change) */

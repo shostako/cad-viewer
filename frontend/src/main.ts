@@ -476,6 +476,64 @@ window.addEventListener(
   },
   { capture: true },
 )
+/** the 問題の一覧's places the page shows an image of, at most (the first ones: the list's order) */
+const SPOT_IMAGES_MAX = 12
+/** an image of a place in the page: this wide at most (px), a JPEG */
+const SPOT_IMAGE_PX = 720
+/** the places the page will show an image of */
+function reportSpotRows(): CheckRow[] {
+  return is2D ? [] : (checkPanel.state.result?.rows ?? []).slice(0, SPOT_IMAGES_MAX)
+}
+/**
+ * An image of each of the first places of the 問題の一覧 (the page's 該当箇所):
+ * each in its kind's colours, framed as its row's press frames it, with a
+ * ring on its point. The view and the colouring on screen are put back.
+ */
+async function reportSpots(): Promise<NonNullable<Report['spots']> | undefined> {
+  const rows = reportSpotRows()
+  const all = checkPanel.state.result?.rows.length ?? 0
+  if (!rows.length) return undefined
+  const was = { thick: thicknessState.enabled, draft: draftState.enabled }
+  const items: { caption: string; image: string }[] = []
+  // a place gone to with a legend's button stays (its marker, its index, what
+  // F fits): the colours change for the images and come back
+  await spotNav.holding(async () => {
+    try {
+      for (const row of rows) {
+        await colourFor(row.kind)
+        items.push({ caption: checkPanel.caption(row), image: shrunkJpeg(viewer.spotSnapshot(row.spot, 'white'), SPOT_IMAGE_PX) })
+      }
+    } finally {
+      // the colouring as it was (the view the viewer has put back itself)
+      if (thicknessState.enabled && !was.thick) {
+        thicknessState.enabled = false
+        clearThickness()
+      }
+      if (draftState.enabled !== was.draft) {
+        draftState.enabled = was.draft
+        updateDraft()
+      }
+      if (was.thick && !thicknessState.enabled) {
+        thicknessState.enabled = true
+        await updateThickness()
+      }
+    }
+  })
+  return { title: rows.length < all ? `該当箇所（${rows.length} / ${all} 行）` : `該当箇所（${all} 行）`, items }
+}
+/** a canvas as a JPEG data URL, at most `px` wide */
+function shrunkJpeg(src: HTMLCanvasElement, px: number): string {
+  const k = Math.min(1, px / src.width)
+  const out = document.createElement('canvas')
+  out.width = Math.max(1, Math.round(src.width * k))
+  out.height = Math.max(1, Math.round(src.height * k))
+  const ctx = out.getContext('2d')
+  if (!ctx) return src.toDataURL('image/jpeg', 0.85)
+  ctx.fillStyle = '#ffffff'
+  ctx.fillRect(0, 0, out.width, out.height)
+  ctx.drawImage(src, 0, 0, out.width, out.height)
+  return out.toDataURL('image/jpeg', 0.85)
+}
 /** 「計測 3 件・問題の一覧 14 行・体積・重量・いまの画面」: what the record will hold */
 function reportSummary(): string {
   const parts = [`計測 ${listRows.length} 件`]
@@ -485,6 +543,8 @@ function reportSummary(): string {
     parts.push(propsPanel.reportTables() ? '体積・重量' : '体積・重量なし（計算中か、計算できない）')
   }
   parts.push('いまの画面')
+  const spots = reportSpotRows().length
+  if (spots) parts.push(`該当箇所の画像 ${spots} 枚（印刷用のページ）`)
   return parts.join('・')
 }
 const FORMAT_NAMES: Record<string, string> = { brep: 'B-rep（STEP・IGES）', mesh: 'メッシュ（STL など）', drawing: '図面（DXF・DWG）' }
@@ -592,6 +652,8 @@ async function openReportPage(): Promise<void> {
     // 3D: no await before snapshot(), which renders and copies in one task
     const canvas = is2D ? await drawing2d.snapshot('white') : viewer.snapshot('white')
     r.image = canvas.toDataURL('image/png')
+    // the places, after the view's image (they turn the camera and the colours, and put them back)
+    r.spots = await reportSpots()
     const blob = new Blob([reportHtml(r)], { type: 'text/html;charset=utf-8' })
     if (tab) {
       const url = URL.createObjectURL(blob)
@@ -1395,16 +1457,16 @@ function scheduleChecks(): void {
   clearTimeout(checkTimer)
   checkTimer = window.setTimeout(() => void updateChecks(), 150)
 }
-/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
-function goToCheck(row: CheckRow): void {
-  if (row.kind === 'thin') {
+/** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
+async function colourFor(kind: CheckRow['kind']): Promise<void> {
+  if (kind === 'thin') {
     if (!(thicknessState.enabled && colorOwner === 'thickness')) {
       if (draftState.enabled) {
         draftState.enabled = false
         updateDraft()
       }
       thicknessState.enabled = true
-      void updateThickness() // the list's thickness is cached: painted at once
+      await updateThickness() // the list's thickness is cached: painted at once
     }
   } else if (!(draftState.enabled && colorOwner === 'draft')) {
     if (thicknessState.enabled) {
@@ -1414,6 +1476,10 @@ function goToCheck(row: CheckRow): void {
     draftState.enabled = true
     updateDraft()
   }
+}
+/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
+function goToCheck(row: CheckRow): void {
+  void colourFor(row.kind)
   viewer.goToSpot(row.spot, spotText(row.kind, row.spot))
   checkSpot = row.spot
   checkPanel.setCurrent(row)

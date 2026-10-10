@@ -63,6 +63,8 @@ const SPOT_MIN_SHARE = 0.15
 const SPOT_POINT_SHARE = 0.3
 /** a place on a face that looks sideways is seen from this much above (about 22°): the faces around it are not edge-on */
 const SPOT_TILT = 0.4
+/** the ring the 記録's images put on a place's point (spotSnapshot): the spot marker's colour (style.css .spot-ring) */
+export const SPOT_RING_COLOR = '#ffd060'
 /** share of the limiting dimension of the fit area a fit fills; the rest is margin */
 const FIT_FILL = 0.88
 /**
@@ -1131,6 +1133,15 @@ export class Viewer {
     const from = this.pose()
     this.finishViewAnim()
     this.stopInertia()
+    const box = this.frameSpot(spot)
+    this.rememberFit(null, box)
+    this.showSpotMarker(new THREE.Vector3(...spot.at), text)
+    this.spotShown = spot
+    this.animateFrom(from)
+  }
+
+  /** the camera on a place, as goToSpot sets it (no motion); the box it framed */
+  private frameSpot(spot: Spot): THREE.Box3 {
     const dir = new THREE.Vector3(...spot.normal).normalize() // from the place toward the camera
     if (Math.abs(dir.z) < 0.9) dir.addScaledVector(WORLD_UP, SPOT_TILT).normalize()
     const pole = new THREE.Vector3(...PRESETS[dir.z > 0 ? 'top' : 'bottom'].up)
@@ -1150,10 +1161,61 @@ export class Viewer {
     const half = new THREE.Vector3(Math.max(size.x, least), Math.max(size.y, least), Math.max(size.z, least)).multiplyScalar(0.5)
     box.set(centre.clone().sub(half), centre.clone().add(half))
     this.frameBox(box, dir.clone().negate())
-    this.rememberFit(null, box)
-    this.showSpotMarker(new THREE.Vector3(...spot.at), text)
-    this.spotShown = spot
-    this.animateFrom(from)
+    return box
+  }
+
+  /**
+   * An image of a place as goToSpot shows it (the 記録's 該当箇所), framed in
+   * the whole canvas (no panel is in an image: they are not avoided), with a
+   * ring on its point. The view on screen is put back as it was, and so is
+   * what the next F fits.
+   */
+  spotSnapshot(spot: Spot, background: ExportBackground): HTMLCanvasElement {
+    const before = this.pose()
+    const up = this.camera.up.clone()
+    const fit = this.lastFit
+    // frameBox sets the depth range too (and the parallel zoom limits from it)
+    const depth = { near: this.persp.near, far: this.persp.far }
+    this.finishViewAnim()
+    this.stopInertia()
+    const avoid = this.fitArea
+    try {
+      this.fitArea = () => null
+      this.frameSpot(spot)
+      this.prepareCamera()
+      const shot = this.snapshot(background)
+      // the ring on the place's point, as the screen's marker draws it
+      const p = new THREE.Vector3(...spot.at).project(this.camera)
+      const ctx = shot.getContext('2d')
+      if (ctx && Math.abs(p.z) <= 1) {
+        const x = ((p.x + 1) / 2) * shot.width
+        const y = ((1 - p.y) / 2) * shot.height
+        // sized by the image (it is shrunk for the page): seen at any width
+        const r = 0.025 * shot.width
+        ctx.lineWidth = 0.009 * shot.width
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)'
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, 2 * Math.PI)
+        ctx.stroke()
+        ctx.lineWidth = 0.005 * shot.width
+        ctx.strokeStyle = SPOT_RING_COLOR
+        ctx.beginPath()
+        ctx.arc(x, y, r, 0, 2 * Math.PI)
+        ctx.stroke()
+      }
+      return shot
+    } finally {
+      this.fitArea = avoid
+      this.persp.near = depth.near
+      this.persp.far = depth.far
+      this.persp.updateProjectionMatrix()
+      this.applyOrthoZoomLimits()
+      this.applyPose(before, up)
+      this.lastFit = fit
+      this.renderer.render(this.scene, this.camera)
+      this.labelRenderer.render(this.scene, this.camera)
+      this.wake()
+    }
   }
 
   /** the place goToSpot went to, while its marker is up (null: none) */

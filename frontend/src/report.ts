@@ -76,6 +76,14 @@ export interface Report {
   tables: ReportTable[]
   /** the view as on screen (a PNG data URL); null: none */
   image: string | null
+  /** the 問題の一覧's places, an image each (the page only): their title (「該当箇所（12 / 16 行）」) and the images */
+  spots?: { title: string; items: ReportSpot[] }
+}
+
+/** a place of the 問題の一覧 in the 記録: what its row says, and an image of it (a JPEG data URL) */
+export interface ReportSpot {
+  caption: string
+  image: string
 }
 
 /** a Num as the page writes it */
@@ -160,6 +168,14 @@ function tableHtml(t: ReportTable): string {
   return `<section><h2>${esc(t.title)}</h2>${note}<table><thead><tr>${head}</tr></thead><tbody>${rows}</tbody></table></section>`
 }
 
+/** the places' images, two a row; an image and its caption never split across pages */
+function spotsHtml(s: { title: string; items: ReportSpot[] }): string {
+  const figs = s.items
+    .map((it, i) => `<figure class="spot"><img src="${it.image}" alt="該当箇所 ${i + 1}"><figcaption>${i + 1}. ${esc(it.caption)}</figcaption></figure>`)
+    .join('')
+  return `<section class="spots"><h2>${esc(s.title)}</h2><div class="spot-grid">${figs}</div></section>`
+}
+
 /**
  * The page to print: A4 portrait. The head (the file, the review) and the
  * image keep together; a table may run onto the next page, never splitting a
@@ -217,6 +233,10 @@ th, td { border-bottom: 1px solid var(--rule); padding: 2px 4px; text-align: lef
 thead th { background: var(--band); font-weight: 600; border-bottom: 1px solid var(--ink-3); white-space: nowrap; }
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 tr { break-inside: avoid; }
+.spot-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
+figure.spot { margin: 0; text-align: left; }
+figure.spot img { width: 100%; max-height: 60mm; object-fit: contain; border: 1px solid var(--rule); }
+figure.spot figcaption { font-size: 7.5pt; color: var(--ink); overflow-wrap: anywhere; }
 footer { margin-top: 12px; padding-top: 4px; border-top: 1px solid var(--rule); font-size: 7.5pt; color: var(--ink-2); break-inside: avoid; }
 footer dl { display: grid; grid-template-columns: max-content 1fr; gap: 0 8px; margin: 2px 0 0; }
 footer dt { font-weight: 600; }
@@ -242,6 +262,7 @@ footer dd { margin: 0; }
 </div>
 ${image}
 ${r.tables.map(tableHtml).join('\n')}
+${r.spots && r.spots.items.length ? spotsHtml(r.spots) : ''}
 <footer>値の出どころ<dl>${sources}</dl></footer>
 </main>
 </body>
