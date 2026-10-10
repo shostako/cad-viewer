@@ -122,19 +122,19 @@ def vertex_thickness_ball(
         hi = np.where(fits, hi, mid)
 
     # What stopped the sphere: at the first size that did not fit (hi), the
-    # surface nearest its centre is what it ran into. Across the wall, that is
-    # well over a radius from the vertex (a parallel wall: 2t, the wedge's
-    # bottom: 1.9t, the floor of a square notch: 1.41t). Beside the vertex, at
-    # most t from it, the sphere cut the face next to the vertex: a corner, a
-    # convex crease however shallow (the faces t·sin θ away, t on a right
-    # angle), the flat strips of a convex curved surface. No sphere fits there;
-    # only the tolerance (dist >= t - tol) let one in, up to tol / (1 - cos θ):
-    # a wall a fraction of a mm thin that is not there (#63). No value. The
-    # line is drawn at 1.2t, between the right angle's t and the notch's 1.41t.
+    # triangle nearest its centre is what it ran into. A face that passes
+    # through the vertex (a corner, a convex crease however shallow, the
+    # neighbouring flat strip of a convex curved surface) cuts every sphere
+    # tangent there, however small: no sphere fits, and only the tolerance
+    # (dist >= t - tol) let one in, up to tol / (1 - cos θ), a wall a fraction
+    # of a mm thin that is not there (#63). Those have no value. A face that
+    # does not reach the vertex is a wall across (the far side, a chamfer
+    # nearby): its value stands.
     blocked = np.flatnonzero((lo > 0) & (hi < hi0 * (1 - 1e-9)))
     if blocked.size:
-        q, _, _ = pq.on_surface(p[blocked] - n[blocked] * hi[blocked][:, None])
-        beside = np.linalg.norm(q - p[blocked], axis=1) < 1.2 * hi[blocked]
-        lo[blocked[beside]] = 0.0
+        _, _, tri = pq.on_surface(p[blocked] - n[blocked] * hi[blocked][:, None])
+        on_tri = trimesh.triangles.closest_point(mesh.triangles[tri], p[blocked])
+        through = np.linalg.norm(on_tri - p[blocked], axis=1) <= tol
+        lo[blocked[through]] = 0.0
     out[hit] = (2.0 * lo).astype(np.float32)
     return out

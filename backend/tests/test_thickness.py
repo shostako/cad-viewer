@@ -231,3 +231,21 @@ def test_ball_gives_no_false_thin_value_on_a_cylinder():
     assert side.sum() > 0
     ok = (t[side] == 0) | ~np.isfinite(t[side]) | (t[side] > 0.9 * 10)
     assert np.all(ok), t[side][~ok]
+
+
+def test_ball_keeps_a_value_beside_a_chamfer():
+    """The top of a block 12 high whose edge is cut by a 45° chamfer (from x 32
+    on the top down to z 4 at x 40). At x 30, 2 mm from the chamfer, the
+    sphere is stopped by the chamfer before the bottom: its diameter is
+    2 * 2 / (√2 - 1) = 9.66. The chamfer does not pass through the vertex, so
+    this is a wall across, not a face beside it (the contact is 0.76 t from the
+    vertex: a test by that distance alone took it for one)."""
+    from app.thickness import vertex_thickness_ball
+
+    pts = [(x, y, z) for y in (0, 100) for x, z in ((0, 0), (40, 0), (40, 4), (32, 12), (0, 12))]
+    block = trimesh.convex.convex_hull(np.array(pts, dtype=float)).subdivide().subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(block)
+    t = vertex_thickness_ball(pos, nrm, idx)
+    near = (np.abs(pos[:, 0] - 30) < 1e-6) & (np.abs(pos[:, 2] - 12) < 1e-6) & (pos[:, 1] > 20) & (pos[:, 1] < 80)
+    assert near.sum() > 0
+    assert np.allclose(t[near], 4 / (np.sqrt(2) - 1), rtol=0.03), t[near]
