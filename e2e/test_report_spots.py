@@ -8,7 +8,8 @@
   a 薄肉 or a 勾配不足 in the warm colours of the heatmap or the draft
   colouring around the ring, a 反対側 in blue.
 - Making them leaves the screen as it was: the view, the colouring (none on;
-  the heatmap on; with 薄肉 alone, the last images in the heatmap), the legends.
+  the heatmap on; with 薄肉 alone, the last images in the heatmap), the legends,
+  a place gone to with a legend's button (its marker, its index, what F fits).
 - Without the list: no 該当箇所.
 
 Oracles (none from the code under test): ribbed_plate.stl's make
@@ -154,8 +155,32 @@ with nav_session() as n:
     gui_common.ctl(page, "ヒートマップ").locator("input").check()
     page.wait_for_function("!document.querySelector('#thickness-legend').classList.contains('hidden')", timeout=60000)
     n.settle()
+    # and a place gone to with the legend's button: it stays (its marker, its index, what F fits)
+    page.locator(".go-btn[data-go='thin']").click()
+    n.settle()
+    page.wait_for_timeout(450)  # the move takes 0.3 s
+    n.settle()
+    went = page.evaluate("window.__cadSpot()")
+    state = page.inner_text(".go-state[data-go='thin']")
+    assert went and went["index"] == 0 and page.locator(".spot-marker").count() == 1, went
+
+    def press_f():
+        page.mouse.move(5, 400)
+        page.keyboard.press("f")
+        n.settle()
+        page.wait_for_timeout(450)
+        n.settle()
+        return n.view()
+
+    # what F fits there (the place's box, kept by the fit), before the 記録
+    at_place = press_f()
     assert make_page() == 12
     assert colouring() == {"heat": True, "draft": False}, ("the heatmap as it was", colouring())
+    kept = page.evaluate("window.__cadSpot()")
+    assert kept and kept["kind"] == "thin" and kept["index"] == 0, ("the place gone to stays", kept)
+    assert page.locator(".spot-marker").count() == 1 and page.inner_text(".go-state[data-go='thin']") == state, "its marker and its index"
+    refit = press_f()
+    assert all(abs(x - y) < 1e-6 for x, y in zip(refit["position"], at_place["position"])), ("F fits the place again", refit["position"], at_place["position"])
     gui_common.ctl(page, "ヒートマップ").locator("input").uncheck()
     n.settle()
 

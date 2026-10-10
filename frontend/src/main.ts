@@ -495,26 +495,30 @@ async function reportSpots(): Promise<NonNullable<Report['spots']> | undefined> 
   if (!rows.length) return undefined
   const was = { thick: thicknessState.enabled, draft: draftState.enabled }
   const items: { caption: string; image: string }[] = []
-  try {
-    for (const row of rows) {
-      await colourFor(row.kind)
-      items.push({ caption: checkPanel.caption(row), image: shrunkJpeg(viewer.spotSnapshot(row.spot, 'white'), SPOT_IMAGE_PX) })
+  // a place gone to with a legend's button stays (its marker, its index, what
+  // F fits): the colours change for the images and come back
+  await spotNav.holding(async () => {
+    try {
+      for (const row of rows) {
+        await colourFor(row.kind)
+        items.push({ caption: checkPanel.caption(row), image: shrunkJpeg(viewer.spotSnapshot(row.spot, 'white'), SPOT_IMAGE_PX) })
+      }
+    } finally {
+      // the colouring as it was (the view the viewer has put back itself)
+      if (thicknessState.enabled && !was.thick) {
+        thicknessState.enabled = false
+        clearThickness()
+      }
+      if (draftState.enabled !== was.draft) {
+        draftState.enabled = was.draft
+        updateDraft()
+      }
+      if (was.thick && !thicknessState.enabled) {
+        thicknessState.enabled = true
+        await updateThickness()
+      }
     }
-  } finally {
-    // the colouring as it was (the view the viewer has put back itself)
-    if (thicknessState.enabled && !was.thick) {
-      thicknessState.enabled = false
-      clearThickness()
-    }
-    if (draftState.enabled !== was.draft) {
-      draftState.enabled = was.draft
-      updateDraft()
-    }
-    if (was.thick && !thicknessState.enabled) {
-      thicknessState.enabled = true
-      await updateThickness()
-    }
-  }
+  })
   return { title: rows.length < all ? `該当箇所（${rows.length} / ${all} 行）` : `該当箇所（${all} 行）`, items }
 }
 /** a canvas as a JPEG data URL, at most `px` wide */
