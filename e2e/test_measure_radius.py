@@ -58,10 +58,11 @@ HOVER = {
     "pin_side": " ⌀6.000", "corner_arc": " R5.000", "hole_rim": " ⌀6.000",
 }
 COPY = {
-    "corner": "半径\t5.000\tmm\tbody 円筒面\t",
-    "dimple": "半径\t4.000\tmm\tbody 球面\t",
-    "boss_side": "勾配\t2.000\t°\tbody 円錐面\t",
-    "pin_round": "半径\t1.000\tmm\tnurbs_pin 曲面（クリックした点）\t",
+    # (the last three cells, ΔX ΔY ΔZ, are a distance's)
+    "corner": "半径\t5.000\tmm\tbody 円筒面\t\t\t\t",
+    "dimple": "半径\t4.000\tmm\tbody 球面\t\t\t\t",
+    "boss_side": "勾配\t2.000\t°\tbody 円錐面\t\t\t\t",
+    "pin_round": "半径\t1.000\tmm\tnurbs_pin 曲面（クリックした点）\t\t\t\t",
 }
 
 tmp = tempfile.mkdtemp(prefix="cad_radius_")

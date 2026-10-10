@@ -85,6 +85,9 @@ with nav_session() as n:
     # ---- 4. a change landing by itself: the heatmap's answer held back 2 s
     n.settle()
     page.wait_for_timeout(1500)
+    # the arrow key and 自動回転 turned the view: where the plate's top is now
+    # (the point taken at the start can be off the plate by now)
+    plate = n.project((90, 10, 15))
     before = shown(plate)
     held = []
 

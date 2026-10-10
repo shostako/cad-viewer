@@ -69,7 +69,8 @@ with nav_session() as n:
     assert page.locator(".dim-label", has_text="90.000").first.inner_text() == "90.000°"
     page.locator("#measure-list li").nth(1).locator(".m-copy").click()
     page.wait_for_timeout(100)
-    assert page.evaluate("navigator.clipboard.readText()") == f"角度\t90.000\t°\t{a}\t{b}", page.evaluate("navigator.clipboard.readText()")
+    # (the last three cells, ΔX ΔY ΔZ, are a distance's)
+    assert page.evaluate("navigator.clipboard.readText()") == f"角度\t90.000\t°\t{a}\t{b}\t\t\t", page.evaluate("navigator.clipboard.readText()")
 
     # ---- 2. parallel tops: no angle
     new = measure(BLOCK_TOP, PLATE_TOP)

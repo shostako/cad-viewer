@@ -2,10 +2,11 @@
  * The 計測 list as a record to copy into a report or Excel (issue #23 item 8).
  *
  * A row shows its value first, with its unit ("20.000 mm"), a mark of its
- * kind (distance, ⌀, R, angle, draft, note), and what was measured on a second, smaller line
- * ("cavity_block 面#6 ↔ plate 面#6"). Each row copies its own line, the
- * list's head copies all of them: tab separated (種類, 値, 単位, 対象 A,
- * 対象 B), which Excel pastes into cells.
+ * kind (distance, ⌀, R, angle, draft, note), and what was measured on a
+ * second, smaller line ("cavity_block 面#6 ↔ plate 面#6"). A third line says
+ * where: a slanted distance's ΔX, ΔY and ΔZ, a whole circle's centre. Each row
+ * copies its own line, the list's head copies all of them: tab separated
+ * (種類, 値, 単位, 対象 A, 対象 B, ΔX, ΔY, ΔZ), which Excel pastes into cells.
  *
  * The saved entries (sidecars) keep their form: a row is read out of an
  * entry's text and label as the measure tool writes them, so entries saved
@@ -15,6 +16,7 @@ import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { LENGTH_UNIT, type EntryData } from './measure'
+import { fmt, pointText } from './sizes'
 
 export type RowKind = 'distance' | 'diameter' | 'radius' | 'angle' | 'draft' | 'note' | 'other'
 
@@ -30,6 +32,28 @@ export interface RowView {
   /** for the copy: the two things measured (a diameter or a note has one) */
   a: string
   b: string
+  /** for the copy: a distance's ΔX, ΔY, ΔZ (sizes, no sign; a drawing has no ΔZ) */
+  axes?: [string, string, string]
+  /** the third line: where (a slanted distance's ΔX ΔY ΔZ, a whole circle's centre) */
+  where?: string
+}
+
+/** a saved point (a sidecar anyone can edit: anything else reads as none) */
+function xyzOf(v: unknown): [number, number, number] | null {
+  return Array.isArray(v) && v.length === 3 && v.every((c) => typeof c === 'number' && Number.isFinite(c))
+    ? (v as [number, number, number])
+    : null
+}
+
+/**
+ * ΔX ΔY ΔZ as the copy has them, and the third line when the distance is
+ * slanted (along two axes or more). A no-break space ties each Δ to its
+ * number: a narrow list wraps the line between them, never inside one.
+ */
+function axesOf(delta: [number, number, number]): { axes: [string, string, string]; where?: string } {
+  const axes = delta.map((c) => fmt(Math.abs(c))) as [string, string, string]
+  const along = axes.filter((c) => c !== fmt(0)).length
+  return along >= 2 ? { axes, where: `ΔX\u00a0${axes[0]}　ΔY\u00a0${axes[1]}　ΔZ\u00a0${axes[2]}` } : { axes }
 }
 
 const KIND_NAME: Record<RowKind, string> = {
@@ -56,7 +80,17 @@ export function entryRow(raw: EntryData): RowView {
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
   if (d.labelText.startsWith('⌀') && dia) {
     const what = `${dia[1]}${dia[3]}`.trim()
-    return { kind: 'diameter', value: dia[2], unit: LENGTH_UNIT, mark: '⌀', what, a: what, b: '' }
+    const centre = xyzOf(raw.centre)
+    return {
+      kind: 'diameter',
+      value: dia[2],
+      unit: LENGTH_UNIT,
+      mark: '⌀',
+      what,
+      a: what,
+      b: '',
+      ...(centre ? { where: `中心\u00a0${pointText(centre)}` } : {}),
+    }
   }
   // "body 円筒面 R5.000", "body 円弧 R5.000 (L=7.854)", "body 球面 SR4.000",
   // "pin 曲面 R1.000（クリックした点）": the last R of the text (a part's name may have one)
@@ -76,22 +110,30 @@ export function entryRow(raw: EntryData): RowView {
   // "cavity_block 面#6 ↔ plate 面#6 : 20.000"
   const dist = /^(.*) ↔ (.*) : ([-\d.]+)$/.exec(d.text)
   if (dist) {
-    return { kind: 'distance', value: dist[3], unit: LENGTH_UNIT, what: `${dist[1]} ↔ ${dist[2]}`, a: dist[1], b: dist[2] }
+    const delta = xyzOf(raw.delta)
+    return {
+      kind: 'distance',
+      value: dist[3],
+      unit: LENGTH_UNIT,
+      what: `${dist[1]} ↔ ${dist[2]}`,
+      a: dist[1],
+      b: dist[2],
+      ...(delta ? axesOf(delta) : {}),
+    }
   }
   return { kind: 'other', value: '', unit: '', what: d.text, a: d.text, b: '' }
 }
 
 /**
  * A drawing's measurement as a row: the distance, and its ΔX and ΔY on the
- * second line. No unit: a drawing's numbers are in its own unit (the DXF
- * does not always say which).
+ * second line (and in the copy's ΔX, ΔY). No unit: a drawing's numbers are in
+ * its own unit (the DXF does not always say which).
  */
 export function drawingRow(m: Measurement2D): RowView {
-  const dx = m.b.dxf[0] - m.a.dxf[0]
-  const dy = m.b.dxf[1] - m.a.dxf[1]
-  const fx = `ΔX ${Math.abs(dx).toFixed(3)}`
-  const fy = `ΔY ${Math.abs(dy).toFixed(3)}`
-  return { kind: 'distance', value: Math.hypot(dx, dy).toFixed(3), unit: '', what: `${fx}　${fy}`, a: fx, b: fy }
+  const dx = fmt(Math.abs(m.b.dxf[0] - m.a.dxf[0]))
+  const dy = fmt(Math.abs(m.b.dxf[1] - m.a.dxf[1]))
+  const value = Math.hypot(m.b.dxf[0] - m.a.dxf[0], m.b.dxf[1] - m.a.dxf[1]).toFixed(3)
+  return { kind: 'distance', value, unit: '', what: `ΔX ${dx}　ΔY ${dy}`, a: '', b: '', axes: [dx, dy, ''] }
 }
 
 /** a cell of the copied text: a tab or a line break inside it would split the cells */
@@ -101,12 +143,12 @@ function cell(s: string): string {
 
 /** one row as a line of tab-separated cells */
 export function rowLine(r: RowView): string {
-  return [KIND_NAME[r.kind], r.value, r.unit, r.a, r.b].map(cell).join('\t')
+  return [KIND_NAME[r.kind], r.value, r.unit, r.a, r.b, ...(r.axes ?? ['', '', ''])].map(cell).join('\t')
 }
 
 /** the whole list: a head line, then a line per row (Excel pastes it into cells) */
 export function listText(rows: readonly RowView[]): string {
-  return ['種類\t値\t単位\t対象 A\t対象 B', ...rows.map(rowLine)].join('\n')
+  return ['種類\t値\t単位\t対象 A\t対象 B\tΔX\tΔY\tΔZ', ...rows.map(rowLine)].join('\n')
 }
 
 /** the mark of a row's kind (Lucide) */
@@ -203,6 +245,13 @@ export function rowElement(
     what.textContent = r.what
     what.title = r.what
     main.appendChild(what)
+  }
+  if (r.value && r.where) {
+    const where = document.createElement('span')
+    where.className = 'm-where'
+    where.textContent = r.where
+    where.title = r.where
+    main.appendChild(where)
   }
   const del = document.createElement('button')
   del.type = 'button'

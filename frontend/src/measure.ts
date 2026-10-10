@@ -29,6 +29,10 @@ export interface EntryData {
   line?: [[number, number, number], [number, number, number]]
   markers?: [number, number, number][]
   annotation?: boolean
+  /** a distance: its line from A to B along the axes (the backend's, exact) */
+  delta?: [number, number, number]
+  /** a whole circle's centre (the backend's, exact) */
+  centre?: [number, number, number]
 }
 
 export interface MeasureEntry {
@@ -155,6 +159,7 @@ export class MeasureTool {
         labelPos: mid,
         markers: [a.pick.point.toArray() as [number, number, number], pick.point.toArray() as [number, number, number]],
         ...(res.value > 1e-12 ? { line: [pa, pb] as EntryData['line'] } : {}),
+        ...(res.delta ? { delta: res.delta } : {}),
       }
       this.addFromData(data)
       // two flat things not parallel: their angle too, as an entry of its own
@@ -316,6 +321,7 @@ export class MeasureTool {
         labelText: tag,
         // a whole circle's label at its centre (a hole's middle), the rest where it was measured
         labelPos: size.centre ?? size.at ?? near,
+        ...(size.centre ? { centre: size.centre } : {}),
       })
     } catch {
       /* info is best-effort; distance flow continues regardless */
