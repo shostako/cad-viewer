@@ -17,6 +17,7 @@ import {
   ProjectionSuperseded,
   type Axis as PullAxis,
   type DistanceMode,
+  type ModelMeta,
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
@@ -26,8 +27,8 @@ import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
 import { ICON, icon } from './icons'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
-import { MeasureTool, type EntryData } from './measure'
-import { copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
+import { LENGTH_UNIT, MeasureTool, type EntryData } from './measure'
+import { LIST_HEAD, copyText, drawingRow, entryRow, listText, rowCells, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
@@ -37,7 +38,9 @@ import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './ch
 import { SpotNav } from './spotnav'
 import { spotText } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
-import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
+import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
+import { ReportPop, SOURCE, reportCsv, reportHtml, reportTime, type Report, type ReportTable, type Review } from './report'
+import { version as appVersion } from '../package.json'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
@@ -70,6 +73,7 @@ app.innerHTML = `
     <div id="recent-pop-list"></div>
     <div id="recent-pop-empty">まだ無い（「ファイルを開く」で選んだファイルとドロップしたファイルを、新しい順に 8 件まで覚える）</div>
   </div>
+  <div id="report-pop" class="hidden"></div>
   <div id="corner-br">
     <div id="check-panel" class="hidden"></div>
     <div id="measure-panel" class="hidden">
@@ -192,10 +196,16 @@ function show2D(on: boolean): void {
   showDistanceCtl()
 }
 
-/** whether a model or drawing is on screen, and its file name (for the PNG export) */
-function setContentShown(on: boolean, fileName = ''): void {
+/**
+ * whether a model or drawing is on screen, its file name (for the PNG export)
+ * and what the backend said of it (for the 記録: its content's identity, its kind)
+ */
+function setContentShown(on: boolean, fileName = '', meta: ModelMeta | null = null): void {
   contentShown = on
   shownFileName = on ? fileName : ''
+  shownMeta = on ? meta : null
+  // the review was of the file that was on screen
+  if (!on) review = { ...review, status: 'none', comment: '' }
   // a model or a drawing on screen brings the model's controls (showEmpty
   // hides them again; a load that replaces a model keeps them meanwhile)
   if (on) applyEmptyPanel(false)
@@ -242,7 +252,8 @@ let modelPanel = false
  */
 function applyEmptyPanel(empty: boolean): void {
   modelPanel = !empty
-  for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
+  for (const c of [modeCtl, clearCtl, exportBgCtl, reportCtl]) c.show(!empty)
+  if (empty) showReportPop(false)
   showDistanceCtl()
   for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
@@ -274,6 +285,7 @@ let contentShown = false
 // file name of what is on screen (File.name, not meta.name: the backend
 // answers a duplicate upload with the first upload's name)
 let shownFileName = ''
+let shownMeta: ModelMeta | null = null
 
 let currentModelId: string | null = null
 // Sidecar-save suppression during model teardown/restore. Generation-tagged
@@ -297,8 +309,9 @@ const actions = {
     // a line asking for that point's partner is stale: back to the mode's hint
     if (modeHud && hudInfo.textContent === modeHud) showModeHint()
   },
-  // a function declaration below, so it is hoisted
+  // function declarations below, so they are hoisted
   savePng: () => void savePng(),
+  report: () => showReportPop(!reportPop.shown),
 }
 // ファイルを開く, 全体表示 and 画像を保存 are on the toolbar (and the empty
 // screen's card, F, the drop): the panel keeps what the toolbar has not
@@ -376,6 +389,8 @@ const exportBgCtl = gui
   .add(exportPrefs, 'background', { 画面のまま: 'screen', 白: 'white' })
   .name('画像の背景')
   .onChange(saveExportPrefs)
+// 確認の記録: a card (left of the column) for the review, then a CSV or a page to print
+const reportCtl = gui.add(actions, 'report').name('確認の記録…')
 let exporting = false
 async function savePng(): Promise<void> {
   // the button is disabled then too; this also covers keyboard activation and races
@@ -393,6 +408,177 @@ async function savePng(): Promise<void> {
     hudInfo.textContent = `画像を保存: ${name}`
   } catch (e) {
     hudInfo.textContent = `画像の保存に失敗: ${e instanceof Error ? e.message : e}`
+  } finally {
+    exporting = false
+  }
+}
+
+// ---- 確認の記録 (report.ts): the screen's values, a CSV and a page to print
+const REPORT_BY_KEY = 'cad-viewer:report-by'
+function loadReportBy(): string {
+  try {
+    return localStorage.getItem(REPORT_BY_KEY) ?? ''
+  } catch {
+    return '' // storage unavailable (private window, blocked site data)
+  }
+}
+/** the review typed for the file on screen: another file starts blank, the name stays */
+let review: Review = { status: 'none', by: loadReportBy(), comment: '' }
+const reportPop = new ReportPop(document.querySelector<HTMLDivElement>('#report-pop')!, {
+  summary: reportSummary,
+  csv: () => void saveReportCsv(),
+  page: () => void openReportPage(),
+  change: (r) => {
+    review = r
+    try {
+      localStorage.setItem(REPORT_BY_KEY, r.by)
+    } catch {
+      /* best-effort */
+    }
+  },
+})
+/** the card, left of the column at the height of its button */
+function showReportPop(on: boolean): void {
+  if (!on) return reportPop.hide()
+  if (!contentShown) return
+  reportPop.show(review)
+  const b = reportCtl.domElement.getBoundingClientRect()
+  const el = reportPop.el
+  el.style.right = `${Math.round(window.innerWidth - columnLeft() + COLUMN_GAP)}px`
+  el.style.top = `${Math.round(Math.max(COLUMN_MARGIN, Math.min(b.top, window.innerHeight - el.offsetHeight - COLUMN_MARGIN)))}px`
+}
+// a click anywhere else closes it (Esc: its own keys, and onNavigationKey)
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    if (!reportPop.shown) return
+    const t = e.target as Node
+    if (reportPop.el.contains(t) || reportCtl.domElement.contains(t)) return
+    reportPop.hide()
+  },
+  { capture: true },
+)
+/** 「計測 3 件・問題の一覧 14 行・体積・重量・いまの画面」: what the record will hold */
+function reportSummary(): string {
+  const parts = [`計測 ${listRows.length} 件`]
+  if (!is2D) {
+    const checks = checkPanel.cells()
+    parts.push(checks ? `問題の一覧 ${checks.rows.length} 行` : '問題の一覧なし（出していない）')
+    parts.push(propsPanel.reportTables() ? '体積・重量' : '体積・重量なし（計算中か、計算できない）')
+  }
+  parts.push('いまの画面')
+  return parts.join('・')
+}
+const FORMAT_NAMES: Record<string, string> = { brep: 'B-rep（STEP・IGES）', mesh: 'メッシュ（STL など）', drawing: '図面（DXF・DWG）' }
+/**
+ * The record's unit: a B-rep is read into mm (OCCT converts the file's own
+ * unit); a mesh and a drawing keep the file's numbers, which do not always say
+ * their unit (summary.ts)
+ */
+const RECORD_UNITS: Record<string, string> = {
+  brep: LENGTH_UNIT,
+  mesh: 'ファイルの数のまま（単位はファイルによる。体積・重量は mm とみなす）',
+  drawing: '図面の数のまま（単位は図面による）',
+}
+/**
+ * The record of what is on screen (report.ts): the file, the review, and the
+ * screen's lists and values as they are now. image: the view, or null (the CSV).
+ */
+function buildReport(at: Date, image: string | null): Report {
+  const meta: [string, string][] = [
+    ['ファイル', shownFileName],
+    ['識別（SHA-256 の先頭 32 桁）', shownMeta?.hash ?? '—'],
+    ['形式', FORMAT_NAMES[shownMeta?.format ?? ''] ?? (shownMeta?.format || '—')],
+    ['確認日時', reportTime(at)],
+    ['アプリ', `cad-viewer ${appVersion}`],
+    ['単位', RECORD_UNITS[shownMeta?.format ?? ''] ?? 'ファイルの数のまま'],
+  ]
+  const tables: ReportTable[] = []
+  const parts = is2D ? [] : [...viewer.getPartMeshes().keys()].sort((a, b) => a - b)
+  if (parts.length > 1) {
+    tables.push({
+      title: `部品（${parts.length}）`,
+      head: ['部品', '表示'],
+      rows: parts.map((id) => [checkPartNames.get(id) ?? `部品 ${id}`, viewer.isPartVisible(id) ? '表示' : '隠している']),
+    })
+  }
+  // the measure list's rows, as on screen (a note has no value to come from anywhere)
+  const measureSource = is2D ? SOURCE.drawing : SOURCE.brep
+  tables.push({
+    title: `計測（${listRows.length} 件）`,
+    head: [...LIST_HEAD, '出どころ'],
+    rows: listRows.map((r) => [...rowCells(r), r.kind === 'note' ? '' : measureSource]),
+    empty: 'なし',
+  })
+  if (!is2D) {
+    const checks = checkPanel.cells()
+    tables.push(
+      checks
+        ? {
+            title: `問題の一覧（${checks.rows.length} 行）`,
+            note: `条件: ${checks.conditions}`,
+            head: [...checks.head.filter((h) => h !== '条件'), '出どころ'],
+            // the conditions are said once, above the table
+            rows: checks.rows.map((r) => [...r.slice(0, -1), r[0] === '判定できない' ? '' : SOURCE.mesh]),
+            empty: 'この条件では見つからなかった',
+          }
+        : {
+            title: '問題の一覧',
+            head: [],
+            rows: [],
+            empty: checkPanel.shown ? '計算中だった（一覧ができてから記録する）' : '出していない（操作パネルの「問題の一覧」で出す）',
+          },
+    )
+    tables.push(...(propsPanel.reportTables() ?? [{ title: '体積・重量', head: [], rows: [], empty: '計算中か、計算できなかった' }]))
+  }
+  return {
+    fileName: shownFileName,
+    stem: stampedName(shownFileName, at, '記録'),
+    meta,
+    review: reportPop.shown ? reportPop.review : review,
+    tables,
+    image,
+  }
+}
+function saveReportCsv(): void {
+  if (!contentShown) return
+  const r = buildReport(new Date(), null)
+  const name = `${r.stem}.csv`
+  downloadBlob(new Blob([reportCsv(r)], { type: 'text/csv;charset=utf-8' }), name)
+  hudInfo.textContent = `記録を保存: ${name}`
+}
+/**
+ * The page to print, in a new tab. The tab opens at the click (a tab opened
+ * after an await is taken for a popup and blocked); the page goes into it once
+ * the image is made. Blocked all the same: the page is saved as a file.
+ */
+async function openReportPage(): Promise<void> {
+  if (!contentShown || exporting) return
+  const at = new Date()
+  const tab = window.open('', '_blank')
+  exporting = true
+  try {
+    hudInfo.textContent = '記録を作成中...'
+    // the record of what is on screen now: a drawing's image takes an await,
+    // in which another file can be opened (its record must not go with this image)
+    const r = buildReport(at, null)
+    // 3D: no await before snapshot(), which renders and copies in one task
+    const canvas = is2D ? await drawing2d.snapshot('white') : viewer.snapshot('white')
+    r.image = canvas.toDataURL('image/png')
+    const blob = new Blob([reportHtml(r)], { type: 'text/html;charset=utf-8' })
+    if (tab) {
+      const url = URL.createObjectURL(blob)
+      tab.location.href = url
+      // the tab keeps its page; the URL only matters for a reload there
+      setTimeout(() => URL.revokeObjectURL(url), 10 * 60_000)
+      hudInfo.textContent = '記録の印刷用のページを開いた（印刷で PDF に保存できる）'
+    } else {
+      downloadBlob(blob, `${r.stem}.html`)
+      hudInfo.textContent = `新しいタブを開けなかったので、印刷用のページを保存した: ${r.stem}.html`
+    }
+  } catch (e) {
+    tab?.close()
+    hudInfo.textContent = `記録を作れなかった: ${e instanceof Error ? e.message : e}`
   } finally {
     exporting = false
   }
@@ -567,6 +753,11 @@ function onNavigationKey(e: KeyboardEvent): void {
     // the recent files' list first: it is over everything (and only it goes)
     if (!recentPop.classList.contains('hidden')) {
       showRecentPop(false)
+      e.preventDefault()
+      return
+    }
+    if (reportPop.shown) {
+      reportPop.hide()
       e.preventDefault()
       return
     }
@@ -2425,7 +2616,7 @@ async function loadFile(file: File): Promise<void> {
         sectionTool.update()
         drawing2d.load(svg, meta.snapPoints ?? [])
         show2D(true)
-        setContentShown(true, file.name)
+        setContentShown(true, file.name, meta)
         showEmpty(false)
         hudInfo.textContent = modelSummary
         loadCard.hide()
@@ -2462,7 +2653,7 @@ async function loadFile(file: File): Promise<void> {
       // fit, so the view never jumps from a provisional framing to the final one
       viewer.setModel(model)
       try {
-        setContentShown(true, file.name)
+        setContentShown(true, file.name, meta)
         showEmpty(false)
         picker.setModel(model.parts)
         preselect.setModel(model.parts)

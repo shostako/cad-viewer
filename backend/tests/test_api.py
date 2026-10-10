@@ -291,3 +291,24 @@ def test_sidecar_save_keeps_an_unreadable_file(client):
     r = client.put(f"/api/models/{mid}/sidecar", json={"version": 1, "entries": [{"n": 1}]})
     assert r.status_code == 200
     assert len(sorted(path.parent.glob(f"{path.stem}.unreadable-*.json"))) == 1
+
+
+def test_upload_says_the_content_hash(client):
+    """Every way a file opens says its content's identity: the first 32 hex
+    digits of the SHA-256 of its bytes (the 記録 prints it; the sidecar has
+    the same name). A mesh, a fresh B-rep, the same B-rep from the disk cache
+    under another name, the same again from memory, a drawing."""
+    import hashlib
+
+    stl = trimesh.creation.box(extents=(3, 4, 5)).export(file_type="stl")
+    cases = [("hash_box.stl", stl)]
+    if STEP_ASSEMBLY.exists():
+        step = STEP_ASSEMBLY.read_bytes() + b"\n" * 5  # its own bytes: not in the disk cache yet
+        cases += [("hash_a.step", step), ("hash_b.step", step), ("hash_b.step", step)]
+    dxf = pathlib.Path(__file__).parent.parent.parent / "testdata" / "plate_drawing.dxf"
+    if dxf.exists():
+        cases.append(("hash_plate.dxf", dxf.read_bytes()))
+    for name, data in cases:
+        r = client.post("/api/models", files={"file": (name, data, "x")})
+        assert r.status_code == 200, r.text
+        assert r.json()["hash"] == hashlib.sha256(data).hexdigest()[:32], (name, r.json())

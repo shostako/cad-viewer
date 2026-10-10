@@ -190,14 +190,22 @@ export function cell(s: string): string {
   return s.replace(/[\t\r\n]+/g, ' ')
 }
 
+/** the copy's columns (and the 記録's, report.ts) */
+export const LIST_HEAD = ['種類', '値', '単位', '対象 A', '対象 B', 'ΔX', 'ΔY', 'ΔZ']
+
+/** one row's cells, in LIST_HEAD's order */
+export function rowCells(r: RowView): string[] {
+  return [KIND_NAME[r.kind], r.value, r.unit, r.a, r.b, ...(r.axes ?? ['', '', ''])]
+}
+
 /** one row as a line of tab-separated cells */
 export function rowLine(r: RowView): string {
-  return [KIND_NAME[r.kind], r.value, r.unit, r.a, r.b, ...(r.axes ?? ['', '', ''])].map(cell).join('\t')
+  return rowCells(r).map(cell).join('\t')
 }
 
 /** the whole list: a head line, then a line per row (Excel pastes it into cells) */
 export function listText(rows: readonly RowView[]): string {
-  return ['種類\t値\t単位\t対象 A\t対象 B\tΔX\tΔY\tΔZ', ...rows.map(rowLine)].join('\n')
+  return [LIST_HEAD.join('\t'), ...rows.map(rowLine)].join('\n')
 }
 
 /** the mark of a row's kind (Lucide) */
