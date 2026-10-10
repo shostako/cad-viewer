@@ -80,6 +80,7 @@ with nav_session() as n:
     for a, key in (("fit", "F"), ("mode-none", "Esc"), ("mode-measure", "（M）"), ("mode-note", "（N）"),
                    ("section", "（S）"), ("style", "W"), ("help", "?")):
         assert key in titles[a], ("1 the key in the title", a, titles[a])
+    assert page.title() == "cad-viewer", page.title()
     print("1 empty", [round(x) for x in t], enabled())
 
     # ---- 2. 開く: the file dialog; then the model, 回転 pressed, 表示 folded
@@ -89,6 +90,7 @@ with nav_session() as n:
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000)
     n.settle()
     assert enabled() == ACTIONS and pressed() == ["mode-none"], (enabled(), pressed())
+    assert page.title() == "mini_mold.step — cad-viewer", ("2 the tab names the file", page.title())
     assert "lil-closed" in gui_common.folder_title(page, "表示").locator("xpath=..").get_attribute("class"), "2 表示 folded"
 
     # ---- 3. the modes: buttons, M and N, and the panel's モード
@@ -189,6 +191,7 @@ with nav_session() as n:
 
     # ---- 10. a drawing: no 注記, 断面 or 表示スタイル; N S W do nothing, M measures
     n.load(DXF, wait_text="2D図面")
+    assert page.title() == "plate_drawing.dxf — cad-viewer", page.title()
     assert enabled() == ["open", "fit", "mode-none", "mode-measure", "png", "help"], enabled()
     before = select.input_value()
     for k in ("n", "s", "w"):

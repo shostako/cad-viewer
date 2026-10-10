@@ -165,6 +165,8 @@ function show2D(on: boolean): void {
 function setContentShown(on: boolean, fileName = ''): void {
   contentShown = on
   shownFileName = on ? fileName : ''
+  // the tab (and the taskbar) names the file: several windows can be told apart
+  document.title = shownFileName ? `${shownFileName} — cad-viewer` : 'cad-viewer'
   updateTriad()
   refreshToolbar()
 }
