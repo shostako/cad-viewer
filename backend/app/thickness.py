@@ -17,8 +17,11 @@ ball — rolling ball / maximal tangent sphere: the largest sphere tangent to
        ~10 batched nearest-point queries; slower but honest at junctions.
 
 Both run on the display mesh, so they work for B-rep parts and plain mesh
-uploads alike. Sharp corners legitimately measure ~0 with `ball` (no sphere
-can be tangent at a corner) — the heatmap treats <=0 as "no data".
+uploads alike. With `ball`, no sphere fits at a vertex where the surface
+turns away (a corner, a convex edge however shallow, the flat strips of a
+convex curved surface): those vertices get 0, which the heatmap shows as
+"no data". The search's tolerance would let a small sphere "fit" there and
+read as a wall a fraction of a mm thin.
 """
 from __future__ import annotations
 
@@ -77,7 +80,8 @@ def vertex_thickness_ball(
     """Rolling-ball thickness per vertex (sphere diameter), float32.
 
     Vertices whose ray probe found nothing stay +inf; vertices where no
-    tangent sphere fits (sharp corners) go to ~0.
+    tangent sphere fits (a corner, a convex edge, a convex curved surface's
+    strips) get 0.
     """
     n_verts = len(positions)
     out = np.full(n_verts, np.inf, dtype=np.float32)
@@ -107,7 +111,8 @@ def vertex_thickness_ball(
     # binary search on sphere center depth t: sphere fits iff
     # nearest-surface distance from center >= t - tol
     lo = np.zeros(hit.sum())
-    hi = d_ray[hit].astype(np.float64) / 2.0
+    hi0 = d_ray[hit].astype(np.float64) / 2.0
+    hi = hi0.copy()
     for _ in range(iterations):
         mid = (lo + hi) / 2.0
         centers = p - n * mid[:, None]
@@ -116,5 +121,20 @@ def vertex_thickness_ball(
         lo = np.where(fits, mid, lo)
         hi = np.where(fits, hi, mid)
 
+    # What stopped the sphere: at the first size that did not fit (hi), the
+    # triangle nearest its centre is what it ran into. A face that passes
+    # through the vertex (a corner, a convex crease however shallow, the
+    # neighbouring flat strip of a convex curved surface) cuts every sphere
+    # tangent there, however small: no sphere fits, and only the tolerance
+    # (dist >= t - tol) let one in, up to tol / (1 - cos θ), a wall a fraction
+    # of a mm thin that is not there (#63). Those have no value. A face that
+    # does not reach the vertex is a wall across (the far side, a chamfer
+    # nearby): its value stands.
+    blocked = np.flatnonzero((lo > 0) & (hi < hi0 * (1 - 1e-9)))
+    if blocked.size:
+        _, _, tri = pq.on_surface(p[blocked] - n[blocked] * hi[blocked][:, None])
+        on_tri = trimesh.triangles.closest_point(mesh.triangles[tri], p[blocked])
+        through = np.linalg.norm(on_tri - p[blocked], axis=1) <= tol
+        lo[blocked[through]] = 0.0
     out[hit] = (2.0 * lo).astype(np.float32)
     return out

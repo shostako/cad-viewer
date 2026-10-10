@@ -149,3 +149,103 @@ def test_thickness_endpoint_ball_method():
     r = client.get(f"/api/models/{mid}/thickness.bin?method=ball")
     assert r.status_code == 200
     assert client.get(f"/api/models/{mid}/thickness.bin?method=nope").status_code == 422
+
+
+def test_ball_gives_no_value_where_no_sphere_fits():
+    """On a sharp edge or at a corner no tangent sphere fits inside: no value
+    (0, shown as データなし), not a sliver the width of the search's
+    tolerance (that one showed as a wall 0.0015 mm thin, issue #63)."""
+    from app.thickness import vertex_thickness_ball
+
+    def no_value(t):
+        # 0 from the sphere, +inf from a ray that found no wall (the endpoint sends both as 0)
+        return (t == 0) | ~np.isfinite(t)
+
+    # a thin plate whose display mesh has corners only
+    pos, nrm, idx = _facet_arrays(trimesh.creation.box(extents=(20, 20, 1.2)))
+    t = vertex_thickness_ball(pos, nrm, idx)
+    assert np.all(no_value(t)), t
+    # a finer one: no value on the edges of its top, 1 mm inside them
+    plate = trimesh.creation.box(extents=(40, 40, 1)).subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(plate)
+    t = vertex_thickness_ball(pos, nrm, idx)
+    top = np.abs(pos[:, 2] - 0.5) < 1e-6
+    rim = top & ((np.abs(np.abs(pos[:, 0]) - 20) < 1e-6) | (np.abs(np.abs(pos[:, 1]) - 20) < 1e-6))
+    inside = top & (np.abs(pos[:, 0]) < 15) & (np.abs(pos[:, 1]) < 15)
+    assert rim.sum() > 0 and inside.sum() > 0
+    assert np.all(no_value(t[rim])), t[rim]
+    assert np.allclose(t[inside], 1.0, atol=0.02), t[inside]
+
+
+def test_ball_gives_no_value_on_a_shallow_crease():
+    """A sphere at a vertex on a shallow convex crease (the ridge of a roof
+    whose two faces are 40° apart) cuts the other face next to it at any size,
+    so none fits there: no value. A tolerance on the distance lets it 'fit'
+    up to tol / (1 - cos 40°), several times the tolerance (Codex on #64), on
+    a body long enough for the search to reach that size. The roof away from
+    the ridge measures through the body."""
+    from app.thickness import vertex_thickness_ball
+
+    h = 10 + 20 * np.tan(np.radians(20))  # each roof face 20° from level
+    pts = [(x, y, z) for y in (0, 200) for x, z in ((0, 0), (40, 0), (40, 10), (20, h), (0, 10))]
+    house = trimesh.convex.convex_hull(np.array(pts, dtype=float)).subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(house)
+    t = vertex_thickness_ball(pos, nrm, idx)
+    ridge = (np.abs(pos[:, 0] - 20) < 1e-6) & (np.abs(pos[:, 2] - h) < 1e-6) & (pos[:, 1] > 1) & (pos[:, 1] < 199)
+    roof = (pos[:, 0] > 5) & (pos[:, 0] < 15) & (pos[:, 1] > 20) & (pos[:, 1] < 180) & (pos[:, 2] > 10.5)
+    assert ridge.sum() > 0 and roof.sum() > 0
+    assert np.all((t[ridge] == 0) | ~np.isfinite(t[ridge])), t[ridge]
+    assert np.all(t[roof] > 1), t[roof]
+
+
+def _ringed_cylinder(r, h, sections=32, rings=10):
+    """a closed cylinder whose side has rings of vertices on the circle all the way up"""
+    verts, faces = [], []
+    for k in range(rings + 1):
+        z = -h / 2 + h * k / rings
+        verts += [(r * np.cos(2 * np.pi * i / sections), r * np.sin(2 * np.pi * i / sections), z) for i in range(sections)]
+    bottom, top = len(verts), len(verts) + 1
+    verts += [(0, 0, -h / 2), (0, 0, h / 2)]
+    for k in range(rings):
+        for i in range(sections):
+            a, b = k * sections + i, k * sections + (i + 1) % sections
+            faces += [(a, b, b + sections), (a, b + sections, a + sections)]
+    for i in range(sections):
+        faces += [(bottom, (i + 1) % sections, i), (top, rings * sections + i, rings * sections + (i + 1) % sections)]
+    m = trimesh.Trimesh(vertices=verts, faces=faces)
+    m.fix_normals()
+    return m
+
+
+def test_ball_gives_no_false_thin_value_on_a_cylinder():
+    """The side of a cylinder (r 5) in 32 flat strips, its vertices on the
+    circle: a sphere tangent at a vertex cuts the strips next to it by
+    t (1 - cos 5.6°), so the tolerance used to stop it at about 0.1 mm, a wall
+    that is not there. Each side vertex has either no value or about the
+    diameter (#63)."""
+    from app.thickness import vertex_thickness_ball
+
+    pos, nrm, idx = _facet_arrays(_ringed_cylinder(5, 20))
+    t = vertex_thickness_ball(pos, nrm, idx)
+    side = (np.abs(nrm[:, 2]) < 0.1) & (np.abs(pos[:, 2]) < 9)
+    assert side.sum() > 0
+    ok = (t[side] == 0) | ~np.isfinite(t[side]) | (t[side] > 0.9 * 10)
+    assert np.all(ok), t[side][~ok]
+
+
+def test_ball_keeps_a_value_beside_a_chamfer():
+    """The top of a block 12 high whose edge is cut by a 45° chamfer (from x 32
+    on the top down to z 4 at x 40). At x 30, 2 mm from the chamfer, the
+    sphere is stopped by the chamfer before the bottom: its diameter is
+    2 * 2 / (√2 - 1) = 9.66. The chamfer does not pass through the vertex, so
+    this is a wall across, not a face beside it (the contact is 0.76 t from the
+    vertex: a test by that distance alone took it for one)."""
+    from app.thickness import vertex_thickness_ball
+
+    pts = [(x, y, z) for y in (0, 100) for x, z in ((0, 0), (40, 0), (40, 4), (32, 12), (0, 12))]
+    block = trimesh.convex.convex_hull(np.array(pts, dtype=float)).subdivide().subdivide().subdivide().subdivide()
+    pos, nrm, idx = _facet_arrays(block)
+    t = vertex_thickness_ball(pos, nrm, idx)
+    near = (np.abs(pos[:, 0] - 30) < 1e-6) & (np.abs(pos[:, 2] - 12) < 1e-6) & (pos[:, 1] > 20) & (pos[:, 1] < 80)
+    assert near.sum() > 0
+    assert np.allclose(t[near], 4 / (np.sqrt(2) - 1), rtol=0.03), t[near]
