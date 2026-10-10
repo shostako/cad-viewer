@@ -100,7 +100,9 @@ with sync_playwright() as p:
     label = page.locator(".lil-name", has_text="モード")
     page.locator(".lil-gui .lil-controller").filter(has=label).first.locator("select").select_option("計測")
     page.evaluate("document.activeElement && document.activeElement.blur()")
-    pts = [(50, 30, 35), (90, 10, 15), (60, 20, 35), (10, 50, 15)]
+    # the block's top and the plate's top, twice (parallel: one row each; (10, 50, 15)
+    # was behind the block, and its front with the top now adds an angle row)
+    pts = [(50, 30, 35), (90, 10, 15), (60, 20, 35), (90, 50, 15)]
     for a, b in ((0, 1), (2, 3)):
         for q in (pts[a], pts[b]):
             xy = page.evaluate("([x, y, z]) => window.__cadProject(x, y, z)", list(q))

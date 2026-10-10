@@ -339,3 +339,60 @@ def test_line_through_the_click_must_realise_the_value(monkeypatch):
     assert res["value"] == pytest.approx(10.0, abs=1e-9)
     assert math.dist(res["pointA"], res["pointB"]) == pytest.approx(res["value"], abs=1e-9), res
     assert res["pointB"][0] == pytest.approx(0, abs=1e-6), ("on the roof's low edge", res)
+
+
+def test_angle_between_square_faces(model, part_ids):
+    """the block's top and its front side: 90 degrees (they meet: distance 0)"""
+    block = part_ids["cavity_block"][0]
+    top = {"partId": block, "kind": "face", "id": _planar_face(model, block, 2, [50, 30, 100])}
+    front = {"partId": block, "kind": "face", "id": _planar_face(model, block, 1, [50, -100, 25])}
+    res = _measure(model, {"type": "distance", "a": top, "b": front})
+    assert res["value"] == pytest.approx(0.0, abs=1e-9)
+    assert res["angle"] == pytest.approx(90.0, abs=1e-9)
+
+
+def test_no_angle_for_parallel_or_curved(model, part_ids):
+    """parallel planes have no angle to give; nor does a cylinder"""
+    a, b = _tops(model, part_ids)
+    assert "angle" not in _measure(model, {"type": "distance", "a": a, "b": b})
+    _, _, pin_ids = model
+    fa, _ = _cylinder_face_id(model, pin_ids[0])
+    res = _measure(model, {"type": "distance", "a": a, "b": {"partId": pin_ids[0], "kind": "face", "id": fa}})
+    assert "angle" not in res
+
+
+def test_angle_tilted_planes_and_lines(monkeypatch):
+    """built here: a floor, a roof tilted 30 degrees about y, a straight edge
+    rising 20 degrees from the floor, another lying 50 degrees round from x.
+    Plane to plane 30, edge to the floor 20, edge to edge (in the floor and
+    rising) by their directions, and a tiny tilt kept exact"""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeEdge, BRepBuilderAPI_MakeFace
+    from OCP.gp import gp_Ax3, gp_Dir, gp_Pln, gp_Pnt
+
+    from app import measure
+
+    def square(origin, normal, xdir):
+        return BRepBuilderAPI_MakeFace(gp_Pln(gp_Ax3(gp_Pnt(*origin), gp_Dir(*normal), gp_Dir(*xdir))), 0, 10, 0, 10).Face()
+
+    def edge(p, q):
+        return BRepBuilderAPI_MakeEdge(gp_Pnt(*p), gp_Pnt(*q)).Edge()
+
+    r = math.radians
+    floor = square((0, 0, 0), (0, 0, 1), (1, 0, 0))
+    roof = square((0, 0, 5), (-math.sin(r(30)), 0, math.cos(r(30))), (math.cos(r(30)), 0, math.sin(r(30))))
+    rising = edge((20, 0, 0), (20 + math.cos(r(20)), 0, math.sin(r(20))))
+    lying = edge((0, 20, 1), (math.cos(r(50)), 20 + math.sin(r(50)), 1))
+    tiny = square((0, 0, 9), (-math.sin(1e-4), 0, math.cos(1e-4)), (math.cos(1e-4), 0, math.sin(1e-4)))
+    shapes = {1: floor, 2: roof, 3: rising, 4: lying, 5: tiny}
+    monkeypatch.setattr(measure, "_resolve", lambda ref, meshes: shapes[ref["id"]])
+
+    def angle(i, j):
+        return measure.distance({"kind": "face", "id": i}, {"kind": "face", "id": j}, []).get("angle")
+
+    assert angle(1, 2) == pytest.approx(30.0, abs=1e-9)
+    assert angle(2, 1) == pytest.approx(30.0, abs=1e-9)
+    assert angle(3, 1) == pytest.approx(20.0, abs=1e-9), "a line to a plane"
+    # rising lies in the xz plane at 20 degrees up, lying in a horizontal plane at 50 degrees round from x
+    want = math.degrees(math.acos(abs(math.cos(r(20)) * math.cos(r(50)))))
+    assert angle(3, 4) == pytest.approx(want, abs=1e-9), "two lines"
+    assert angle(1, 5) == pytest.approx(math.degrees(1e-4), rel=1e-9), "a small angle stays exact"

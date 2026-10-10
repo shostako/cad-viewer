@@ -4,6 +4,7 @@
  * bundle.
  */
 import {
+  Angle,
   Box,
   Check,
   CircleHelp,
@@ -32,6 +33,7 @@ export const ICON = {
   help: CircleHelp,
   distance: Ruler,
   diameter: Diameter,
+  angle: Angle,
   copy: Copy,
   done: Check,
 } satisfies Record<string, IconNode>

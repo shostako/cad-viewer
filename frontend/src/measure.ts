@@ -154,6 +154,16 @@ export class MeasureTool {
         ...(res.value > 1e-12 ? { line: [pa, pb] as EntryData['line'] } : {}),
       }
       this.addFromData(data)
+      // two flat things not parallel: their angle too, as an entry of its own
+      if (res.angle !== undefined) {
+        const [ma, mb] = data.markers!
+        this.addFromData({
+          text: `${this.describe(a.pick)} ∠ ${this.describe(pick)} : ${fmtDeg(res.angle)}`,
+          labelText: fmtDeg(res.angle),
+          labelPos: [(ma[0] + mb[0]) / 2, (ma[1] + mb[1]) / 2, (ma[2] + mb[2]) / 2],
+        })
+        return `距離 ${fmt(res.value)}　角度 ${fmtDeg(res.angle)}`
+      }
       return `距離 ${fmt(res.value)}`
     } catch (e) {
       this.viewer.disposeOverlayObject(a.marker)
@@ -184,9 +194,9 @@ export class MeasureTool {
         objects.push(line)
       }
       if (data.labelText) {
-        // a length says its unit (a note is the user's own text)
+        // a length says its unit (a note is the user's own text, an angle has its °)
         const label = this.viewer.makeLabel(
-          data.annotation ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
+          data.annotation || data.labelText.endsWith('°') ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
           new THREE.Vector3(...data.labelPos),
           data.annotation ? 'note-label' : 'dim-label',
         )
@@ -415,4 +425,9 @@ function toRef(pick: PickResult): EntityRef {
 
 function fmt(v: number): string {
   return v.toFixed(3)
+}
+
+/** an angle: degrees, 3 decimals, with its ° */
+function fmtDeg(v: number): string {
+  return `${v.toFixed(3)}°`
 }
