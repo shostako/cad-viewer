@@ -12,6 +12,7 @@
  */
 
 import { swapPageColour, toWhitePage, type ExportBackground } from './snapshot'
+import { currentTheme, onTheme, palette } from './theme'
 
 export interface SnapPoint {
   dxf: [number, number]
@@ -37,8 +38,9 @@ export function measurementText(m: Measurement2D): string {
   return `距離 ${fmt(Math.hypot(dx, dy))} (ΔX ${fmt(Math.abs(dx))}, ΔY ${fmt(Math.abs(dy))})`
 }
 
-/** The page on screen: the 3D view's background (viewer.ts; #viewport2d in style.css too) */
-const PAGE_COLOUR = '#1d2126'
+// The page on screen is the palette's page2d (theme.ts; #viewport2d in
+// style.css too): on the dark page the 3D view's background, on the light
+// page white, the drawing coloured as for a white export.
 
 const SNAP_PX = 12
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -47,10 +49,10 @@ const MARKER_R = 5
 const LINE_PX = 1.5
 const FONT_PX = 13
 const HALO_PX = 3
-const MARKER_COLOUR = '#ffb020'
-const DIM_COLOUR = '#ffd060'
-/** the value's outline: it keeps the pale value readable on the white page of an export */
-const HALO_COLOUR = '#1d2126'
+// The measurement layer's colours are the palette's (theme.ts): marker2d for
+// the end points, dim2d for the line and the value, halo2d for the value's
+// outline (on the dark page it keeps the pale value readable on the white page
+// of an export).
 
 export class Drawing2D {
   private container: HTMLElement
@@ -83,6 +85,7 @@ export class Drawing2D {
     // the viewBox is fitted into the box (meet): a resize moves the drawing on
     // screen, and the layer must follow it. Reported after layout, before paint.
     new ResizeObserver(() => this.renderOverlay()).observe(container)
+    onTheme(() => this.retheme())
   }
 
   load(svgText: string, snaps: SnapPoint[]): void {
@@ -101,13 +104,8 @@ export class Drawing2D {
     this.vb = { x, y, w, h }
     this.baseVb = { x, y, w, h }
 
-    // The page is the 3D view's background: the drawing's own page colour
-    // (ezdxf #212830, also the fill of WIPEOUT masks, which must stay unseen)
-    // becomes it. The lines keep the drawing's colours: ezdxf draws them for a
-    // dark page, colour 7 (white / black) in white, and the page is still dark.
-    const page = this.svg.querySelector(':scope > rect')?.getAttribute('fill') ?? null
     this.sourceText = svgText
-    recolour(this.svg, (css) => swapPageColour(css, page, PAGE_COLOUR))
+    paintPage(this.svg)
 
     // The layer's look (colours, widths, paint order) is in its elements'
     // attributes, not in style.css: the PNG export serialises a copy of the
@@ -120,6 +118,29 @@ export class Drawing2D {
     this.pendingSnap = null
     this.items = []
     this.emit()
+  }
+
+  /**
+   * The drawing again from its source in the theme's colours (paintPage), at
+   * the same pan and zoom. The measurements stay: they are their own layer.
+   */
+  private retheme(): void {
+    const old = this.svg
+    const fresh = old ? this.parseSource() : null
+    if (!old || !fresh) {
+      this.renderOverlay()
+      return
+    }
+    fresh.removeAttribute('width')
+    fresh.removeAttribute('height')
+    fresh.style.width = '100%'
+    fresh.style.height = '100%'
+    fresh.setAttribute('preserveAspectRatio', old.getAttribute('preserveAspectRatio') ?? 'xMidYMid meet')
+    fresh.setAttribute('viewBox', old.getAttribute('viewBox') ?? '')
+    paintPage(fresh)
+    old.replaceWith(fresh)
+    this.svg = fresh
+    this.renderOverlay()
   }
 
   /** drop the drawing (the next load starts from an empty viewer) */
@@ -402,6 +423,7 @@ export class Drawing2D {
       const p = new DOMPoint(s.svg[0], s.svg[1]).matrixTransform(toLayer)
       return [p.x, p.y]
     }
+    const p = palette()
     for (const m of this.items) {
       const a = at(m.a)
       const b = at(m.b)
@@ -411,9 +433,9 @@ export class Drawing2D {
         // from the middle of the line, on it
         x: (a[0] + b[0]) / 2,
         y: (a[1] + b[1]) / 2,
-        fill: DIM_COLOUR,
+        fill: p.dim2d,
         'font-size': FONT_PX,
-        stroke: HALO_COLOUR,
+        stroke: p.halo2d,
         'stroke-width': HALO_PX,
         'stroke-linejoin': 'round',
         'paint-order': 'stroke',
@@ -428,7 +450,7 @@ export class Drawing2D {
           y1: a[1],
           x2: b[0],
           y2: b[1],
-          stroke: DIM_COLOUR,
+          stroke: p.dim2d,
           'stroke-width': LINE_PX,
         }),
         value,
@@ -453,7 +475,23 @@ function svgEl<K extends keyof SVGElementTagNameMap>(
 }
 
 function marker(at: [number, number]): SVGCircleElement {
-  return svgEl('circle', { class: 'marker2d', cx: at[0], cy: at[1], r: MARKER_R, fill: MARKER_COLOUR })
+  return svgEl('circle', { class: 'marker2d', cx: at[0], cy: at[1], r: MARKER_R, fill: palette().marker2d })
+}
+
+/**
+ * A drawing's colours for the page on screen. ダーク: the page is the 3D
+ * view's background, the drawing's own page colour (ezdxf #212830, also the
+ * fill of WIPEOUT masks, which must stay unseen) becomes it; the lines keep
+ * the drawing's colours (ezdxf draws them for a dark page, colour 7 in white).
+ * ライト: the page is white, the drawing as for a white export (whitenDrawing).
+ */
+function paintPage(svg: SVGSVGElement): void {
+  if (currentTheme() === 'light') {
+    whitenDrawing(svg)
+    return
+  }
+  const page = svg.querySelector(':scope > rect')?.getAttribute('fill') ?? null
+  recolour(svg, (css) => swapPageColour(css, page, palette().page2d))
 }
 
 /** Rewrite a drawing's colours: in its <style> rules and in its stroke / fill / style attributes. */

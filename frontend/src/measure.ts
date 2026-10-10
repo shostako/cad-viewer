@@ -17,6 +17,7 @@ import {
   type EntityRef,
 } from './api'
 import type { PickResult } from './picking'
+import { onTheme, palette } from './theme'
 import { AREA_UNIT, LOCAL_NOTE, areaUnit, edgeSize, faceSize, fmt, fmtDeg, showArea, showDeg, showLen, sizeText, unitTag, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
@@ -75,10 +76,9 @@ export interface MeasureEntry {
   data: EntryData
 }
 
-const MARKER_COLOR = 0xffb020
-const DIM_COLOR = 0xffd060
-/** the entry whose row the pointer is on: preselect.ts's cyan (style.css --cv-pick) */
-const HOT_COLOR = 0x55d6ff
+// The colours are the palette's (theme.ts): the end points in its marker
+// colour, the lines in its dim colour, and the entry whose row the pointer is
+// on in its pick colour (preselect.ts's, style.css --cv-pick).
 /**
  * The unit of every measured length: OCCT reads STEP and IGES into mm (its
  * default session unit), and only B-rep models are measured. Shown on the 3D
@@ -114,6 +114,7 @@ export class MeasureTool {
 
   constructor(viewer: Viewer) {
     this.viewer = viewer
+    onTheme(() => this.paint())
   }
 
   /**
@@ -492,14 +493,23 @@ export class MeasureTool {
   setHot(id: number | null): void {
     if (id === this.hotId) return
     this.hotId = id
+    this.paint()
+  }
+
+  /** the entries' and the first point's colours, from the palette and the hot entry */
+  private paint(): void {
+    const p = palette()
     for (const e of this.entries) {
-      const hot = e.id === id
+      const hot = e.id === this.hotId
       for (const o of e.objects) {
         if (o instanceof CSS2DObject) o.element.classList.toggle('hot', hot)
-        else if (o instanceof THREE.Line) (o.material as THREE.LineBasicMaterial).color.setHex(hot ? HOT_COLOR : DIM_COLOR)
-        else if (o instanceof THREE.Mesh) (o.material as THREE.MeshBasicMaterial).color.setHex(hot ? HOT_COLOR : MARKER_COLOR)
+        else if (o instanceof THREE.Line) (o.material as THREE.LineBasicMaterial).color.setHex(hot ? p.pick : p.dim)
+        else if (o instanceof THREE.Mesh) (o.material as THREE.MeshBasicMaterial).color.setHex(hot ? p.pick : p.marker)
       }
     }
+    const m = this.pending?.marker
+    if (m instanceof THREE.Mesh) (m.material as THREE.MeshBasicMaterial).color.setHex(p.marker)
+    this.viewer.wake()
   }
 
   /** the entry whose 3D label is drawn at this point of the page (client px), if any */
@@ -537,7 +547,7 @@ export class MeasureTool {
     // transparent at full opacity only so it draws in three's transparent
     // pass, after the see-through faces of 半透明 and the translucent section
     // cap: drawn in the opaque pass, those would blend over it
-    const mat = new THREE.MeshBasicMaterial({ color: MARKER_COLOR, depthTest: false, transparent: true })
+    const mat = new THREE.MeshBasicMaterial({ color: palette().marker, depthTest: false, transparent: true })
     const m = new THREE.Mesh(geo, mat)
     m.renderOrder = 999
     m.position.copy(at)
@@ -551,7 +561,7 @@ export class MeasureTool {
   private makeDimLine(a: THREE.Vector3, b: THREE.Vector3): THREE.Object3D {
     const geo = new THREE.BufferGeometry().setFromPoints([a, b])
     // transparent at full opacity for the same reason as the markers
-    const mat = new THREE.LineBasicMaterial({ color: DIM_COLOR, depthTest: false, transparent: true })
+    const mat = new THREE.LineBasicMaterial({ color: palette().dim, depthTest: false, transparent: true })
     const line = new THREE.Line(geo, mat)
     line.renderOrder = 998
     return line

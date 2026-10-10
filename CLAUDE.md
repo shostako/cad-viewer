@@ -128,6 +128,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 
 - `main.ts` — 入口と UI の組み立て（lil-gui の操作パネル、キー操作、読み込みの流れ、サイドカーの保存）。E2E 用の関数 `window.__cadProject` / `__cadPick` / `__cadView` / `__cadStallMeasure` / `__cadStallSidecar` をここで公開している（E2E が使う。消すな）
 - `style.css` — 見た目の決まり（トークン）は先頭の `:root` の `--cv-*`（面・枠・文字の 3 段の灰・操作の青 1 色・データの色・文字の大きさ 11/12/13/15/17 px・角・影・右の列の幅 264 px）。色や大きさは値を直に書かずにここから取る（例外は記号の大きさ（一覧の × の 14 px など）と 2〜3 px の小さな角・線）。lil-gui も自分の CSS 変数（`--background-color` など）を通して同じトークンで塗る。3D の背景 `--cv-scene`（#1d2126）は E2E の画素の検査が使うので変えない
+  - 配色のライト（`theme.ts`）は、`:root[data-theme='light']` で同じトークンを定義し直す（文字は面の上で 4.5:1 以上、線と印は 3D の背景の上で 3:1 以上）。3D と 2D の描画の色（背景・グリッド・計測の線と点・先選び・断面の枠・2D の頁）は CSS ではなく `theme.ts` の `PALETTES` にあり、材質に色を持つ所は `onTheme` で塗り直す。新しく 3D や 2D に色を足すときは、この表から取って `onTheme` で塗り直す。既定はダーク（E2E はダークで走る）
 - `viewer.ts` — 描画、カメラ操作（ターンテーブル＝OrbitControls、自由回転＝TrackballControls）、視点の切り替え、自動回転、グリッド
 - `picking.ts` / `measure.ts` / `section.ts` / `drawing2d.ts` — ピッキング、計測と注記、断面、2D 図面
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー

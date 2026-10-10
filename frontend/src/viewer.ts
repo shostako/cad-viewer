@@ -12,6 +12,7 @@ import type { Frame } from './sizes'
 import { paintLabels, type ExportBackground } from './snapshot'
 import type { Spot, SpotPart } from './spots'
 import { thicknessColors } from './thickness'
+import { onTheme, palette } from './theme'
 
 /**
  * The room's soft light, from every side but unevenly: three.js's
@@ -40,15 +41,15 @@ const FILL_INTENSITY = 0.3
 
 const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
-/** loose curves (parts with no faces) — the dark edge color would vanish on the background */
-const CURVE_COLOR = 0xe0b050
+// Loose curves (parts with no faces) are drawn in the palette's curve colour:
+// the dark edge colour would vanish on the dark background (theme.ts).
 /**
  * A part whose row in the part tree is under the pointer (setHighlight): its
- * lines in this cyan, the colour of the hover cues, and its faces lit up by
- * HIGHLIGHT_EMISSIVE on top of their own colour (the heatmap's too).
+ * lines in the palette's pick colour, the colour of the hover cues, and its
+ * faces lit up by this share of it on top of their own colour (the heatmap's too).
  */
-const HIGHLIGHT_COLOR = 0x55d6ff
-const HIGHLIGHT_EMISSIVE = new THREE.Color(HIGHLIGHT_COLOR).multiplyScalar(0.35)
+const HIGHLIGHT_GLOW = 0.35
+const highlightEmissive = (): THREE.Color => new THREE.Color(palette().pick).multiplyScalar(HIGHLIGHT_GLOW)
 const NO_EMISSIVE = new THREE.Color(0x000000)
 const WORLD_UP = new THREE.Vector3(0, 0, 1)
 /**
@@ -63,8 +64,8 @@ const SPOT_MIN_SHARE = 0.15
 const SPOT_POINT_SHARE = 0.3
 /** a place on a face that looks sideways is seen from this much above (about 22°): the faces around it are not edge-on */
 const SPOT_TILT = 0.4
-/** the ring the 記録's images put on a place's point (spotSnapshot): the spot marker's colour (style.css .spot-ring) */
-export const SPOT_RING_COLOR = '#ffd060'
+// The ring the 記録's images put on a place's point (spotSnapshot) is the
+// palette's ring: the spot marker's colour (style.css .spot-ring).
 /** share of the limiting dimension of the fit area a fit fills; the rest is margin */
 const FIT_FILL = 0.88
 /**
@@ -110,8 +111,7 @@ export const DRAG_PX = 5
 /** PNG export with 背景=白 */
 const WHITE = new THREE.Color(0xffffff)
 const GRID_DIVISIONS = 20
-/** ground grid: centre lines, other lines */
-const GRID_COLORS: [number, number] = [0x3a4250, 0x2a3038]
+// the ground grid on screen: the palette's (theme.ts)
 /** the same grid on a white export: the dark one would print as heavy lines */
 const GRID_COLORS_ON_WHITE: [number, number] = [0xc0c6ce, 0xdde1e6]
 /**
@@ -285,7 +285,8 @@ export class Viewer {
   private cssSize = new THREE.Vector2()
 
   constructor(container: HTMLElement) {
-    this.scene.background = new THREE.Color(0x1d2126)
+    this.scene.background = new THREE.Color(palette().scene)
+    onTheme(() => this.applyPalette())
 
     this.persp = new THREE.PerspectiveCamera(50, 1, 0.1, 1e6)
     // CAD convention: Z-up. Keep world coordinates identical to server B-rep coords.
@@ -821,14 +822,14 @@ export class Viewer {
     group.add(mesh)
     this.partMeshes.set(part.id, mesh)
     const curveOnly = part.indices.length === 0
-    this.partColors.set(part.id, curveOnly && part.edges.length >= 6 ? new THREE.Color(CURVE_COLOR) : color.clone())
+    this.partColors.set(part.id, curveOnly && part.edges.length >= 6 ? new THREE.Color(palette().curve) : color.clone())
 
     if (part.edges.length >= 6) {
       const edgeGeo = new LineSegmentsGeometry()
       // pass the typed array directly — Array.from() would box millions of
       // floats into JS numbers on large assemblies (memory blowup / tab freeze)
       edgeGeo.setPositions(part.edges)
-      const edgeMat = new LineMaterial({ color: curveOnly ? CURVE_COLOR : EDGE_COLOR, linewidth: 1.5 })
+      const edgeMat = new LineMaterial({ color: curveOnly ? palette().curve : EDGE_COLOR, linewidth: 1.5 })
       const size = new THREE.Vector2()
       this.renderer.getSize(size)
       edgeMat.resolution.copy(size)
@@ -881,6 +882,27 @@ export class Viewer {
    * Switch how the model is drawn. Only material flags, uniforms and
    * visibility change: no geometry is built, and nothing is added per frame.
    */
+  /**
+   * Repaint the scene in the palette of the theme now (theme.ts): the
+   * background, the grid, loose curves, the see-through edges and the
+   * highlight. The parts' own colours stay.
+   */
+  private applyPalette(): void {
+    const p = palette()
+    ;(this.scene.background as THREE.Color).set(p.scene)
+    if (this.gridHelper && this.gridSpec) {
+      const visible = this.gridHelper.visible
+      this.scene.remove(this.gridHelper)
+      this.gridHelper.dispose()
+      this.gridHelper = this.makeGrid(p.grid)
+      this.gridHelper.visible = visible
+      this.scene.add(this.gridHelper)
+    }
+    for (const id of this.partCurves.keys()) this.partColors.get(id)?.set(p.curve)
+    for (const id of this.partMeshes.keys()) this.applyStyle(id)
+    this.wake()
+  }
+
   setDisplayStyle(style: DisplayStyle): void {
     this.wake()
     if (style === this._displayStyle) return
@@ -942,16 +964,17 @@ export class Viewer {
     // for it too, as an outline, and ワイヤーフレーム has only the lines.
     // Uniforms only, no shader rebuild.
     const lit = this.highlighted.has(partId)
+    const p = palette()
     for (const m of copy ? [mesh, copy] : [mesh]) {
-      ;(m.material as THREE.MeshStandardMaterial).emissive.copy(lit ? HIGHLIGHT_EMISSIVE : NO_EMISSIVE)
+      ;(m.material as THREE.MeshStandardMaterial).emissive.copy(lit ? highlightEmissive() : NO_EMISSIVE)
     }
     if (edges) {
       edges.lines.visible = s !== 'shaded' || lit
-      if (lit) edges.material.color.set(HIGHLIGHT_COLOR)
-      else if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)
+      if (lit) edges.material.color.set(p.pick)
+      else if (this.seeThrough && p.liftSeeThroughEdges) edges.material.color.copy(edges.seeThroughColor)
       else edges.material.color.set(EDGE_COLOR)
     }
-    this.partCurves.get(partId)?.color.set(lit ? HIGHLIGHT_COLOR : CURVE_COLOR)
+    this.partCurves.get(partId)?.color.set(lit ? p.pick : p.curve)
   }
 
   /**
@@ -1198,7 +1221,7 @@ export class Viewer {
         ctx.arc(x, y, r, 0, 2 * Math.PI)
         ctx.stroke()
         ctx.lineWidth = 0.005 * shot.width
-        ctx.strokeStyle = SPOT_RING_COLOR
+        ctx.strokeStyle = palette().ring
         ctx.beginPath()
         ctx.arc(x, y, r, 0, 2 * Math.PI)
         ctx.stroke()
@@ -1470,7 +1493,7 @@ export class Viewer {
     const maxDim = Math.max(size.x, size.y, size.z)
     const gridSize = Math.pow(10, Math.ceil(Math.log10(maxDim * 2)))
     this.gridSpec = { size: gridSize, x: center.x, y: center.y, z: box.min.z }
-    this.gridHelper = this.makeGrid(GRID_COLORS)
+    this.gridHelper = this.makeGrid(palette().grid)
     this.gridHelper.visible = this._gridVisible
     this.scene.add(this.gridHelper)
   }
@@ -1848,7 +1871,7 @@ export class Viewer {
     // the see-through styles draw edges light (the part colour) for the dark
     // screen; on a white page they would wash out, so they print dark like
     // the shaded style. Listed before anything is touched.
-    const lifted = this.seeThrough ? [...this.partEdges.values()] : []
+    const lifted = this.seeThrough && palette().liftSeeThroughEdges ? [...this.partEdges.values()] : []
     const bg = this.scene.background
     this.scene.background = WHITE
     if (grid && light) {

@@ -4,6 +4,16 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>cad-viewer</title>
+    <!-- the theme before the first paint (theme.ts keeps it from here on): no dark flash on a light page -->
+    <script>
+      try {
+        var t = localStorage.getItem('cad-viewer:theme')
+        if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark'
+        document.documentElement.dataset.theme = t === 'light' ? 'light' : 'dark'
+      } catch (e) {
+        document.documentElement.dataset.theme = 'dark'
+      }
+    </script>
   </head>
   <body>
     <div id="app"></div>

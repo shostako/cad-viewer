@@ -148,8 +148,10 @@ with nav_session() as n:
         assert hud() == "plate_drawing.dxf — 2D 図面・200.0 × 100.0（計測で端点・中心に吸い付く）", hud()
         s = shown()
         assert s["ctl"].get("モード") is True, ("a drawing measures", s)
-        for name in ["表示", *MODEL_FOLDERS]:
+        for name in MODEL_FOLDERS:
             assert s["fol"].get(name) is False, ("a drawing has no 3D folders", name, s)
+        # 表示 stays for its 配色 alone (test_view_modes.py looks inside it)
+        assert s["fol"].get("表示") is True and s["fol"].get("視点") is False, ("a drawing keeps 表示 for 配色", s)
         fail_and_check("a failed load after a drawing")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

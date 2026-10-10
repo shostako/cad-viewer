@@ -78,7 +78,8 @@ export class AxisTriad {
       })
       const disc = positive
         ? svg('circle', { r: 8.5, fill: color })
-        : svg('circle', { r: 6, fill: '#1d2126cc', stroke: color, 'stroke-width': 1.5 })
+        : // the background's colour (style.css --cv-scene: ダーク or ライト), a little see-through
+          svg('circle', { r: 6, style: 'fill: var(--cv-scene); fill-opacity: 0.8', stroke: color, 'stroke-width': 1.5 })
       group.append(title, line, disc)
       let text: SVGTextElement | null = null
       if (positive) {

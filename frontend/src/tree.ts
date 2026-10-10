@@ -107,6 +107,17 @@ export class PartTree {
     this.setFolded(false)
   }
 
+  /**
+   * Paint the parts' colour marks again (colorOf): a part's colour can change
+   * after its row was made (loose curves take the theme's curve colour).
+   */
+  recolour(): void {
+    for (const row of this.rows) {
+      const mark = row.el.querySelector<HTMLElement>('.tree-mark')
+      if (mark && !row.isGroup && row.parts.length === 1) mark.style.backgroundColor = this.hooks.colorOf(row.parts[0])
+    }
+  }
+
   /** whether a tree is on the panel */
   get hasRows(): boolean {
     return this.rows.length > 0
