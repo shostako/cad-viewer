@@ -27,7 +27,7 @@ import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
 import { ICON, icon } from './icons'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
-import { MeasureTool, type EntryData } from './measure'
+import { LENGTH_UNIT, MeasureTool, type EntryData } from './measure'
 import { LIST_HEAD, copyText, drawingRow, entryRow, listText, rowCells, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
@@ -471,6 +471,16 @@ function reportSummary(): string {
 }
 const FORMAT_NAMES: Record<string, string> = { brep: 'B-rep（STEP・IGES）', mesh: 'メッシュ（STL など）', drawing: '図面（DXF・DWG）' }
 /**
+ * The record's unit: a B-rep is read into mm (OCCT converts the file's own
+ * unit); a mesh and a drawing keep the file's numbers, which do not always say
+ * their unit (summary.ts)
+ */
+const RECORD_UNITS: Record<string, string> = {
+  brep: LENGTH_UNIT,
+  mesh: 'ファイルの数のまま（単位はファイルによる。体積・重量は mm とみなす）',
+  drawing: '図面の数のまま（単位は図面による）',
+}
+/**
  * The record of what is on screen (report.ts): the file, the review, and the
  * screen's lists and values as they are now. image: the view, or null (the CSV).
  */
@@ -481,7 +491,7 @@ function buildReport(at: Date, image: string | null): Report {
     ['形式', FORMAT_NAMES[shownMeta?.format ?? ''] ?? (shownMeta?.format || '—')],
     ['確認日時', reportTime(at)],
     ['アプリ', `cad-viewer ${appVersion}`],
-    ['単位', 'mm'],
+    ['単位', RECORD_UNITS[shownMeta?.format ?? ''] ?? 'ファイルの数のまま'],
   ]
   const tables: ReportTable[] = []
   const parts = is2D ? [] : [...viewer.getPartMeshes().keys()].sort((a, b) => a - b)
@@ -549,9 +559,12 @@ async function openReportPage(): Promise<void> {
   exporting = true
   try {
     hudInfo.textContent = '記録を作成中...'
+    // the record of what is on screen now: a drawing's image takes an await,
+    // in which another file can be opened (its record must not go with this image)
+    const r = buildReport(at, null)
     // 3D: no await before snapshot(), which renders and copies in one task
     const canvas = is2D ? await drawing2d.snapshot('white') : viewer.snapshot('white')
-    const r = buildReport(at, canvas.toDataURL('image/png'))
+    r.image = canvas.toDataURL('image/png')
     const blob = new Blob([reportHtml(r)], { type: 'text/html;charset=utf-8' })
     if (tab) {
       const url = URL.createObjectURL(blob)

@@ -13,7 +13,11 @@
   pages with its head line again on each, and the image is on one page.
 - Another file: the review starts blank again, the name stays. A tab the
   browser will not open: the page is saved as a file instead. A drawing: the
-  measure list alone. A mesh model: its volume comes from its triangles.
+  measure list alone. A mesh model: its volume comes from its triangles. The
+  unit: mm for a B-rep (read into mm); a mesh and a drawing keep the file's
+  numbers, of a unit not said.
+- A drawing's page waits for its image: a file opened meanwhile does not get
+  into that record (its name, its identity are the drawing's).
 
 Oracles (none from the code under test): mini_mold.step's make
 (testdata/make_step_assembly.py): the plate 0..100 x 0..60 x 0..15 (90 cm³),
@@ -273,6 +277,7 @@ with nav_session() as n:
     b = blocks(data[3:].decode("utf-8"))
     rec = dict(b["確認の記録"][1:])
     assert rec["形式"] == "メッシュ（STL など）" and rec["判定"] == "未記入", rec
+    assert rec["単位"].startswith("ファイルの数のまま"), ("a mesh's numbers are not said to be mm", rec["単位"])
     assert rec["識別（SHA-256 の先頭 32 桁）"] == hashlib.sha256((TESTDATA / "ribbed_plate.stl").read_bytes()).hexdigest()[:32]
     _, rows = table(b["体積・重量"], "項目")
     assert rows[0]["項目"] == "体積" and rows[0]["出どころ"] == "メッシュの三角形から", rows[0]
@@ -287,6 +292,35 @@ with nav_session() as n:
     _, data = save_csv()
     b = blocks(data[3:].decode("utf-8"))
     assert list(b) == ["確認の記録", "計測（0 件）"], list(b)
-    assert dict(b["確認の記録"][1:])["形式"] == "図面（DXF・DWG）"
+    rec = dict(b["確認の記録"][1:])
+    assert rec["形式"] == "図面（DXF・DWG）" and rec["単位"].startswith("図面の数のまま"), rec
     print("6 drawing", list(b))
+
+    # ---- the drawing's page waits for its image; a file opened meanwhile stays out of it
+    dxf_hash = hashlib.sha256((TESTDATA / "plate_drawing.dxf").read_bytes()).hexdigest()[:32]
+    page.evaluate(
+        """async () => {
+             const P = (await import('/src/drawing2d.ts')).Drawing2D.prototype
+             const plain = P.snapshot
+             window.__snapGo = null
+             // the image of the drawing as it is now, handed over only when released
+             P.snapshot = async function (bg) {
+               const c = await plain.call(this, bg)
+               await new Promise((go) => { window.__snapGo = go })
+               return c
+             }
+           }"""
+    )
+    with page.expect_popup() as pp:
+        page.click("#report-page")
+    page.wait_for_function("!!window.__snapGo", timeout=10000)
+    n.load(TESTDATA / "ribbed_plate.stl")  # opened while the image is being made
+    page.evaluate("window.__snapGo()")
+    tab = pp.value
+    tab.wait_for_url(lambda u: u.startswith("blob:"), timeout=10000)
+    tab.wait_for_load_state()
+    body = tab.inner_text("body")
+    assert "plate_drawing.dxf" in body and dxf_hash in body and "ribbed_plate" not in body, body[:300]
+    tab.close()
+    print("7 the drawing's record, not the file opened meanwhile")
 print("REPORT E2E OK")
