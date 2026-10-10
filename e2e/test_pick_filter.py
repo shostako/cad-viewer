@@ -9,13 +9,19 @@
   corner.
 - 部品: the pin under the cursor is taken whole: the highlight and its name
   (「core_pin · 全体」) before the click, the status line after it; the second
-  pin and the cavity block are 1 apart (a clearance between parts).
+  pin and the cavity block are 1 apart (a clearance between parts). A
+  curve-only part is taken by its lines (loose_faces_box.igs: the three axis
+  lines, 曲線（3 本）): lit 水色 under the cursor; from all three, the box's far
+  corner is nearest the Z axis.
 
 Oracles (none from the code under test): mini_mold.step's make
 (testdata/make_step_assembly.py): the plate 0..100 x 0..60 x 0..15, core pins
 of radius 4 at (25, 30) and (75, 30) z 15..40, the cavity block
-30..70 x 15..45 x 15..35. Distances on screen from __cadProject; what a click
-takes from __cadPick (the same pick as the click and the hover).
+30..70 x 15..45 x 15..35. loose_faces_box.igs's make
+(testdata/make_iges_loose.py): the box 0..10 x 0..20 x 0..30 and the lines
+x, y, z from -50 to 50 through the origin. Distances on screen from
+__cadProject; what a click takes from __cadPick (the same pick as the click and
+the hover).
 """
 import io
 import math
@@ -25,11 +31,13 @@ from pathlib import Path
 from PIL import Image
 
 import gui_common
-from nav_common import TESTDATA, empty_sidecar, nav_session
+from nav_common import LOOSE_IGES, TESTDATA, empty_sidecar, nav_session
 
 tmp = tempfile.mkdtemp(prefix="cad_filter_")
 mold = Path(tmp) / "mini_mold.step"
 mold.write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 63)
+loose = Path(tmp) / "loose_faces_box.igs"
+loose.write_bytes(LOOSE_IGES.read_bytes() + b"\n" * 67)
 
 with nav_session() as n:
     page = n.page
@@ -149,4 +157,52 @@ with nav_session() as n:
     row = page.evaluate("[...document.querySelectorAll('#measure-list li')].map(li => li.querySelector('.m-what')?.textContent).pop()")
     assert row == "core_pin 全体 ↔ cavity_block 全体", row
     print("3 parts:", hud(), row)
+    page.keyboard.press("Escape")
+    n.settle()
+
+    # ---- a curve-only part (no faces): taken by its lines
+    empty_sidecar(page, loose)
+    n.load(str(loose))
+    gui_common.set_mode(page, "計測")
+    assert filter_ctl().locator("select").evaluate("s => s.options[s.selectedIndex].text") == "部品"
+    on_x = (-20, 0, 0)  # the X axis line, clear of the box (and on screen: the box is framed)
+    xy = n.project(on_x)
+    size = page.viewport_size
+    assert 0 < xy[0] < size["width"] and 0 < xy[1] < size["height"], xy
+    p = pick(xy)
+    assert p and p["kind"] == "part", ("a curve-only part is taken by its lines", p)
+
+    def nearest_blue(xyz):
+        """the pixel within 3 px of the point that is nearest 水色: the line is a few px wide"""
+        x, y = n.project(xyz)
+        img = Image.open(io.BytesIO(page.screenshot())).convert("RGB")
+        px = [img.getpixel((int(x) + dx, int(y) + dy)) for dx in range(-3, 4) for dy in range(-3, 4)]
+        return min(px, key=lambda c: math.dist(c, LIGHT_BLUE))
+
+    on_y = (0, -8, 0)  # another of its lines, away from the cursor (and on screen)
+    yy = n.project(on_y)
+    assert 0 < yy[0] < size["width"] and 0 < yy[1] < size["height"], yy
+    page.mouse.move(5, 5)
+    n.settle()
+    page.wait_for_timeout(200)
+    plain = nearest_blue(on_y)
+    page.mouse.move(*xy)
+    n.settle()
+    page.wait_for_timeout(200)
+    assert page.inner_text("#cursor-tip") == "曲線（3 本） · 全体", page.inner_text("#cursor-tip")
+    lit = nearest_blue(on_y)
+    assert math.dist(lit, LIGHT_BLUE) < math.dist(plain, LIGHT_BLUE) - 40, ("its other lines are lit too", plain, lit)
+    page.mouse.click(*xy)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('曲線（3 本） 全体 を選択')", timeout=5000)
+    # the partner: the box's far corner. From the whole part it is nearest the
+    # Z axis, √(10² + 20²) (the X axis alone: √(20² + 30²))
+    set_filter("頂点")
+    far = toward((10, 20, 30), (5, 10, 15), 6)  # just inside the outline: the ray must hit the box
+    v = pick(far)
+    assert v and v["kind"] == "vertex" and math.dist(v["point"], (10, 20, 30)) < 1e-3, v
+    page.mouse.move(*far)
+    page.mouse.click(*far)
+    want = f"距離 {math.hypot(10, 20):.3f}"
+    page.wait_for_function(f"document.querySelector('#hud-info').textContent.includes('{want}')", timeout=10000)
+    print("4 curves:", plain, lit, hud())
 print("PICK FILTER E2E OK")

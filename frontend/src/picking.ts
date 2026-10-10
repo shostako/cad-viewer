@@ -145,14 +145,19 @@ export class Picker {
    * that face (the face hides what is behind it).
    */
   partAt(ndc: THREE.Vector2): number | null {
+    return this.partHit(ndc)?.partId ?? null
+  }
+
+  /** the part under the cursor (partAt) and the point on it: a whole-part pick (選択: 部品) takes it */
+  private partHit(ndc: THREE.Vector2): { partId: number; point: THREE.Vector3 } | null {
     const seeThrough = this.viewer.seeThrough
     const line = this.snapDrawnLines(ndc, seeThrough ? undefined : (part) => part.indices.length === 0, true)
-    if (line && seeThrough) return line.partId
+    if (line && seeThrough) return line
     const hit = this.firstVisibleHit(ndc)
     if (line && (!hit || this.depth(line.point) <= this.depth(hit.point) + 2 * this.pxScale(hit.point))) {
-      return line.partId
+      return line
     }
-    return hit ? (hit.object.userData.partId as number) : null
+    return hit ? { partId: hit.object.userData.partId as number, point: hit.point.clone() } : null
   }
 
   /** how far in front of the camera a point is, along the view */
@@ -168,7 +173,13 @@ export class Picker {
     // whichever part it belongs to. Without this the ray hits the (undrawn or
     // see-through) face of the part in front, and a measurement silently
     // takes the wrong part.
-    if (this.viewer.seeThrough && f !== 'face' && f !== 'part') {
+    // a whole part: the part as the view draws it (partAt: a curve-only part
+    // by its lines too). Id 0, never a face's, edge's or vertex's number (those start at 1)
+    if (f === 'part') {
+      const at = this.partHit(ndc)
+      return at && this.parts.has(at.partId) ? { partId: at.partId, kind: 'part', id: 0, point: at.point } : null
+    }
+    if (this.viewer.seeThrough && f !== 'face') {
       const drawn = this.snapDrawnLines(ndc, undefined, false, f === 'any' ? 'any' : f)
       if (drawn) return drawn
       if (f !== 'any') return null // a vertex or an edge alone: none near
@@ -178,8 +189,6 @@ export class Picker {
     const partId = hit.object.userData.partId as number
     const part = this.parts.get(partId)
     if (!part || hit.faceIndex === undefined || hit.faceIndex === null) return null
-    // a whole part: id 0, never a face's, edge's or vertex's number (those start at 1)
-    if (f === 'part') return { partId, kind: 'part', id: 0, point: hit.point.clone() }
 
     // snap candidates must respect the same clipping planes as the hit —
     // a clipped-away vertex/edge within snap radius must not win

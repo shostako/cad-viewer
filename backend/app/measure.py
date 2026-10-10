@@ -161,6 +161,12 @@ def distance(
     among equally short ones; the value is the same either way.
     """
     sa, sb = _resolve(a, meshes), _resolve(b, meshes)
+    if mode != "min":
+        # a whole part has neither, whatever its shape is (a part of one
+        # cylindrical face, or of one edge, is still the part): said by the ref
+        for ref, which in ((a, "1 点目"), (b, "2 点目")):
+            if ref.get("kind") == "part":
+                return _unavailable(mode, f"{which}: {PART_HAS_NO[mode]}")
     if mode == "centre":
         return centre_distance(sa, sb, near_a)
     if mode == "max":
@@ -190,6 +196,13 @@ def distance(
     if ang is not None and ang > ANGLE_MIN_DEG:
         out["angle"] = ang
     return out
+
+
+# why a whole part (選択: 部品) has no distance of the mode
+PART_HAS_NO = {
+    "centre": "部品全体に中心はない",
+    "max": "部品全体の最大の距離は出さない（頂点か稜線を選ぶ）",
+}
 
 
 def _unavailable(mode: str, why: str) -> dict[str, Any]:

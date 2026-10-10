@@ -204,7 +204,16 @@ export class Preselect {
       this.group.add(this.edge)
       return true
     }
-    // a whole part (選択: 部品): all of its triangles
+    // a whole part (選択: 部品): all of its triangles; a curve-only part, all of its lines
+    if (pick.kind === 'part' && part.indices.length === 0) {
+      if (part.edges.length < 6) return false
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions(part.edges)
+      this.edge = new LineSegments2(geo, this.edgeMaterial)
+      this.edge.renderOrder = ORDER + 1
+      this.group.add(this.edge)
+      return true
+    }
     if (pick.kind === 'part') {
       const geo = this.faceGeometry(pick.partId)
       if (!geo) return false
