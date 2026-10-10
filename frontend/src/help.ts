@@ -26,11 +26,19 @@ interface Group {
 }
 
 const TOOLS: Row[] = [
+  { what: '計測にする・やめる', keys: ['M'] },
+  { what: '注記にする・やめる', keys: ['N'] },
+  { what: '断面を入れる・切る', keys: ['S'] },
+  { what: '表示スタイルを順に', keys: ['W'] },
   { what: '計測の 1 点目を取り消す・計測と注記をやめる', keys: ['Esc'] },
   { what: '消した計測を元に戻す', keys: [['Ctrl', 'Z']] },
   { what: 'パネルを隠す・出す', keys: ['H'] },
   { what: 'この一覧を開く・閉じる', keys: ['?'] },
 ]
+/** a drawing: no notes, no section, one way to draw */
+const TOOLS_2D: Row[] = TOOLS.filter((r) => !['N', 'S', 'W'].includes(r.keys[0] as string)).map((r) =>
+  r.keys[0] === 'Esc' ? { ...r, what: '計測の 1 点目を取り消す・計測をやめる' } : r,
+)
 
 const HELP_3D: Group[] = [
   {
@@ -57,7 +65,7 @@ const HELP_2D: Group[] = [
     ],
     note: '計測のクリックは、12 px 以内の端点・中心・四分円点にスナップする',
   },
-  { title: '道具', rows: TOOLS.map((r) => (r.keys[0] === 'Esc' ? { ...r, what: '計測の 1 点目を取り消す・計測をやめる' } : r)) },
+  { title: '道具', rows: TOOLS_2D },
 ]
 
 function kbd(text: string): HTMLElement {

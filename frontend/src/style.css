@@ -51,6 +51,9 @@
   /* the right-hand column: one width for every panel in it */
   --cv-col: 264px;
   --cv-edge: 12px;
+  /* the toolbar at the top of the right-hand column; the operation panel under it */
+  --cv-toolbar-h: 36px;
+  --cv-column-top: calc(var(--cv-edge) + var(--cv-toolbar-h) + 8px);
 }
 
 * {
@@ -1524,9 +1527,78 @@ body,
 }
 
 .lil-gui.lil-root.lil-auto-place {
+  top: var(--cv-column-top);
+  right: var(--cv-edge);
+  max-height: calc(100% - var(--cv-column-top) - var(--cv-edge));
+}
+
+/* the toolbar: the operations used most (toolbar.ts), one click each */
+#toolbar {
+  position: absolute;
   top: var(--cv-edge);
   right: var(--cv-edge);
-  max-height: calc(100% - 2 * var(--cv-edge));
+  z-index: 1001;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  width: var(--cv-col);
+  height: var(--cv-toolbar-h);
+  padding: 0 5px;
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+}
+
+#toolbar button {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  color: var(--cv-text-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--cv-r);
+  cursor: pointer;
+  transition: background-color 0.12s, color 0.12s;
+}
+
+#toolbar button:hover:not(:disabled) {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+/* the mode in use, 断面 while it cuts */
+#toolbar button[aria-pressed='true'] {
+  color: var(--cv-accent);
+  background: var(--cv-accent-weak);
+  border-color: var(--cv-accent-line);
+}
+
+/* 計測 on a mesh model: it can be pressed (the status line says why it
+   cannot measure), but looks off */
+#toolbar button.off:not([aria-pressed='true']) {
+  opacity: 0.4;
+}
+
+/* 回転 · 計測 · 注記: one segment */
+#toolbar .tb-group {
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  background: var(--cv-surface-sunk);
+  border-radius: calc(var(--cv-r) + 1px);
+}
+
+#toolbar .tb-sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  margin: 0 3px;
+  background: var(--cv-border);
 }
 
 .lil-gui .lil-title {
@@ -1573,6 +1645,7 @@ body,
 
 /* panels hidden for a while (H): only the model, the status line and the triad */
 body.panels-hidden .lil-gui.lil-root,
+body.panels-hidden #toolbar,
 body.panels-hidden #tree-panel,
 body.panels-hidden #corner-br {
   display: none !important;

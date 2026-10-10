@@ -367,7 +367,8 @@ with display_session() as d:
     # ---- (h) the PNG export is the screen, in the current style --------------
     def export(tag):
         with page.expect_download(timeout=15000) as info:
-            d.click_button("画像を保存")
+            d.page.locator("#toolbar button[data-action='png']").click()
+            d.settle()
         path = os.path.join(d.tmp, f"{tag}.png")
         info.value.save_as(path)
         page.wait_for_function("document.querySelector('#hud-info').textContent.startsWith('画像を保存: ')")

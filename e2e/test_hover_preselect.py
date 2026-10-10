@@ -553,7 +553,7 @@ def run(page, nav, infos):
     h = frame()
     assert changed(h, plain, top) >= 0.95
     with page.expect_download(timeout=15000) as info:
-        nav.ctl("画像を保存").locator("button").evaluate("b => b.click()")  # the mouse stays on the face
+        page.locator("#toolbar button[data-action='png']").evaluate("b => b.click()")  # the mouse stays on the face
     png = np.asarray(Image.open(info.value.path()).convert("RGB")).astype(int)
     assert png.shape == plain.shape, (png.shape, plain.shape)
     same_frame(png, plain, "(k) the saved image")

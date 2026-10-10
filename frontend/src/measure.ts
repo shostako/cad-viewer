@@ -80,6 +80,9 @@ export class MeasureTool {
     this.modelId = modelId
     this.isBrep = isBrep
     this.partNames = partNames && partNames.size > 1 ? partNames : null
+    // again: clearAll told the listeners before the new model's kind was set
+    // (the toolbar's 計測 shows whether this one can be measured)
+    this.emit()
   }
 
   get available(): boolean {
