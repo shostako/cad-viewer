@@ -2003,9 +2003,11 @@ const PICK_TYPES = [
  * handle goes on the recent list; it opens in the folder of the file opened
  * last), else the plain <input>.
  */
+/** the picker refused once (a policy, a frame): the plain file dialog from then on */
+let pickerRefused = false
 async function openFile(): Promise<void> {
   showRecentPop(false)
-  const pick = filePicker()
+  const pick = pickerRefused ? null : filePicker()
   if (!pick) {
     fileInput.click()
     return
@@ -2016,7 +2018,11 @@ async function openFile(): Promise<void> {
     ;[handle] = await pick({ id: 'cad-viewer-open', types: PICK_TYPES, ...(last ? { startIn: last } : {}) })
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') return // the user closed the picker
-    fileInput.click() // the picker refused (an old handle to start in, a policy): the plain one
+    // refused: the press that could open the plain dialog is used up by now
+    // (a browser opens a file dialog only straight from a press), so say it and
+    // let the next press open the plain one
+    pickerRefused = true
+    hudInfo.textContent = `ファイルを選ぶ画面を開けなかった（${e instanceof Error ? e.message : e}）。もう一度押すと、ふつうのファイル選択で開く（最近開いたファイルには入らない）`
     return
   }
   let file: File

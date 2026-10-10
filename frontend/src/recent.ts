@@ -11,8 +11,9 @@
  * from the sidecar, as for any file with the same content.
  *
  * Several tabs share the one list: a change is made to the list as stored
- * (read again just before), and the other tabs are told to read it again
- * (BroadcastChannel), so one tab's stale copy does not write over another's.
+ * (read again just before, under a lock that the other tabs' changes wait for:
+ * Web Locks), and the other tabs are told to read it again (BroadcastChannel),
+ * so one tab's stale copy does not write over another's.
  */
 
 export const RECENT_MAX = 8
@@ -152,7 +153,11 @@ export class RecentFiles {
   }
 
   private change(f: () => Promise<void>): Promise<void> {
-    const next = this.queue.then(f).finally(() => this.onChange(this.entries))
+    // the read, the change and the write as one step for all the tabs (a lock);
+    // a browser without Web Locks: this tab's queue only
+    const locks = (navigator as Navigator & { locks?: LockManager }).locks
+    const step = locks ? () => locks.request('cad-viewer-recent', f) : f
+    const next = this.queue.then(step).finally(() => this.onChange(this.entries))
     this.queue = next.catch(() => undefined)
     return next
   }
@@ -189,7 +194,9 @@ export async function reopen(entry: RecentEntry): Promise<Reopened> {
   try {
     return { file: await h.getFile() }
   } catch (e) {
-    if (e instanceof DOMException && (e.name === 'NotFoundError' || e.name === 'NotReadableError')) return { problem: 'missing' }
+    // gone (moved or deleted). Not readable for now (another program holds it,
+    // a cloud file not fetched yet) is thrown on: said, and the row stays
+    if (e instanceof DOMException && e.name === 'NotFoundError') return { problem: 'missing' }
     throw e
   }
 }

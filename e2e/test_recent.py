@@ -19,7 +19,10 @@ back from the sidecar; × takes a row off.
 - Two tabs share the list: a file opened in one is listed in the other, and a
   row taken off in one does not come back by the other's next change.
 - A picked file that cannot be read (gone between the pick and the read): the
-  status line says so.
+  status line says so. The picker closed (AbortError): nothing opens. The
+  picker refused (SecurityError): said, and the next press opens the plain
+  file dialog. A listed file not readable for now (NotReadableError: another
+  program holds it): said, and its row stays.
 - Without the picker (another browser): 開く falls back to the plain file
   dialog, and nothing is added (no handle).
 
@@ -244,6 +247,41 @@ with nav_session() as n:
     assert pop_rows(tab_a) == ["two_0.stl", "two_2.stl"], ("the stored list, not this tab's copy", pop_rows(tab_a))
     ctx.close()
     print("7 Esc, unreadable, two tabs ok")
+
+    # ---- 7e. the picker closed (AbortError): nothing opens. Refused (SecurityError):
+    # said, and the next press opens the plain file dialog. A listed file that
+    # cannot be read for now (NotReadableError): said, and its row stays
+    page.evaluate(
+        "() => { window.__inputClicks = 0; const c = HTMLInputElement.prototype.click;"
+        " HTMLInputElement.prototype.click = function () { if (this.id === 'file-input') window.__inputClicks++; return c.call(this) } }"
+    )
+    hud_before = page.inner_text("#hud-info")
+    page.evaluate("() => { window.showOpenFilePicker = async () => { throw new DOMException('closed', 'AbortError') } }")
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_timeout(300)
+    assert page.evaluate("window.__inputClicks") == 0 and page.inner_text("#hud-info") == hud_before, "closed: nothing opens"
+    page.evaluate("() => { window.showOpenFilePicker = async () => { throw new DOMException('not allowed here', 'SecurityError') } }")
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('ファイルを選ぶ画面を開けなかった')", timeout=5000)
+    assert page.evaluate("window.__inputClicks") == 0, "the press is used up: no dialog opened behind the user's back"
+    with page.expect_file_chooser() as fc:
+        page.locator("#toolbar button[data-action='open']").click()
+    fc.value.set_files(n.paths["step"])
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#recent-box:not(.hidden)", timeout=10000)
+    kept = card_rows()
+    page.evaluate("() => { FileSystemFileHandle.prototype.getFile = async function () { throw new DOMException('in use', 'NotReadableError') } }")
+    page.locator("#recent-list .recent-open").nth(0).click()
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('を開けなかった')", timeout=10000)
+    page.wait_for_timeout(300)
+    assert card_rows() == kept, ("not readable for now: the row stays", card_rows(), kept)
+    page.reload()
+    page.wait_for_load_state("networkidle")
+    page.wait_for_selector("#recent-box:not(.hidden)", timeout=10000)
+    assert card_rows() == kept, ("and stays for the next visit", card_rows(), kept)
+    print("7e closed, refused, not readable ok")
 
     # ---- 8. without the picker: the plain file dialog, nothing added
     page.evaluate("window.showOpenFilePicker = undefined")
