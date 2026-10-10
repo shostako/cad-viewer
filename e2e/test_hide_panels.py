@@ -37,7 +37,7 @@ with nav_session() as n:
     def same_view(a, b):
         return all(close(a[k], b[k], 1e-9 * 1000) for k in ("position", "target", "up"))
 
-    PANELS_SHOWN = (".lil-gui.lil-root", "#tree-panel", "#corner-br")
+    PANELS_SHOWN = ("#toolbar", ".lil-gui.lil-root", "#tree-panel", "#corner-br")
     w0 = width()
     print("shown", n.fill_check(*MOLD, "loaded"), "width", round(w0, 1))
     assert not hidden("#panels-hide") and hidden("#panels-show")

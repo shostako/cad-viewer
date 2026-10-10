@@ -300,7 +300,7 @@ with nav_session() as n:
     t = box("#triad")
     screen = np.asarray(n.canvas_image()).astype(int)
     with page.expect_download(timeout=15000) as info:
-        ctl("画像を保存").locator("button").click()
+        page.locator("#toolbar button[data-action='png']").click()
     out = np.asarray(Image.open(info.value.path()).convert("RGB")).astype(int)
     assert out.shape == screen.shape, (out.shape, screen.shape)
     x0, y0, x1, y1 = int(t["x"]), int(t["y"]), int(t["x"] + t["width"]), int(t["y"] + t["height"])

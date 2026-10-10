@@ -5,8 +5,9 @@ the app's own), three widths in the right-hand column and four heading styles.
 The rules checked here are the specification, written out in this file (not
 read from the stylesheet):
 
-- the right-hand column (the operation panel, the measure list, the volume
-  panel) is one width, 264 px, with one right edge 12 px from the window's
+- the right-hand column (the toolbar, the operation panel, the measure list,
+  the volume panel) is one width, 264 px, with one right edge 12 px from the
+  window's; the toolbar 12 px from the top, the operation panel 8 px under it
 - every panel has the same surface colour, border colour and corner radius,
   and the operation panel (lil-gui) has them too
 - one heading style: 12 px, bold, the secondary grey, no letter spacing, no
@@ -66,15 +67,18 @@ with sync_playwright() as p:
 
     # ---- the empty screen: the operation panel and the open card share the surface
     gui = ".lil-gui.lil-root"
-    for sel in (gui, "#empty-hint", "#hud"):
+    for sel in (gui, "#toolbar", "#empty-hint", "#hud"):
         st = style(sel, ["borderTopColor", "borderTopLeftRadius"])
         assert st == {"borderTopColor": BORDER, "borderTopLeftRadius": RADIUS}, (sel, st)
     assert style("#hud", ["backgroundColor"])["backgroundColor"] == SURFACE
     assert style("#empty-hint", ["backgroundColor"])["backgroundColor"] == SURFACE
     # lil-gui paints its own body (opaque: its rows scroll under the title)
     assert style(gui, ["backgroundColor"])["backgroundColor"] == SURFACE_SOLID, style(gui, ["backgroundColor"])
+    assert style("#toolbar", ["backgroundColor"])["backgroundColor"] == SURFACE_SOLID, style("#toolbar", ["backgroundColor"])
+    t = rect("#toolbar")
+    assert abs((t[2] - t[0]) - COLUMN) <= 0.5 and abs(1280 - t[2] - EDGE) <= 0.5 and abs(t[1] - EDGE) <= 0.5, ("toolbar", t)
     g = rect(gui)
-    assert abs((g[2] - g[0]) - COLUMN) <= 0.5 and abs(1280 - g[2] - EDGE) <= 0.5 and abs(g[1] - EDGE) <= 0.5, ("GUI", g)
+    assert abs((g[2] - g[0]) - COLUMN) <= 0.5 and abs(1280 - g[2] - EDGE) <= 0.5 and abs(g[1] - (t[3] + 8)) <= 0.5, ("GUI", g)
     # the main button is the one interactive colour, its text dark on it
     st = style("#empty-open", ["backgroundColor", "color"])
     assert st == {"backgroundColor": ACCENT, "color": ON_ACCENT}, st
@@ -104,7 +108,7 @@ with sync_playwright() as p:
             page.wait_for_timeout(300)
     page.wait_for_function("document.querySelectorAll('#measure-list li').length === 2", timeout=10000)
     page.wait_for_timeout(300)
-    cols = {sel: rect(sel) for sel in (gui, "#measure-panel", "#props-panel")}
+    cols = {sel: rect(sel) for sel in ("#toolbar", gui, "#measure-panel", "#props-panel")}
     print("column", cols)
     for sel, r in cols.items():
         assert abs((r[2] - r[0]) - COLUMN) <= 0.5, ("one width", sel, r)
