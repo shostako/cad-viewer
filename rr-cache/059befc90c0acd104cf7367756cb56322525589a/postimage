@@ -1,0 +1,1279 @@
+/* Design tokens (issue #23 item 5): every panel, the operation panel
+   (lil-gui) included, draws from these. One interactive colour (accent); the
+   data colours (dimensions, notes, draft, axes) keep their meaning. The 3D
+   background (--cv-scene) stays: E2E checks it as a spec colour. */
+:root {
+  /* surfaces */
+  --cv-scene: #1d2126;
+  --cv-surface: rgba(21, 25, 31, 0.94);
+  --cv-surface-solid: #15191f;
+  --cv-surface-sunk: #10141a;
+  --cv-raised: #222831;
+  --cv-hover: #2b333e;
+  --cv-border: #303845;
+  --cv-border-strong: #445062;
+  /* text (contrast on --cv-surface-solid: 14.7 / 8.4 / 4.9) */
+  --cv-text: #e6ebf1;
+  --cv-text-2: #aab4c1;
+  --cv-text-3: #7d8896;
+  /* the one interactive colour */
+  --cv-accent: #4c9aff;
+  --cv-accent-hover: #6aacff;
+  --cv-accent-weak: rgba(76, 154, 255, 0.16);
+  --cv-accent-line: rgba(76, 154, 255, 0.55);
+  --cv-on-accent: #0b1220;
+  /* meaning */
+  --cv-measure: #ffd060;
+  --cv-on-measure: #1d2126; /* text on a dimension's yellow label */
+  --cv-note: #4a9e6e;
+  --cv-note-bg: rgba(40, 90, 60, 0.92);
+  --cv-note-text: #e8eef5;
+  --cv-ok: #3ccf5a;
+  --cv-danger: #ff6b6b;
+  --cv-danger-text: #ff8f8f;
+  --cv-warn: #e0b050;
+  /* type: fonts installed on Windows (no web fonts: the same offline) */
+  --cv-font: 'Yu Gothic UI', 'Meiryo UI', 'Segoe UI', system-ui, sans-serif;
+  --cv-mono: Consolas, 'Courier New', monospace;
+  --cv-fs-xs: 11px;
+  --cv-fs-sm: 12px;
+  --cv-fs-md: 13px;
+  --cv-fs-lg: 15px;
+  --cv-fs-xl: 17px;
+  /* shape and space (4 px grid) */
+  --cv-r-sm: 4px;
+  --cv-r: 6px;
+  --cv-r-lg: 10px;
+  --cv-pad: 10px;
+  --cv-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  /* the right-hand column: one width for every panel in it */
+  --cv-col: 264px;
+  --cv-edge: 12px;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: var(--cv-font);
+  color: var(--cv-text);
+  background: var(--cv-scene);
+}
+
+/* the keyboard focus: one ring for every control of the app's own */
+#app button:focus-visible,
+#app input:focus-visible,
+#panels-hide:focus-visible {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: 2px;
+}
+
+#app button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+/* thin scrollbars in the panels: a full-width one ate a column of numbers */
+#tree-panel,
+#measure-panel,
+#props-parts-wrap,
+.lil-gui.lil-root > .lil-children {
+  scrollbar-width: thin;
+  scrollbar-color: var(--cv-border-strong) transparent;
+}
+
+#viewport {
+  position: absolute;
+  inset: 0;
+}
+
+#viewport.hidden {
+  display: none;
+}
+
+#viewport2d {
+  position: absolute;
+  inset: 0;
+  /* the 3D view's background (viewer.ts); a drawing's own page is made this
+     colour too (drawing2d.ts PAGE_COLOUR) */
+  background: #1d2126;
+  touch-action: none;
+  overflow: hidden;
+}
+
+#viewport2d.hidden {
+  display: none;
+}
+
+/* the measurements over a drawing, in screen px (drawing2d.ts). Never takes
+   the pointer: drags, the wheel and snap clicks go to the drawing. */
+#viewport2d .overlay2d-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+#viewport canvas {
+  display: block;
+}
+
+#hud {
+  position: absolute;
+  left: var(--cv-edge);
+  bottom: var(--cv-edge);
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: 8px 12px;
+  font-size: var(--cv-fs-md);
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* one heading style for every panel: small, bold, grey; no spacing, no capitals */
+#hud-title,
+#tree-title,
+#measure-title,
+#props-head {
+  font-weight: 600;
+  font-size: var(--cv-fs-sm);
+  color: var(--cv-text-2);
+  letter-spacing: 0;
+  text-transform: none;
+}
+
+#hud-title {
+  margin-bottom: 2px;
+}
+
+/* draft-angle legend (抜き勾配), shown while the colouring is on */
+#draft-legend {
+  margin: 2px 0 4px;
+  font-size: var(--cv-fs-sm);
+}
+
+#draft-legend.hidden {
+  display: none;
+}
+
+.draft-title {
+  color: var(--cv-text-2);
+  margin-bottom: 2px;
+}
+
+.draft-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.draft-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+  flex: none;
+}
+
+.draft-note {
+  margin-top: 2px;
+  max-width: 34em;
+  color: var(--cv-warn);
+}
+
+/* thickness legend (肉厚), shown while the heatmap is on: the colour bar runs
+   from 0 to twice the threshold, with the threshold in the middle */
+#thickness-legend {
+  margin: 2px 0 4px;
+  font-size: var(--cv-fs-sm);
+  width: 22em;
+  max-width: 100%;
+}
+
+#thickness-legend.hidden {
+  display: none;
+}
+
+.thick-title {
+  color: var(--cv-text-2);
+  margin-bottom: 3px;
+}
+
+.thick-bar {
+  height: 10px;
+  border-radius: 3px;
+  border: 1px solid rgba(0, 0, 0, 0.5);
+}
+
+/* the ticks hang under the bar; the end labels stay inside its width */
+.thick-ticks {
+  position: relative;
+  height: 1.4em;
+  margin-bottom: 2px;
+}
+
+.thick-tick {
+  position: absolute;
+  top: 1px;
+  transform: translateX(-50%);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.thick-tick[data-at='0%'] {
+  transform: none;
+}
+
+.thick-tick[data-at='100%'] {
+  transform: translateX(-100%);
+}
+
+/* the value under the cursor (heatmap, draft colouring): follows the cursor,
+   above every panel, never takes the pointer */
+#cursor-tip {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 1100;
+  pointer-events: none;
+  user-select: none;
+  padding: 2px 7px;
+  border-radius: var(--cv-r-sm);
+  border: 1px solid var(--cv-border-strong);
+  background: var(--cv-surface-solid);
+  color: var(--cv-text);
+  font-size: var(--cv-fs-sm);
+  font-family: var(--cv-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+#cursor-tip.hidden {
+  display: none;
+}
+
+/* 計測 / 注記: the name of what a click would pick, framed in the colour of
+   its highlight (preselect.ts PRESELECT_COLOR) */
+#cursor-tip[data-kind='pick'] {
+  border-color: #55d6ff;
+}
+
+#hud-keys {
+  margin-top: 4px;
+  font-size: var(--cv-fs-xs);
+  color: var(--cv-text-3);
+}
+
+#dropzone {
+  position: absolute;
+  inset: 16px;
+  border: 2px dashed var(--cv-accent);
+  border-radius: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--cv-fs-xl);
+  font-weight: 600;
+  color: var(--cv-text);
+  background: rgba(21, 25, 31, 0.6);
+  pointer-events: none;
+  z-index: 10;
+}
+
+#dropzone.hidden {
+  display: none;
+}
+
+/* part tree (top left): the header stays, the rows scroll under it */
+#tree-panel {
+  position: absolute;
+  left: var(--cv-edge);
+  top: var(--cv-edge);
+  min-width: 180px;
+  max-width: 300px;
+  max-height: 60vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: var(--cv-pad) 8px var(--cv-pad) 12px;
+  font-size: var(--cv-fs-md);
+  user-select: none;
+}
+
+#tree-panel.hidden {
+  display: none;
+}
+
+#tree-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+#tree-panel.folded #tree-head {
+  margin-bottom: 0;
+}
+
+/* 部品ツリー: folds the tree */
+#tree-fold {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px 2px 0;
+  color: var(--cv-text-2);
+  background: none;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-weight: 600;
+  font-size: var(--cv-fs-sm);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#tree-fold svg {
+  flex: none;
+  transition: transform 0.15s;
+}
+
+#tree-panel.folded #tree-fold svg {
+  transform: rotate(-90deg);
+}
+
+#tree-fold:hover {
+  color: var(--cv-text);
+}
+
+/* the number of parts */
+#tree-count {
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  font-size: var(--cv-fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+#tree-show-all {
+  margin-left: auto;
+  padding: 1px 8px;
+  color: var(--cv-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#tree-show-all:hover:not(:disabled) {
+  background: var(--cv-hover);
+}
+
+/* every part shown: nothing to do */
+#tree-show-all:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#tree-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+#tree-panel.folded #tree-body {
+  display: none;
+}
+
+#tree-panel ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+#tree-panel ul ul {
+  padding-left: 16px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 2px;
+  border-radius: 4px;
+}
+
+.tree-row:hover {
+  background: rgba(143, 180, 216, 0.1);
+}
+
+/* the part under the cursor in the 3D view (mode なし) */
+.tree-row.under-cursor {
+  background: rgba(85, 214, 255, 0.16);
+  box-shadow: inset 2px 0 0 #55d6ff;
+}
+
+#tree-panel label {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 2px 2px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#tree-panel label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#tree-panel label:hover {
+  color: #fff;
+}
+
+#tree-panel input[type='checkbox'] {
+  flex: none;
+  accent-color: var(--cv-accent);
+}
+
+/* the part's colour, as the 3D view draws it */
+.tree-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55);
+}
+
+/* the number of a part whose name other parts have too */
+.tree-num {
+  flex: none;
+  padding: 0 4px;
+  border-radius: 6px;
+  color: #cfd8e3;
+  background: rgba(143, 180, 216, 0.16);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* a hidden part (a group with nothing shown) */
+.tree-row.off label span,
+.tree-row.off .tree-num {
+  color: #7f8b99;
+}
+
+.tree-row.off .tree-mark {
+  opacity: 0.35;
+}
+
+/* これだけ表示 / この部品へ寄る: they keep their room, so the panel's size
+   (which the fit avoids) does not change with the pointer; seen on the row
+   under the pointer or the row the keyboard is in, always on a touch screen */
+.tree-actions {
+  flex: none;
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+  opacity: 0;
+}
+
+.tree-row:hover .tree-actions,
+.tree-row:has(:focus-visible) .tree-actions {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .tree-actions {
+    opacity: 1;
+  }
+}
+
+.tree-btn {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  color: #b5c2d0;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tree-btn:hover:not(:disabled) {
+  color: #fff;
+  background: rgba(76, 154, 255, 0.2);
+  border-color: rgba(76, 154, 255, 0.5);
+}
+
+.tree-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.tree-btn:focus-visible,
+#tree-fold:focus-visible,
+#tree-show-all:focus-visible {
+  outline: 2px solid #4c9aff;
+  outline-offset: 0;
+}
+
+#measure-panel {
+  /* the right-hand column's one width (the operation panel's too) */
+  width: var(--cv-col);
+  max-height: 40vh;
+  overflow-y: auto;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: var(--cv-pad) 12px;
+  font-size: var(--cv-fs-md);
+  user-select: none;
+}
+
+#measure-panel.hidden {
+  display: none;
+}
+
+#measure-title {
+  margin-bottom: 6px;
+}
+
+#measure-list {
+  list-style: none;
+}
+
+#measure-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px solid var(--cv-border);
+  font-variant-numeric: tabular-nums;
+}
+
+#measure-list li:first-child {
+  border-top: none;
+}
+
+/* the values can be selected and copied (into a report, Excel); the × cannot */
+#measure-list li > span {
+  user-select: text;
+}
+
+#measure-list button {
+  flex: none;
+  background: none;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  color: var(--cv-text-3);
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 5px;
+}
+
+#measure-list button:hover {
+  color: var(--cv-danger);
+  background: var(--cv-hover);
+}
+
+.note-label {
+  color: var(--cv-note-text);
+  background: var(--cv-note-bg);
+  border: 1px solid var(--cv-note);
+  border-radius: var(--cv-r-sm);
+  padding: 2px 8px;
+  font-size: var(--cv-fs-sm);
+  font-family: var(--cv-font);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.note-input {
+  position: fixed;
+  z-index: 100;
+  width: 200px;
+  padding: 4px 8px;
+  font-family: var(--cv-font);
+  font-size: var(--cv-fs-md);
+  color: var(--cv-text);
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-note);
+  border-radius: var(--cv-r-sm);
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(74, 158, 110, 0.25);
+}
+
+.dim-label {
+  color: var(--cv-on-measure);
+  background: var(--cv-measure);
+  border-radius: var(--cv-r-sm);
+  padding: 1px 6px;
+  font-size: var(--cv-fs-sm);
+  font-weight: 600;
+  font-family: var(--cv-font);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* rotation-centre marker after a double-click: fades out, never takes clicks.
+   Animate opacity only: CSS2DRenderer owns `transform`. */
+.pivot-marker {
+  width: 14px;
+  height: 14px;
+  border: 2px solid #ffd060;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  animation: pivot-fade 1s ease-out forwards;
+}
+@keyframes pivot-fade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* bottom-right stack: measure list above, volume / weight below */
+#corner-br {
+  position: absolute;
+  right: var(--cv-edge);
+  bottom: var(--cv-edge);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 8px;
+  pointer-events: none;
+}
+
+#corner-br > * {
+  pointer-events: auto;
+}
+
+#props-panel {
+  width: var(--cv-col);
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: var(--cv-pad) 12px;
+  font-size: var(--cv-fs-md);
+  /* values are meant to be copied (e.g. into Excel) */
+  user-select: text;
+}
+
+#props-panel.hidden,
+#props-panel .hidden {
+  display: none;
+}
+
+#props-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+#props-density {
+  font-weight: 400;
+  color: var(--cv-text-3);
+}
+
+#props-status {
+  color: var(--cv-text-2);
+}
+
+#props-parts-wrap {
+  overflow-y: auto;
+  margin-bottom: 6px;
+}
+
+#props-parts {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: var(--cv-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+#props-parts th {
+  position: sticky;
+  top: 0;
+  background: var(--cv-surface-solid);
+  color: var(--cv-text-3);
+  font-weight: 400;
+  text-align: right;
+  padding-left: 6px;
+}
+
+#props-parts th:first-child {
+  text-align: left;
+  padding-left: 0;
+}
+
+#props-parts td {
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 6px;
+}
+
+#props-parts td.name {
+  text-align: left;
+  padding-left: 0;
+  max-width: 92px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+#props-parts td.none {
+  text-align: left;
+  font-size: var(--cv-fs-xs);
+  color: var(--cv-text-2);
+  white-space: normal;
+}
+
+#props-total-title {
+  font-size: var(--cv-fs-sm);
+  color: var(--cv-text-2);
+  margin-bottom: 2px;
+}
+
+#props-total dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+#props-total dd {
+  text-align: right;
+}
+
+#props-note {
+  font-size: var(--cv-fs-xs);
+  color: var(--cv-text-3);
+  margin-top: 4px;
+}
+
+/* card in the middle of an empty screen: open a file, or drop one */
+#empty-hint {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 26px 34px 22px;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  text-align: center;
+  pointer-events: none; /* a drop anywhere works; only the button takes clicks */
+}
+
+#empty-hint.hidden {
+  display: none;
+}
+
+/* the card in the middle while a file loads, and when it could not be opened */
+#load-card {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5; /* over the views; the drop zone (10) still covers it */
+  box-sizing: border-box;
+  width: min(380px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 22px 28px 20px;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  text-align: center;
+  pointer-events: none; /* while loading, the old model under it can still be turned */
+}
+
+#load-card.hidden {
+  display: none;
+}
+
+#load-card.failed {
+  pointer-events: auto;
+}
+
+/* no room left of the operation panel: the cards go over it (lil-gui: 1001).
+   They still let clicks through where they show no button (pointer-events). */
+#empty-hint.over-panel,
+#load-card.over-panel {
+  z-index: 1002;
+}
+
+#load-icon {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.load-spinner {
+  width: 24px;
+  height: 24px;
+  box-sizing: border-box;
+  border: 3px solid var(--cv-raised);
+  border-top-color: var(--cv-accent);
+  border-radius: 50%;
+  animation: load-spin 0.9s linear infinite;
+}
+
+#load-card.failed #load-icon {
+  color: var(--cv-danger);
+}
+
+#load-title {
+  font-size: var(--cv-fs-lg);
+  font-weight: 600;
+  color: var(--cv-text);
+}
+
+#load-file {
+  font-size: var(--cv-fs-md);
+  color: var(--cv-text-2);
+  overflow-wrap: anywhere;
+}
+
+#load-bar {
+  position: relative;
+  width: 100%;
+  height: 4px;
+  margin-top: 4px;
+  overflow: hidden;
+  background: var(--cv-raised);
+  border-radius: 2px;
+}
+
+#load-bar-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  background: var(--cv-accent);
+  border-radius: 2px;
+  transition: width 0.15s;
+}
+
+/* after the upload the time left is unknown: a segment that keeps moving */
+#load-card.indeterminate #load-bar-fill {
+  width: 35%;
+  transition: none;
+  animation: load-slide 1.2s ease-in-out infinite;
+}
+
+#load-steps {
+  display: flex;
+  gap: 14px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--cv-fs-sm);
+  color: var(--cv-text-3);
+}
+
+#load-steps li.active {
+  color: var(--cv-text);
+  font-weight: 600;
+}
+
+#load-steps li.done {
+  color: var(--cv-ok);
+}
+
+#load-steps li.done::before {
+  content: '✓ ';
+}
+
+#load-reason,
+#load-detail,
+#load-actions {
+  display: none;
+}
+
+#load-card.failed #load-bar,
+#load-card.failed #load-steps {
+  display: none;
+}
+
+#load-card.failed #load-reason {
+  display: block;
+  font-size: var(--cv-fs-md);
+  line-height: 1.6;
+  color: var(--cv-danger-text);
+}
+
+#load-card.failed #load-detail:not(.hidden) {
+  display: block;
+  width: 100%;
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  font: 12px/1.5 var(--cv-mono);
+  white-space: pre-wrap;
+  text-align: left;
+  color: var(--cv-text-2);
+  background: var(--cv-surface-sunk);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r);
+}
+
+#load-card.failed #load-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+#load-actions button {
+  font: inherit;
+  font-size: var(--cv-fs-md);
+  padding: 6px 14px;
+  border-radius: var(--cv-r);
+  cursor: pointer;
+  color: var(--cv-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  transition: background-color 0.12s;
+}
+
+#load-actions button:hover {
+  background: var(--cv-hover);
+}
+
+#load-actions #load-another {
+  color: var(--cv-on-accent);
+  background: var(--cv-accent);
+  border-color: var(--cv-accent);
+  font-weight: 600;
+}
+
+#load-actions #load-another:hover {
+  background: var(--cv-accent-hover);
+}
+
+@keyframes load-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes load-slide {
+  from {
+    left: -35%;
+  }
+  to {
+    left: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .load-spinner,
+  #load-card.indeterminate #load-bar-fill {
+    animation: none;
+  }
+  #load-card.indeterminate #load-bar-fill {
+    left: 0;
+    width: 100%;
+    opacity: 0.6;
+  }
+}
+
+#empty-title {
+  font-size: var(--cv-fs-xl);
+  font-weight: 600;
+  color: var(--cv-text);
+}
+
+#empty-open {
+  pointer-events: auto;
+  font: inherit;
+  font-size: var(--cv-fs-md);
+  font-weight: 600;
+  color: var(--cv-on-accent);
+  background: var(--cv-accent);
+  border: 1px solid var(--cv-accent);
+  border-radius: var(--cv-r);
+  padding: 6px 18px;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+#empty-open:hover {
+  background: var(--cv-accent-hover);
+}
+
+#empty-drop {
+  font-size: var(--cv-fs-sm);
+  color: var(--cv-text-2);
+}
+
+/* the formats as small chips */
+#empty-formats {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 4px;
+  max-width: 260px;
+  font-size: var(--cv-fs-xs);
+  color: var(--cv-text-2);
+}
+
+#empty-formats span {
+  padding: 1px 6px;
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+}
+
+/* axis triad (bottom left). Only the discs and their letters take the
+   pointer: between them clicks go through to the canvas. */
+#triad {
+  position: absolute;
+  left: var(--cv-edge);
+  bottom: var(--cv-edge);
+  width: 88px;
+  height: 88px;
+  pointer-events: none;
+  user-select: none;
+}
+
+#triad.hidden {
+  display: none;
+}
+
+#triad svg {
+  display: block;
+  overflow: visible;
+}
+
+#triad .triad-bg {
+  fill: rgba(20, 24, 30, 0.35);
+  pointer-events: none;
+}
+
+#triad .triad-end line {
+  pointer-events: none;
+}
+
+#triad .triad-end circle,
+#triad .triad-end text {
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+#triad .triad-end:hover circle {
+  stroke: #fff;
+  stroke-width: 2;
+}
+
+/* while the triad is shown, the HUD sits right of it (12 + 88 + 8) */
+#hud.beside-triad {
+  left: 108px;
+}
+
+/* "N 件の計測を消した [元に戻す]": just above the HUD (placed from main.ts) */
+#undo-toast {
+  position: fixed;
+  z-index: 1002;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 8px 6px 12px;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  font-size: var(--cv-fs-md);
+}
+
+#undo-toast.hidden {
+  display: none;
+}
+
+#undo-btn {
+  padding: 3px 10px;
+  color: var(--cv-accent);
+  background: var(--cv-accent-weak);
+  border: 1px solid var(--cv-accent-line);
+  border-radius: var(--cv-r);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 0.12s;
+}
+
+#undo-btn:hover {
+  background: rgba(76, 154, 255, 0.26);
+}
+
+/* ---- the operation panel (lil-gui), themed from the tokens through its own
+   CSS variables, and placed like the other panels (12 px from the edges, the
+   column's width, the same surface, border, corners and shadow) */
+.lil-gui {
+  --background-color: var(--cv-surface-solid);
+  --text-color: var(--cv-text);
+  --title-background-color: var(--cv-surface-sunk);
+  --title-text-color: var(--cv-text-2);
+  --widget-color: var(--cv-raised);
+  --hover-color: var(--cv-hover);
+  --focus-color: #36404d;
+  --number-color: var(--cv-accent);
+  --string-color: var(--cv-text);
+  --font-family: var(--cv-font);
+  --font-size: 12px;
+  --input-font-size: 12px;
+  /* lil-gui's own row metrics: a taller row costs the half-screen window
+     whole rows of the panel, and the measure list its room */
+  --padding: 5px;
+  --spacing: 4px;
+  --widget-height: 20px;
+  --widget-border-radius: var(--cv-r-sm);
+  --name-width: 40%;
+  --folder-indent: 8px;
+}
+
+.lil-gui.lil-root {
+  --width: var(--cv-col);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  overflow: hidden;
+  box-shadow: var(--cv-shadow);
+}
+
+.lil-gui.lil-root.lil-auto-place {
+  top: var(--cv-edge);
+  right: var(--cv-edge);
+  max-height: calc(100% - 2 * var(--cv-edge));
+}
+
+.lil-gui .lil-title {
+  font-weight: 600;
+}
+
+.lil-gui button {
+  transition: background-color 0.12s;
+}
+
+/* The column layout caps the operation panel's height (layoutCorner); its
+   root is a flex column, so the title would shrink first (to 14 px on a low
+   window, clipping 操作 and the 隠す button on it). The list scrolls instead. */
+.lil-gui.lil-root > .lil-title {
+  flex-shrink: 0;
+}
+
+/* panels hidden for a while (H): only the model, the status line and the triad */
+body.panels-hidden .lil-gui.lil-root,
+body.panels-hidden #tree-panel,
+body.panels-hidden #corner-br,
+body.panels-hidden #hud-title,
+body.panels-hidden #hud-keys {
+  display: none !important;
+}
+
+/* 隠す: over the right end of the GUI's title bar */
+#panels-hide {
+  position: absolute;
+  top: 3px;
+  right: 6px;
+  /* lil-gui makes every button in its panel full width: this one covered the
+     whole title bar and took the clicks that fold the GUI */
+  width: auto;
+  height: calc(var(--title-height, 29px) - 6px);
+  padding: 0 8px;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-xs);
+  font-weight: 400;
+  cursor: pointer;
+}
+
+#panels-hide:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+/* パネルを出す: where the GUI was */
+#panels-show {
+  position: fixed;
+  z-index: 1001;
+  top: var(--cv-edge);
+  right: var(--cv-edge);
+  padding: 5px 12px;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  font: inherit;
+  font-size: var(--cv-fs-sm);
+  cursor: pointer;
+}
+
+#panels-show.hidden {
+  display: none;
+}
+
+#panels-show:hover {
+  background: var(--cv-hover);
+}

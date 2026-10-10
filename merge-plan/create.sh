@@ -1,0 +1,11 @@
+# how the stacked PRs #37-#46 were opened (already done); the bodies are the pr-*.md beside this
+D=$(dirname "$0")
+gh pr create --repo shostako/cad-viewer --base 'stack/base' --head 'stack/07-half-window' --title 'feat: 右半分の窓に合わせて軽くする（左下は 1 行と ?、キー操作は一覧へ、視点は 4 列、表は畳む、フォルダを覚える）（#23 項目 7）' --body-file - < "$D"/pr-07-item7.md
+gh pr create --repo shostako/cad-viewer --base 'stack/07-half-window' --head 'stack/08-measure-record' --title 'feat: 計測の一覧を写せる記録に（値を先に mm 付きで、行とすべてのコピー、行と札の連動）（#23 項目 8 の後半）' --body-file - < "$D"/pr-08-item8b.md
+gh pr create --repo shostako/cad-viewer --base 'stack/08-measure-record' --head 'stack/09-toolbar' --title 'feat: よく使う操作をアイコンのツールバーとキーに（M・N・S・W、Lucide を同梱）（#23 項目 10）' --body-file - < "$D"/pr-09-item10.md
+gh pr create --repo shostako/cad-viewer --base 'stack/09-toolbar' --head 'stack/10-section-mm' --title 'feat: 断面の位置を mm で、切り口をカメラに向け、平面は細い枠に（#23 のあとで 1）' --body-file - < "$D"/pr-10-section.md
+gh pr create --repo shostako/cad-viewer --base 'stack/10-section-mm' --head 'stack/11-view-motion' --title 'feat: 視点の切り替えと全体表示を滑らかに動かす（0.3 秒、ゆっくり始まりゆっくり止まる）（#23 のあとで）' --body-file - < "$D"/pr-11-motion.md
+gh pr create --repo shostako/cad-viewer --base 'stack/11-view-motion' --head 'stack/12-idle-render' --title 'perf: 何も動いていないあいだは描画を止める（#8 の D1、#23 のあとで）' --body-file - < "$D"/pr-12-idle.md
+gh pr create --repo shostako/cad-viewer --base 'stack/12-idle-render' --head 'stack/13-label-spread' --title 'feat: 計測の札が重ならないよう、後から作った札を下へずらす（#23 のあとで）' --body-file - < "$D"/pr-13-labels.md
+gh pr create --repo shostako/cad-viewer --base 'stack/13-label-spread' --head 'stack/14-tab-title' --title 'feat: ブラウザのタブの題名に開いているファイルの名前を出す' --body-file - < "$D"/pr-14-title.md
+gh pr create --repo shostako/cad-viewer --base 'stack/14-tab-title' --head 'stack/15-angle' --title 'feat: 平らな 2 つ（平面・真っ直ぐな稜線）を計ると、角度も出す' --body-file - < "$D"/pr-15-angle.md
