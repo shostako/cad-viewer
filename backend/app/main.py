@@ -68,6 +68,7 @@ async def upload_model(file: UploadFile) -> dict:
             "id": existing.model_id,
             "name": existing.name,
             "format": existing.fmt,
+            "hash": content_hash,
             **({"cached": True} if route == "brep" else {}),
             **existing.meta,
         }
@@ -87,7 +88,7 @@ async def upload_model(file: UploadFile) -> dict:
             extra={"hash": content_hash},
         )
         store.add(entry)
-        return {"id": entry.model_id, "name": name, "format": route, **meta}
+        return {"id": entry.model_id, "name": name, "format": route, "hash": content_hash, **meta}
 
     if route == "brep":
         key = cache.cache_key(data, "defl_rel=1e-3;ang=0.35")
@@ -104,7 +105,7 @@ async def upload_model(file: UploadFile) -> dict:
                 extra={"raw": data, "filename": name, "cached": True, "hash": content_hash},
             )
             store.add(entry)
-            return {"id": entry.model_id, "name": name, "format": route, "cached": True, **meta}
+            return {"id": entry.model_id, "name": name, "format": route, "hash": content_hash, "cached": True, **meta}
 
         try:
             meshes, tree, defl = load_brep(data, name)
@@ -123,7 +124,7 @@ async def upload_model(file: UploadFile) -> dict:
             extra={"filename": name, "cached": False, "hash": content_hash},
         )
         store.add(entry)
-        return {"id": entry.model_id, "name": name, "format": route, "cached": False, **meta}
+        return {"id": entry.model_id, "name": name, "format": route, "hash": content_hash, "cached": False, **meta}
 
     if route == "drawing":
         try:
@@ -138,7 +139,7 @@ async def upload_model(file: UploadFile) -> dict:
             extra={"svg": svg, "hash": content_hash},
         )
         store.add(entry)
-        return {"id": entry.model_id, "name": name, "format": route, **meta}
+        return {"id": entry.model_id, "name": name, "format": route, "hash": content_hash, **meta}
 
     raise HTTPException(501, f"{route} route not implemented yet")
 

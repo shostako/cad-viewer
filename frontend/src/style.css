@@ -2129,3 +2129,97 @@ body.panels-hidden #corner-br {
   color: var(--cv-text);
   background: var(--cv-hover);
 }
+
+/* 確認の記録 (report.ts): a card left of the column, at the height of its button (main.ts places it) */
+#report-pop {
+  position: absolute;
+  z-index: 1003; /* over the panels (lil-gui 1001) */
+  box-sizing: border-box;
+  width: min(300px, calc(100vw - 32px));
+  max-height: calc(100vh - 2 * var(--cv-edge));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px 12px;
+  color: var(--cv-text);
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  font-size: var(--cv-fs-sm);
+}
+#report-pop.hidden {
+  display: none;
+}
+#report-title {
+  font-weight: 600;
+  font-size: var(--cv-fs-md);
+  margin-bottom: 2px;
+}
+.report-field {
+  display: grid;
+  grid-template-columns: 64px 1fr;
+  align-items: start;
+  gap: 8px;
+  color: var(--cv-text-2);
+}
+.report-field > span {
+  padding-top: 4px;
+}
+.report-field select,
+.report-field input,
+.report-field textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  padding: 3px 6px;
+  color: var(--cv-text);
+  background: var(--cv-surface-sunk);
+  border: 1px solid var(--cv-border-strong);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+}
+.report-field textarea {
+  resize: vertical;
+  min-height: 3.6em;
+}
+.report-field select:focus-visible,
+.report-field input:focus-visible,
+.report-field textarea:focus-visible {
+  outline: none;
+  border-color: var(--cv-accent);
+}
+#report-what {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.5;
+}
+.report-buttons {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+.report-buttons button {
+  flex: 1 1 0;
+  padding: 5px 8px;
+  color: var(--cv-text);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border-strong);
+  border-radius: var(--cv-r);
+  font: inherit;
+  cursor: pointer;
+}
+.report-buttons button:hover,
+.report-buttons button:focus-visible {
+  background: var(--cv-hover);
+}
+#report-page {
+  color: var(--cv-on-accent);
+  background: var(--cv-accent);
+  border-color: var(--cv-accent);
+}
+#report-page:hover,
+#report-page:focus-visible {
+  background: var(--cv-accent-hover);
+}

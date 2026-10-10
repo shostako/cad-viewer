@@ -12,6 +12,8 @@
  * the display mesh (GET /projected_area): an estimate, like the thickness.
  */
 import type { Axis, ModelProperties, PartProperties, PropsReason } from './api'
+import { SOURCE, type Cell, type ReportTable } from './report'
+import { fmtNum } from './sizes'
 
 /** specific gravity (g/cm³) of common moulding resins */
 export const RESIN_DENSITY: Record<string, number> = {
@@ -34,16 +36,7 @@ export const REASON_TEXT: Record<PropsReason, string> = {
   failed: '計算できない',
 }
 
-const formatters = new Map<number, Intl.NumberFormat>()
-/** ja-JP grouping, fixed number of decimals */
-export function fmtNum(x: number, digits: number): string {
-  let f = formatters.get(digits)
-  if (!f) {
-    f = new Intl.NumberFormat('ja-JP', { minimumFractionDigits: digits, maximumFractionDigits: digits })
-    formatters.set(digits, f)
-  }
-  return f.format(x)
-}
+export { fmtNum }
 
 /** grams from mm³ and g/cm³ */
 export const massGrams = (mm3: number, density: number): number => (mm3 / 1000) * density
@@ -159,6 +152,7 @@ export class PropertiesPanel {
   private onLayout: () => void
   private data: ModelProperties | null = null
   private density = RESIN_DENSITY.PMMA
+  private resin = 'PMMA'
   private queued = false
 
   private densityEl = el('span', 'props-density')
@@ -243,9 +237,70 @@ export class PropertiesPanel {
 
   setDensity(density: number, resin: string): void {
     this.density = density
+    this.resin = resin
     this.densityEl.textContent =
       resin === OTHER_RESIN ? `比重 ${fmtDensity(density)} g/cm³` : `${resin} ${fmtDensity(density)} g/cm³`
     if (this.data) this.refresh()
+  }
+
+  /**
+   * The panel's values for the 記録 (report.ts), the numbers and decimals the
+   * panel shows: the total of the visible parts (and each one's, in an
+   * assembly), the resin, the projected area and the clamping force. null
+   * while there are none (being computed, failed, hidden).
+   */
+  reportTables(): ReportTable[] | null {
+    const d = this.data
+    if (!d || this.root.classList.contains('hidden')) return null
+    const v = buildView(d, this.isVisible)
+    const src = d.source === 'mesh' ? SOURCE.meshFile : SOURCE.brep
+    const num = (x: number | null, digits: number): Cell => (x === null ? '—' : { n: x, d: digits })
+    const t = v.total
+    const volume: Cell = t.volume !== null ? { n: t.volume / 1000, d: 3 } : t.reason ? noVolume(t.reason) : '—'
+    const resin = this.resin === OTHER_RESIN ? '比重' : this.resin
+    const rows: Cell[][] = [
+      ['体積', volume, 'cm³', src],
+      ['表面積', num(t.area === null ? null : t.area / 100, 2), 'cm²', src],
+      ['比重', fmtDensity(this.density), 'g/cm³', `${SOURCE.input}（${resin}）`],
+      ['重量', num(t.volume === null ? null : massGrams(t.volume, this.density), 2), 'g', `${src} × 比重`],
+    ]
+    const p = this.projection
+    if (p) {
+      const mpa = fmtPressure(this.pressure)
+      if (p.state === 'ok') {
+        const f = clampForce(p.area, this.pressure)
+        rows.push(
+          ['投影面積', { n: p.area / 100, d: 2 }, 'cm²', `${SOURCE.mesh}（型開き ${p.axis}）`],
+          ['型内圧', mpa, 'MPa', SOURCE.input],
+          ['型締力', { n: f.kN, d: 1 }, 'kN', SOURCE.estimate],
+          ['型締力', { n: f.tf, d: 1 }, 'tf', SOURCE.estimate],
+        )
+      } else {
+        rows.push(
+          ['投影面積', p.state === 'loading' ? '計算中' : '計算できない', 'cm²', `${SOURCE.mesh}（型開き ${p.axis}）`],
+          ['型内圧', mpa, 'MPa', SOURCE.input],
+        )
+      }
+    }
+    const note = [v.title, ...v.notes].filter(Boolean).join(' ／ ')
+    const tables: ReportTable[] = [{ title: '体積・重量', note: note || undefined, head: ['項目', '値', '単位', '出どころ'], rows }]
+    if (v.rows?.length) {
+      tables.push({
+        title: '部品ごとの体積・重量',
+        head: ['部品', '体積 cm³', '表面積 cm²', '重量 g', '出どころ'],
+        rows: v.rows.map((r) => {
+          const area = r.reason === 'no_faces' ? null : r.area
+          return [
+            r.name,
+            r.volume !== null ? { n: r.volume / 1000, d: 3 } : noVolume(r.reason),
+            num(area === null ? null : area / 100, 2),
+            num(r.volume === null ? null : massGrams(r.volume, this.density), 2),
+            src,
+          ]
+        }),
+      })
+    }
+    return tables
   }
 
   /** cavity pressure (MPa) for the clamping force */

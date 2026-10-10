@@ -4,6 +4,8 @@ export interface ModelMeta {
   id: string
   name: string
   format: string
+  /** the first 32 hex digits of the SHA-256 of the file's bytes (the sidecar's name; the 記録 says it) */
+  hash?: string
   vertexCount: number
   triangleCount: number
   partCount: number

@@ -219,21 +219,31 @@ export class CheckPanel {
 
   /** the whole list as tab-separated lines with a head line (Excel splits them into cells) */
   tsv(): string {
-    const r = this.result
-    if (!r || !this.conditions) return ''
-    const cond = conditionsText(this.conditions)
-    const out = [['種類', '値', '単位', '部品', 'X', 'Y', 'Z', '面積 (mm²)', '条件'].join('\t')]
+    const t = this.cells()
+    if (!t) return ''
     // a part's name comes from the file: a tab or a line break in it would split the cells
-    const line = (cells: string[]) => cells.map(cell).join('\t')
+    return [t.head, ...t.rows].map((cells) => cells.map(cell).join('\t')).join('\n')
+  }
+
+  /**
+   * The list as cells: the copy's (tsv) and the 記録's (report.ts, which adds
+   * where the values come from). Every place, also those past CHECK_ROWS_MAX
+   * that the card only counts. null while there is no list.
+   */
+  cells(): { head: string[]; rows: string[][]; conditions: string } | null {
+    const r = this.result
+    if (!r || !this.conditions) return null
+    const cond = conditionsText(this.conditions)
+    const rows: string[][] = []
     for (const row of r.rows) {
       const s = row.spot
       const value = row.kind === 'thin' ? fixed(s.value, 3) : fixed(s.value, 2)
       const unit = row.kind === 'thin' ? 'mm' : '°'
       const area = row.kind === 'thin' ? '' : s.area.toFixed(1)
-      out.push(line([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond]))
+      rows.push([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond])
     }
-    for (const u of r.undecided) out.push(line(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond]))
-    return out.join('\n')
+    for (const u of r.undecided) rows.push(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond])
+    return { head: ['種類', '値', '単位', '部品', 'X', 'Y', 'Z', '面積 (mm²)', '条件'], rows, conditions: cond }
   }
 
   private head(result: CheckResult | null): HTMLElement {

@@ -33,6 +33,17 @@ export function fmt(v: number): string {
   return v.toFixed(3)
 }
 
+const formatters = new Map<number, Intl.NumberFormat>()
+/** ja-JP grouping, fixed number of decimals (the 体積・重量 panel's numbers, the 記録's page) */
+export function fmtNum(x: number, digits: number): string {
+  let f = formatters.get(digits)
+  if (!f) {
+    f = new Intl.NumberFormat('ja-JP', { minimumFractionDigits: digits, maximumFractionDigits: digits })
+    formatters.set(digits, f)
+  }
+  return f.format(x)
+}
+
 /** the unit of a measured area (lengths are LENGTH_UNIT, mm) */
 export const AREA_UNIT = 'mm²'
 

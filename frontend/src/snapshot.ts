@@ -17,6 +17,15 @@ const FALLBACK_BASE = 'cad-viewer'
  * not allow in a file name become `_`.
  */
 export function pngFileName(sourceName: string, at: Date): string {
+  return `${stampedName(sourceName, at)}.png`
+}
+
+/**
+ * `<file name without its last extension>[_<what>]_<yyyyMMdd-HHmmss>`, local
+ * time, without an extension (pngFileName's rules): the 記録's CSV and the
+ * title of its page to print (the browser names the PDF after it).
+ */
+export function stampedName(sourceName: string, at: Date, what = ''): string {
   const dot = sourceName.lastIndexOf('.')
   let base = dot >= 0 ? sourceName.slice(0, dot) : sourceName
   base = base.replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/g, '_')
@@ -27,7 +36,7 @@ export function pngFileName(sourceName: string, at: Date): string {
   const stamp =
     `${at.getFullYear()}${p(at.getMonth() + 1)}${p(at.getDate())}` +
     `-${p(at.getHours())}${p(at.getMinutes())}${p(at.getSeconds())}`
-  return `${base}_${stamp}.png`
+  return what ? `${base}_${what}_${stamp}` : `${base}_${stamp}`
 }
 
 /** Hand a blob to the browser as a download (no dialog; the browser picks the folder). */
