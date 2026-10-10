@@ -77,8 +77,15 @@ export interface EntityRef {
   xyz?: [number, number, number]
 }
 
+/** which distance between two entities: the shortest, between their centres, the largest */
+export type DistanceMode = 'min' | 'centre' | 'max'
+
 export interface DistanceResult {
   type: 'distance'
+  /** the distance asked for (absent: the shortest) */
+  mode?: DistanceMode
+  /** why this pair has no such distance (a plane has no centre, ...): nothing else is given then */
+  unavailable?: string
   value: number
   pointA: [number, number, number]
   pointB: [number, number, number]
@@ -172,13 +179,14 @@ export async function measureDistance(
   b: EntityRef,
   nearA?: [number, number, number],
   nearB?: [number, number, number],
+  mode: DistanceMode = 'min',
 ) {
   if (_stallNextMeasureMs > 0) {
     const ms = _stallNextMeasureMs
     _stallNextMeasureMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b, nearA, nearB })
+  return measureRequest<DistanceResult>(modelId, { type: 'distance', a, b, nearA, nearB, ...(mode === 'min' ? {} : { mode }) })
 }
 
 /** near: the clicked point, for the radius of curvature there (what is not a circle) */

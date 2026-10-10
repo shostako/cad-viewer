@@ -10,9 +10,11 @@ import {
   ChevronDown,
   CircleDashed,
   CircleHelp,
+  Crosshair,
   Cone,
   Copy,
   Diameter,
+  Expand,
   FolderOpen,
   ImageDown,
   MapPin,
@@ -47,6 +49,8 @@ export const ICON = {
   area: Square,
   perimeter: CircleDashed,
   length: MoveHorizontal,
+  centre: Crosshair,
+  max: Expand,
   done: Check,
 } satisfies Record<string, IconNode>
 

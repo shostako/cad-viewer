@@ -15,10 +15,22 @@
 import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
-import { LENGTH_UNIT, type EntryData } from './measure'
+import { DISTANCE_MODE_NAMES, LENGTH_UNIT, type EntryData } from './measure'
 import { AREA_UNIT, fmt, pointText } from './sizes'
 
-export type RowKind = 'distance' | 'diameter' | 'radius' | 'angle' | 'draft' | 'area' | 'perimeter' | 'length' | 'note' | 'other'
+export type RowKind =
+  | 'distance'
+  | 'centre'
+  | 'max'
+  | 'diameter'
+  | 'radius'
+  | 'angle'
+  | 'draft'
+  | 'area'
+  | 'perimeter'
+  | 'length'
+  | 'note'
+  | 'other'
 
 export interface RowView {
   kind: RowKind
@@ -58,6 +70,8 @@ function axesOf(delta: [number, number, number]): { axes: [string, string, strin
 
 const KIND_NAME: Record<RowKind, string> = {
   distance: '距離',
+  centre: '中心間',
+  max: '最大',
   diameter: '直径',
   radius: '半径',
   angle: '角度',
@@ -139,13 +153,16 @@ export function entryRow(raw: EntryData): RowView {
   // "cavity_block 面#6 ∠ cavity_block 面#3 : 90.000°"
   const ang = /^(.*) ∠ (.*) : ([-\d.]+)°$/.exec(d.text)
   if (ang) return { kind: 'angle', value: ang[3], unit: '°', what: `${ang[1]} ∠ ${ang[2]}`, a: ang[1], b: ang[2] }
-  // "cavity_block 面#6 ↔ plate 面#6 : 20.000"
-  const dist = /^(.*) ↔ (.*) : ([-\d.]+)$/.exec(d.text)
+  // "cavity_block 面#6 ↔ plate 面#6 : 20.000", "core_pin 面#1 ↔ core_pin 面#1 : 中心間 50.000"
+  const dist = /^(.*) ↔ (.*) : (?:中心間 |最大 )?([-\d.]+)$/.exec(d.text)
   if (dist) {
     const delta = xyzOf(raw.delta)
+    const mode = raw.mode === 'centre' || raw.mode === 'max' ? raw.mode : null
     return {
-      kind: 'distance',
+      kind: mode ?? 'distance',
       value: dist[3],
+      // which distance, before the value (the copy has it in 種類): 「中心間 50.000」
+      ...(mode ? { mark: `${DISTANCE_MODE_NAMES[mode]} ` } : {}),
       unit: LENGTH_UNIT,
       what: `${dist[1]} ↔ ${dist[2]}`,
       a: dist[1],
@@ -186,6 +203,8 @@ export function listText(rows: readonly RowView[]): string {
 /** the mark of a row's kind (Lucide) */
 const KIND_ICON: Record<RowKind, IconNode | null> = {
   distance: ICON.distance,
+  centre: ICON.centre,
+  max: ICON.max,
   diameter: ICON.diameter,
   radius: ICON.radius,
   angle: ICON.angle,

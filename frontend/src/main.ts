@@ -16,6 +16,7 @@ import {
   __stallNextProjection,
   ProjectionSuperseded,
   type Axis as PullAxis,
+  type DistanceMode,
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
@@ -188,6 +189,7 @@ function show2D(on: boolean): void {
   keyHelp.setView(on)
   updateTriad()
   refreshToolbar()
+  showDistanceCtl()
 }
 
 /** whether a model or drawing is on screen, and its file name (for the PNG export) */
@@ -241,6 +243,7 @@ let modelPanel = false
 function applyEmptyPanel(empty: boolean): void {
   modelPanel = !empty
   for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
+  showDistanceCtl()
   for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
@@ -305,6 +308,7 @@ const modeCtl = gui
   .onChange((mode: string) => {
     if (mode !== '計測') measureTool.cancelPending()
     drawing2d.measureMode = mode === '計測'
+    showDistanceCtl()
     viewport.style.cursor = mode === 'なし' ? '' : 'crosshair'
     viewport2d.style.cursor = mode === '計測' ? 'crosshair' : ''
     showModeHint()
@@ -316,6 +320,20 @@ const modeCtl = gui
     refreshToolbar()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
+// 距離 (計測 on a 3D model only): which distance the second point measures
+const DISTANCE_OPTIONS: Record<string, DistanceMode> = { 最短: 'min', 中心間: 'centre', 最大: 'max' }
+const distanceCtl = gui
+  .add(measureTool, 'distanceMode', DISTANCE_OPTIONS)
+  .name('距離')
+  .onChange(() => {
+    // a first point that waits says what its partner will measure
+    if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
+  })
+/** 距離 shows in 計測 on a 3D model (a drawing measures its own way; the empty screen has nothing to measure) */
+function showDistanceCtl(): void {
+  distanceCtl.show(modelPanel && state.mode === '計測' && !is2D)
+}
+showDistanceCtl()
 const clearCtl = gui.add(actions, 'clearMeasure').name('計測クリア')
 
 // ---- save the view as a PNG
