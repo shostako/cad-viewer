@@ -156,6 +156,12 @@ with sync_playwright() as p:
     check_help_place("2 empty")
     keys = page.inner_text("#help-keys")
     assert "回転" in keys and "ダブルクリック" in keys and "Esc" in keys, keys
+    # the wheel zooms toward the cursor, + and − toward the rotation centre (Codex on #37)
+    rows = page.evaluate(
+        "[...document.querySelectorAll('#help-keys .help-row')].map(r =>"
+        " [r.querySelector('.help-what').textContent, [...r.querySelectorAll('kbd')].map(k => k.textContent)])"
+    )
+    assert ["拡大・縮小（カーソルの位置へ）", ["ホイール"]] in rows and ["拡大・縮小（回転の中心へ）", ["+", "−"]] in rows, rows
     assert page.inner_text("#help-foot") == f"cad-viewer {VERSION}", page.inner_text("#help-foot")
     page.keyboard.press("?")
     assert not help_shown() and page.get_attribute("#help-open", "aria-expanded") == "false", "2 ? closes"
