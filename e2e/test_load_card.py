@@ -38,6 +38,8 @@ def kb(path):
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 767, "height": 639})
+    # the plain <input> here: the file picker is taken away, as in a browser without it (its path: test_recent.py)
+    page.add_init_script("window.showOpenFilePicker = undefined")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
