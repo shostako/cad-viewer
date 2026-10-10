@@ -14,7 +14,7 @@ lines are longer than the room left of the column.
 
 Steps: (0) the empty screen on half a screen; mini_mold.step on a 1280x700
 window, six distance measurements; then (1) the default folders, (2) every
-folder open, (3) a 560 px window, (4) a roomy 1200 px window where nothing has
+folder open, (3) a 560 px window, (4) a roomy 1400 px window where nothing has
 to give way, (5) a folder opened at the bottom of a GUI that scrolls is brought
 into view, (5b) half a screen, (6) deleting with × works and the panel goes
 away with the last entry.
@@ -192,9 +192,10 @@ with sync_playwright() as p:
     # 4. a roomy window: nothing gives way, the GUI shows everything without a scrollbar
     for name in FOLDERS[1:]:
         set_folder(name, False)
-    page.set_viewport_size({"width": 1280, "height": 1200})
+    # (1400: every row the panel gains takes from the room; on CI's fonts 1200 no longer had it)
+    page.set_viewport_size({"width": 1280, "height": 1400})
     settle()
-    check_column("4 roomy 1200")
+    check_column("4 roomy 1400")
     assert not gui_scrolls(), "the GUI scrolls although the window has room"
     # the measure list shows every entry (no inner scrollbar) when it has room
     assert page.evaluate(

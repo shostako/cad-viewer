@@ -87,10 +87,16 @@ with nav_session() as n:
         page.wait_for_function(f"document.querySelector('#hud-info').textContent.includes({text!r})", timeout=timeout)
         return hud()
 
-    def tip_at(xy):
+    def tip_at(xy, waits_for=None):
+        """the name beside the cursor there; waits_for: until it says that (the backend's answer)"""
         page.mouse.move(*xy)
         n.settle()
         page.wait_for_timeout(250)
+        if waits_for:
+            try:
+                page.wait_for_function(f"document.querySelector('#cursor-tip')?.textContent.endsWith({waits_for!r})", timeout=10000)
+            except Exception:
+                pass  # the assert below says what it was
         return page.inner_text("#cursor-tip")
 
     def axis_labels():
@@ -159,7 +165,7 @@ with nav_session() as n:
     gui_common.set_mode(page, "計測")
     gui_common.ctl(page, "選択").locator("select").select_option(label="すべて")
     corner0 = near((0, 0, 15), (10, 10, 15))
-    tip = tip_at(corner0)
+    tip = tip_at(corner0, pt(in_frame((0, 0, 15))))
     assert tip.endswith(pt(in_frame((0, 0, 15)))), ("the corner in the frame", tip)
     click_at(corner0, "vertex")
     click_at(n.project((75, 30, 40)), "face")
@@ -206,7 +212,7 @@ with nav_session() as n:
     assert rows["distance"] == f"ΔX {abs(DELTA[0]):.3f}　ΔY {abs(DELTA[1]):.3f}　ΔZ {abs(DELTA[2]):.3f}", rows
     assert rows["diameter"] == "中心 (75.000, 30.000, 40.000)", rows
     gui_common.set_mode(page, "計測")
-    assert tip_at(corner0).endswith("(0.000, 0.000, 15.000)"), page.inner_text("#cursor-tip")
+    assert tip_at(corner0, "(0.000, 0.000, 15.000)").endswith("(0.000, 0.000, 15.000)"), page.inner_text("#cursor-tip")
     gui_common.set_mode(page, "なし")
     page.wait_for_timeout(1500)
     # the frame's choices sent no save (the saves are the measurements')
