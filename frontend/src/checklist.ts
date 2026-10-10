@@ -115,9 +115,15 @@ export function conditionsText(c: CheckConditions): string {
   return conditionItems(c).join('・')
 }
 
+/** v with d decimals; one that rounds to 0 has no sign (「0.0」, not 「-0.0」) */
+function fixed(v: number, d: number): string {
+  const t = v.toFixed(d)
+  return /^-0\.?0*$/.test(t) ? t.slice(1) : t
+}
+
 /** where a place is, on its row: 「(25.0, 30.0, 15.0)」 (the copy has 3 decimals) */
 function shortPoint(p: readonly number[]): string {
-  return `(${p.map((v) => v.toFixed(1)).join(', ')})`
+  return `(${p.map((v) => fixed(v, 1)).join(', ')})`
 }
 
 export interface CheckPanelHooks {
@@ -218,10 +224,10 @@ export class CheckPanel {
     const out = [['種類', '値', '単位', '部品', 'X', 'Y', 'Z', '面積 (mm²)', '条件'].join('\t')]
     for (const row of r.rows) {
       const s = row.spot
-      const value = row.kind === 'thin' ? s.value.toFixed(3) : s.value.toFixed(2)
+      const value = row.kind === 'thin' ? fixed(s.value, 3) : fixed(s.value, 2)
       const unit = row.kind === 'thin' ? 'mm' : '°'
       const area = row.kind === 'thin' ? '' : s.area.toFixed(1)
-      out.push([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => v.toFixed(3)), area, cond].join('\t'))
+      out.push([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond].join('\t'))
     }
     for (const u of r.undecided) out.push(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond].join('\t'))
     return out.join('\n')

@@ -331,6 +331,9 @@ with nav_session() as n:
     set_box("肉厚を調べる", False)
     c = wait_list("!c.conditions.thin")
     assert not [r for r in c["rows"] if r["kind"] == "short" and on_boss_cone(r["at"])], ("2° is enough at 1.0°", c["rows"])
+    # the body's faces at y 0 and x 0: a coordinate that rounds to 0 has no sign
+    wheres = page.locator("#check-panel .check-where").all_inner_texts()
+    assert any("0.0" in w for w in wheres) and not any("-0.0" in w for w in wheres), wheres
     gui_common.open_folder(page, "抜き勾配")
     set_number("必要な勾配 (°)", 3)
     c = wait_list("c.conditions.draft.required === 3")
