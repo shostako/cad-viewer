@@ -3,7 +3,8 @@
 - 問題の一覧 > 判定の基準: 手で決める at first (the conditions as before, no
   basis said). 基準を編集… opens a card: a row a material (the 体積・重量
   panel's resins), each at the app's defaults (1.5 mm, 1.0°, basis 未設定).
-  Values out of range are not saved (the card says which).
+  Values out of range are not saved (the card says which); a value finer
+  than the folders' step (0.1) is saved at the step, and the card says so.
 - A material chosen sets the 肉厚 folder's 閾値 and the 抜き勾配 folder's 必要な
   勾配; the list follows them, and its conditions (and the 記録's) name the
   basis. A material not edited says 未設定. The 体積・重量 resin stays as it was.
@@ -159,6 +160,17 @@ with nav_session() as n:
     assert row("PC").locator(".basis-source").input_value() == SOURCE
     page.keyboard.press("Escape")
     print("4 after a reload", conditions())
+
+    # ---- a value finer than the folders' step: saved at the step, and said so
+    open_card()
+    row("PC").locator(".basis-thin").fill("1.25")
+    page.click("#basis-save")
+    note = page.inner_text("#basis-note")
+    assert note == "保存した（0.1 刻みに丸めた: PC の肉厚 1.25 → 1.3）", note
+    assert row("PC").locator(".basis-thin").input_value() == "1.3"
+    page.keyboard.press("Escape")
+    wait_conditions(f"肉厚 1.3 mm 未満（レイ法）・型開き +Z・勾配 0.5° 未満・基準 PC（根拠: {SOURCE}）")
+    assert number("閾値 (mm)") == 1.3, number("閾値 (mm)")
 
     # ---- a narrow window: the cards stay in it (over the column when there is no room beside it)
     page.set_viewport_size({"width": 560, "height": 800})

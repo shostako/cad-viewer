@@ -37,6 +37,9 @@ export interface BasisStore {
   bases: Record<string, Basis>
 }
 
+/** to the folders' step (0.1): the value saved is the one the check uses */
+export const toStep = (v: number): number => Math.round(v * 10) / 10
+
 /** a thickness and a draft the folders accept, a basis of text */
 export function validBasis(b: unknown): b is Basis {
   const x = b as Basis
@@ -62,9 +65,9 @@ export function loadBases(): BasisStore {
     const saved = JSON.parse(localStorage.getItem(KEY) ?? '{}') ?? {}
     for (const m of BASIS_MATERIALS) {
       const b = saved.bases?.[m]
-      if (validBasis(b)) bases[m] = { thin: b.thin, draft: b.draft, source: b.source.slice(0, SOURCE_MAX) }
+      if (validBasis(b)) bases[m] = { thin: toStep(b.thin), draft: toStep(b.draft), source: b.source.slice(0, SOURCE_MAX) }
     }
-    if (BASIS_MATERIALS.includes(saved.selected)) selected = saved.selected
+    if (typeof saved.selected === 'string' && BASIS_MATERIALS.includes(saved.selected)) selected = saved.selected
   } catch {
     /* defaults (storage unavailable, or not JSON) */
   }
@@ -204,16 +207,25 @@ export class BasisPop {
   private trySave(): void {
     const out: Record<string, Basis> = {}
     const bad: string[] = []
+    const rounded: string[] = []
     for (const [m, r] of this.rows) {
-      const b: Basis = { thin: Number(r.thin.value), draft: Number(r.draft.value), source: r.source.value.trim() }
-      if (r.thin.value.trim() === '' || r.draft.value.trim() === '' || !validBasis(b)) bad.push(m)
-      else out[m] = b
+      const raw = { thin: Number(r.thin.value), draft: Number(r.draft.value) }
+      // the folders' step: what is saved is what the check uses (and says)
+      const b: Basis = { thin: toStep(raw.thin), draft: toStep(raw.draft), source: r.source.value.trim() }
+      if (r.thin.value.trim() === '' || r.draft.value.trim() === '' || !validBasis(b)) {
+        bad.push(m)
+        continue
+      }
+      if (b.thin !== raw.thin) rounded.push(`${m} の肉厚 ${raw.thin} → ${b.thin}`)
+      if (b.draft !== raw.draft) rounded.push(`${m} の勾配 ${raw.draft} → ${b.draft}`)
+      out[m] = b
     }
     if (bad.length) {
       this.note.textContent = `保存しなかった: ${bad.join('・')} の値が範囲の外（肉厚 ${THIN_MIN}〜${THIN_MAX} mm、勾配 0〜${DRAFT_MAX_DEG}°）`
       return
     }
     this.hooks.save(out)
-    this.note.textContent = '保存した'
+    this.fill(out)
+    this.note.textContent = rounded.length ? `保存した（0.1 刻みに丸めた: ${rounded.join('、')}）` : '保存した'
   }
 }
