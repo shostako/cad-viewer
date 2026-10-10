@@ -123,12 +123,14 @@ def vertex_thickness_ball(
 
     # What stopped the sphere: at the first size that did not fit (hi), the
     # surface nearest its centre is what it ran into. Across the wall, that is
-    # about two radii from the vertex (a parallel wall: 2t, the wedge's bottom:
-    # 1.9t). Beside the vertex, within t of it, the sphere cut the face next to
-    # the vertex: a corner, a convex crease however shallow (the faces t·sin θ
-    # away), the flat strips of a convex curved surface. No sphere fits there;
+    # well over a radius from the vertex (a parallel wall: 2t, the wedge's
+    # bottom: 1.9t, the floor of a square notch: 1.41t). Beside the vertex, at
+    # most t from it, the sphere cut the face next to the vertex: a corner, a
+    # convex crease however shallow (the faces t·sin θ away, t on a right
+    # angle), the flat strips of a convex curved surface. No sphere fits there;
     # only the tolerance (dist >= t - tol) let one in, up to tol / (1 - cos θ):
-    # a wall a fraction of a mm thin that is not there (#63). No value.
+    # a wall a fraction of a mm thin that is not there (#63). No value. The
+    # line is drawn at 1.2t, between the right angle's t and the notch's 1.41t.
     blocked = np.flatnonzero((lo > 0) & (hi < hi0 * (1 - 1e-9)))
     if blocked.size:
         q, _, _ = pq.on_surface(p[blocked] - n[blocked] * hi[blocked][:, None])
