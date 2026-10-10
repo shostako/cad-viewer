@@ -43,7 +43,9 @@ def _bitmap_area(tris: np.ndarray, lo: np.ndarray, h: float, size: tuple[int, in
     px = (tris - lo) / h
     for t in px.tolist():
         draw.polygon([tuple(p) for p in t], fill=1)
-    return float(np.count_nonzero(np.asarray(im))) * h * h
+    # the unset pixels from the histogram: a numpy copy of the bitmap would be
+    # one byte per pixel (64 MB for the finer one)
+    return float(size[0] * size[1] - im.histogram()[0]) * h * h
 
 
 def projected_area(parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str) -> dict[str, Any]:

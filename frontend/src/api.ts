@@ -294,6 +294,17 @@ export function __stallNextProjection(ms: number): void {
   _stallNextProjectionMs = ms
 }
 
+/**
+ * This page's id for /projected_area: a request of this page still waiting
+ * behind another calculation is given up (409) once the page asks again.
+ * Not crypto.randomUUID: that needs a secure context (http on a LAN address
+ * is not one).
+ */
+const PAGE_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+
+/** an answer the backend gave up on because this page has asked again since */
+export class ProjectionSuperseded extends Error {}
+
 /** parts: the ids to include (the visible ones) */
 export async function fetchProjectedArea(modelId: string, axis: Axis, parts: readonly number[]): Promise<ProjectedArea> {
   if (_stallNextProjectionMs > 0) {
@@ -301,8 +312,9 @@ export async function fetchProjectedArea(modelId: string, axis: Axis, parts: rea
     _stallNextProjectionMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  const q = new URLSearchParams({ axis, parts: parts.join(',') })
+  const q = new URLSearchParams({ axis, parts: parts.join(','), client: PAGE_ID })
   const res = await fetch(`/api/models/${modelId}/projected_area?${q}`)
+  if (res.status === 409) throw new ProjectionSuperseded('superseded')
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(detail.detail ?? `projected area failed: ${res.status}`)

@@ -136,3 +136,64 @@ def test_rejects(client):
     assert client.get("/api/models/nope/projected_area").status_code == 404
     drawing = _upload(client, "plate_drawing.dxf", DXF.read_bytes())
     assert client.get(f"/api/models/{drawing['id']}/projected_area").status_code == 422
+
+
+def _wait(cond, what, timeout=10.0):
+    import time
+
+    end = time.monotonic() + timeout
+    while not cond():
+        assert time.monotonic() < end, what
+        time.sleep(0.01)
+
+
+def test_one_at_a_time_and_stale_requests_give_up(client):
+    """A calculation in progress (the gate held here) makes the others wait. Of
+    two waiting requests from one page, the older gives up (409) and the newer
+    computes; another page's request is not given up for it. A request whose
+    answer was computed meanwhile gets that answer."""
+    import threading
+
+    from app.main import _projection_gate
+    from app.store import store
+
+    meta = _upload(client, "mini_mold.step", STEP.read_bytes())
+    mid = meta["id"]
+    gate = _projection_gate(store.get(mid))
+    out = {}
+
+    def ask(tag, q):
+        out[tag] = client.get(f"/api/models/{mid}/projected_area?{q}")
+
+    gate.lock.acquire()  # a calculation in progress
+    threads = []
+    try:
+        for tag, q in (("old", "axis=X&client=A"), ("other", "axis=Z&client=B"), ("new", "axis=Y&client=A")):
+            n = gate.count
+            t = threading.Thread(target=ask, args=(tag, q))
+            t.start()
+            threads.append(t)
+            _wait(lambda: gate.count > n, f"{tag} never asked")  # in that order
+        # all three wait: nothing has answered yet
+        assert not out, out
+    finally:
+        gate.lock.release()
+    for t in threads:
+        t.join(timeout=60)
+    assert out["old"].status_code == 409, out["old"].text
+    assert out["new"].status_code == 200 and out["new"].json()["area"] == pytest.approx(2700.0, rel=REL)
+    assert out["other"].status_code == 200 and out["other"].json()["area"] == pytest.approx(6000.0, rel=REL)
+    # the page asks for X again: computed now (the given-up one left nothing behind)
+    assert _area(client, mid, "X")["area"] == pytest.approx(1540.0, rel=REL)
+
+    # an answer that is already there is given even to a superseded request
+    gate.lock.acquire()
+    try:
+        n = gate.count
+        t1 = threading.Thread(target=ask, args=("cached", "axis=Z&client=C"))
+        t1.start()
+        # Z (all parts) is known: no waiting, no ticket
+        t1.join(timeout=60)
+        assert out["cached"].status_code == 200 and gate.count == n
+    finally:
+        gate.lock.release()

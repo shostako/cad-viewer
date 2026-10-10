@@ -14,6 +14,7 @@ import {
   __stallNextSidecar,
   __stallNextProperties,
   __stallNextProjection,
+  ProjectionSuperseded,
   type Axis as PullAxis,
   type ModelMeta,
   type ModelProperties,
@@ -1348,6 +1349,8 @@ function updateProjection(): void {
         if (n === projectionRequest) propsPanel.setProjection({ state: 'ok', axis, area: r.area })
       },
       (e: unknown) => {
+        // given up for a newer request of this page: that one brings the answer
+        if (e instanceof ProjectionSuperseded) return
         if (n === projectionRequest)
           propsPanel.setProjection({ state: 'error', axis, message: e instanceof Error ? e.message : String(e) })
       },
