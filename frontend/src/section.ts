@@ -32,18 +32,23 @@ const NORMALS: Record<Axis, THREE.Vector3> = {
   Y: new THREE.Vector3(0, -1, 0),
   Z: new THREE.Vector3(0, 0, -1),
 }
+const AXIS_INDEX: Record<Axis, number> = { X: 0, Y: 1, Z: 2 }
+/** the plane's frame: a thin outline just outside the model's cross-section */
+const FRAME_COLOR = 0xffd060
+const FRAME_OPACITY = 0.55
 
 export class SectionTool {
   enabled = false
   axis: Axis = 'X'
-  /** 0..1 position across the model bbox along the axis */
+  /** 0..1 position across the model bbox along the axis (shown in mm: see mm) */
   position = 0.5
+  /** keep the upper side of the plane (the default keeps the lower one) */
   flip = false
   caps = true
 
   private viewer: Viewer
   private plane = new THREE.Plane(NORMALS.X.clone(), 0)
-  private helper: THREE.PlaneHelper | null = null
+  private helper: THREE.LineLoop | null = null
   private bbox = new THREE.Box3()
   private stencilMeshes: THREE.Mesh[] = []
   private capMesh: THREE.Mesh | null = null
@@ -52,6 +57,35 @@ export class SectionTool {
     this.viewer = viewer
     viewer.renderer.localClippingEnabled = true
     viewer.onDisplayStyleChange(() => this.styleCap())
+  }
+
+  /** the model's extent along the axis: the plane's range (model units, mm) */
+  range(): [number, number] {
+    if (this.bbox.isEmpty()) return [0, 1] // no model yet
+    const i = AXIS_INDEX[this.axis]
+    return [this.bbox.min.getComponent(i), this.bbox.max.getComponent(i)]
+  }
+
+  /** where the plane is along the axis, in model units (mm) */
+  get mm(): number {
+    const [lo, hi] = this.range()
+    return lo + (hi - lo) * this.position
+  }
+
+  set mm(v: number) {
+    const [lo, hi] = this.range()
+    this.position = hi > lo ? Math.min(1, Math.max(0, (v - lo) / (hi - lo))) : 0.5
+  }
+
+  /**
+   * Cut away the side the camera is on, so that the cut faces it. Called
+   * when the section is put in and when its axis changes; 反転 stays the
+   * user's until then. (Before, the side was fixed per axis: along Y, from
+   * the opening view, the cut faced away and nothing seemed to happen.)
+   */
+  faceCamera(camera: THREE.Vector3): void {
+    // the default normal (-axis) keeps the lower side: right while the camera is above the plane
+    this.flip = camera.getComponent(AXIS_INDEX[this.axis]) < this.mm
   }
 
   setModelBBox(min: number[], max: number[]): void {
@@ -70,14 +104,10 @@ export class SectionTool {
     const n = NORMALS[this.axis].clone()
     if (this.flip) n.negate()
 
-    const axisIdx = { X: 0, Y: 1, Z: 2 }[this.axis]
-    const lo = this.bbox.min.getComponent(axisIdx)
-    const hi = this.bbox.max.getComponent(axisIdx)
-    const coord = lo + (hi - lo) * this.position
-    // plane: n·p + d = 0 passing through coord on the axis
+    // plane: n·p + d = 0 passing through mm on the axis
     const pointOnPlane = new THREE.Vector3()
     this.bbox.getCenter(pointOnPlane)
-    pointOnPlane.setComponent(axisIdx, coord)
+    pointOnPlane.setComponent(AXIS_INDEX[this.axis], this.mm)
     this.plane.setFromNormalAndCoplanarPoint(n, pointOnPlane)
 
     this.viewer.setClippingPlanes([this.plane])
@@ -177,18 +207,44 @@ export class SectionTool {
     }
   }
 
+  /**
+   * The plane shown as a thin frame around the model's cross-section (the
+   * box's extent in the other two axes, a little outside it). It used to be
+   * a filled square 1.5 times the model's diagonal, which drew the eye away
+   * from the cut.
+   */
   private showHelper(): void {
     this.removeHelper()
-    const size = this.bbox.getSize(new THREE.Vector3()).length() * 0.75
-    this.helper = new THREE.PlaneHelper(this.plane, size, 0xffd060)
-    ;(this.helper.material as THREE.Material).opacity = 0.15
+    const i = AXIS_INDEX[this.axis]
+    const [u, v] = [0, 1, 2].filter((k) => k !== i)
+    const lo = this.bbox.min
+    const hi = this.bbox.max
+    const pad = 0.03 * this.bbox.getSize(new THREE.Vector3()).length()
+    const at = this.mm
+    const corners = [
+      [lo.getComponent(u) - pad, lo.getComponent(v) - pad],
+      [hi.getComponent(u) + pad, lo.getComponent(v) - pad],
+      [hi.getComponent(u) + pad, hi.getComponent(v) + pad],
+      [lo.getComponent(u) - pad, hi.getComponent(v) + pad],
+    ].map(([a, b]) => {
+      const p = new THREE.Vector3()
+      p.setComponent(i, at)
+      p.setComponent(u, a)
+      p.setComponent(v, b)
+      return p
+    })
+    const geo = new THREE.BufferGeometry().setFromPoints(corners)
+    const mat = new THREE.LineBasicMaterial({ color: FRAME_COLOR, transparent: true, opacity: FRAME_OPACITY })
+    this.helper = new THREE.LineLoop(geo, mat)
+    this.helper.name = 'section-frame'
     this.viewer.scene.add(this.helper)
   }
 
   private removeHelper(): void {
     if (this.helper) {
       this.viewer.scene.remove(this.helper)
-      this.helper.dispose()
+      this.helper.geometry.dispose()
+      ;(this.helper.material as THREE.Material).dispose()
       this.helper = null
     }
   }
