@@ -41,6 +41,7 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -364,8 +365,7 @@ class Nav:
         return [cl + cw / 2, ct + ch / 2]
 
     def ctl(self, name):
-        label = self.page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-        return self.page.locator(".lil-gui .lil-controller").filter(has=label).first
+        return gui_common.ctl(self.page, name)
 
     def click_button(self, name):
         self.ctl(name).locator("button").click()

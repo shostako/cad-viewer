@@ -10,6 +10,7 @@ from playwright.sync_api import sync_playwright
 
 import os
 from pathlib import Path
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -37,7 +38,7 @@ with sync_playwright() as p:
 
     # model A: add a unique annotation
     load(page, STEP)
-    page.locator(".lil-gui select").first.select_option("注記")
+    gui_common.ctl(page, "モード").locator("select").select_option("注記")
     pt = page.evaluate("window.__cadProject(50, 30, 35)")
     page.mouse.click(pt["x"], pt["y"])
     page.wait_for_selector(".note-input", timeout=5000)
@@ -47,7 +48,7 @@ with sync_playwright() as p:
 
     # switch to model B IMMEDIATELY after an entry change would be riskiest,
     # but also cover the plain switch: clear + switch within the debounce window
-    page.locator(".lil-gui select").first.select_option("なし")
+    gui_common.ctl(page, "モード").locator("select").select_option("なし")
     load(page, STL)  # model B (mesh) — teardown of A happens here
     page.wait_for_timeout(1200)  # if the bug lives, the bad save fires now
 
