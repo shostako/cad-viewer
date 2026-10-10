@@ -6,6 +6,7 @@ import {
   fetchMesh,
   fetchDrawingSvg,
   fetchThickness,
+  fetchThick,
   fetchProperties,
   fetchProjectedArea,
   getSidecar,
@@ -19,6 +20,7 @@ import {
   type DistanceMode,
   type ModelMeta,
   type ModelProperties,
+  type ThickPart,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { foldButton } from './cardfold'
@@ -42,6 +44,8 @@ import { SpotNav } from './spotnav'
 import {
   METALS,
   RESINS,
+  THICK_MAX,
+  THICK_MIN,
   USE_LABEL,
   USE_NAMES,
   basisText,
@@ -608,7 +612,8 @@ function buildReport(at: Date, image: string | null): Report {
     const name = materialNow()
     const v = materialValues()
     const gravity = materialStore.density !== null ? `比重 ${fmtDensity(materialStore.density)}（手入力）` : `比重 ${fmtDensity(v.density)}`
-    const draft = v.draft !== null && materialStore.use === 'molding' ? `・勾配 ${v.draft}°` : ''
+    const molding = materialStore.use === 'molding'
+    const draft = (v.draft !== null && molding ? `・勾配 ${v.draft}°` : '') + (v.thick !== null && molding ? `・厚肉 ${v.thick} 倍` : '')
     meta.push(['用途', USE_LABEL[materialStore.use]])
     meta.push([
       '材料',
@@ -1170,6 +1175,12 @@ function saveDraftPrefs(): void {
 
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as ThicknessMethod }
+/**
+ * 厚肉 (thick.py): a sphere at least ratio x the general wall across is 厚肉
+ * (the material's, while 判定の基準 follows it); the general wall is each
+ * part's own (the faces' mode, nominal 0) or the one given here, for every part
+ */
+const thickState = { ratio: 1.5, nominal: 0 }
 // 材料と用途 (materials.ts): the material in use gives the specific gravity
 // and, while 判定の基準 follows it, the 肉厚 folder's 閾値 and the 抜き勾配
 // folder's 必要な勾配, from the start. Kept in this browser (saved once read:
@@ -1184,6 +1195,7 @@ if (materialStore.follow) {
   const v = materialValues()
   thicknessState.threshold = v.thin
   if (v.draft !== null) draftState.required = v.draft
+  if (v.thick !== null) thickState.ratio = v.thick
 }
 /** the folders' values are being set from the material (not by hand: 判定の基準 stays on it) */
 let applyingBasis = false
@@ -1195,6 +1207,8 @@ function basisLeft(): void {
   basisCtl.updateDisplay()
 }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
+/** the 厚肉 answers for the model on screen, by ratio and general wall (dropped with the model, as thicknessCache) */
+const thickCache = new Map<string, Map<number, ThickPart>>()
 /** the values the heatmap on screen was painted from (part id -> one per display vertex) */
 let shownThickness: Map<number, Float32Array> | null = null
 const HEATMAP_HUD = '肉厚ヒートマップ表示中'
@@ -1360,6 +1374,29 @@ const thresholdCtl = thicknessFolder
     void updateThickness()
     scheduleChecks()
   })
+// 厚肉 (問題の一覧): the ratio to the general wall, and the general wall (0: each part's own)
+const thickRatioCtl = thicknessFolder
+  .add(thickState, 'ratio', THICK_MIN, THICK_MAX, 0.05)
+  .name('厚肉 (一般部の倍)')
+  .onChange(() => {
+    basisLeft()
+    scheduleChecks()
+  })
+thickRatioCtl.domElement.title = 'この倍率以上の球が入る所を、問題の一覧に厚肉（ヒケ・ボイドの心配な所）として出す'
+const thickNominalCtl = thicknessFolder
+  .add(thickState, 'nominal')
+  .min(0)
+  .max(1000)
+  .step(0.01)
+  .name('一般部 (mm・0 で自動)')
+  .onChange(() => {
+    if (!Number.isFinite(thickState.nominal) || thickState.nominal < 0) {
+      thickState.nominal = 0
+      thickNominalCtl.updateDisplay()
+    }
+    scheduleChecks()
+  })
+thickNominalCtl.domElement.title = '厚肉の倍率の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
 
 // ---- draft angle (抜き勾配)
 function updateDraft(): void {
@@ -1434,7 +1471,7 @@ const requiredCtl = draftFolder
 
 // ---- 問題の一覧 (checklist.ts): 薄肉・勾配不足・反対側 in one list, by the
 // conditions of the two folders above; a row goes to its place
-const checkState = { enabled: false, thickness: true, draft: true }
+const checkState = { enabled: false, thickness: true, thick: true, draft: true }
 /** the loaded model's part names (the part tree's), for the list's rows */
 let checkPartNames = new Map<number, string>()
 /** why /properties failed for this model (the list cannot tell open parts from closed ones), or null */
@@ -1455,6 +1492,7 @@ function checkConditions(): CheckConditions {
     draft: checkState.draft
       ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
       : null,
+    thick: checkState.thick ? { ratio: thickState.ratio, nominal: thickState.nominal > 0 ? thickState.nominal : null } : null,
     basis: materialStore.follow ? basisText(materialNow(), materialValues()) : null,
   }
 }
@@ -1470,7 +1508,7 @@ async function updateChecks(): Promise<void> {
   const gen = ++checkGen
   dropCheckSpot()
   const conditions = checkConditions()
-  if (!checkState.enabled || !currentModelId || is2D || !viewer.hasFaces() || (!conditions.thin && !conditions.draft)) {
+  if (!checkState.enabled || !currentModelId || is2D || !viewer.hasFaces() || (!conditions.thin && !conditions.draft && !conditions.thick)) {
     checkPanel.hide()
     layoutCorner()
     return
@@ -1502,9 +1540,30 @@ async function updateChecks(): Promise<void> {
       thicknessCache.set(method, values)
     }
   }
-  checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values), conditions)
+  let thick: Map<number, ThickPart> | null = null
+  if (conditions.thick) {
+    const key = `${conditions.thick.ratio}:${conditions.thick.nominal ?? 'auto'}`
+    thick = thickCache.get(key) ?? null
+    if (!thick) {
+      checkPanel.showBusy('厚肉を計算中（形の中の格子、少し待て）…')
+      layoutCorner()
+      const model = currentModelId
+      try {
+        const nominals = new Map<number, number>()
+        if (conditions.thick.nominal !== null) for (const id of viewer.getPartMeshes().keys()) nominals.set(id, conditions.thick.nominal)
+        thick = new Map((await fetchThick(model, conditions.thick.ratio, nominals)).map((p) => [p.id, p]))
+      } catch (e) {
+        if (gen === checkGen && model === currentModelId) checkPanel.showBusy(`厚肉を計算できなかった（${e instanceof Error ? e.message : e}）`)
+        return
+      }
+      if (gen !== checkGen || model !== currentModelId) return
+      thickCache.set(key, thick)
+    }
+  }
+  checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values, thick), conditions)
   layoutCorner()
 }
+
 let checkTimer = 0
 /** updateChecks a moment after the last of a run of changes (a slider dragged) */
 function scheduleChecks(): void {
@@ -1514,6 +1573,7 @@ function scheduleChecks(): void {
 }
 /** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
 async function colourFor(kind: CheckRow['kind']): Promise<void> {
+  if (kind === 'thick') return // its sphere says it (viewer.goToSpot): whatever colours are up stay
   if (kind === 'thin') {
     if (!(thicknessState.enabled && colorOwner === 'thickness')) {
       if (draftState.enabled) {
@@ -1532,7 +1592,7 @@ async function colourFor(kind: CheckRow['kind']): Promise<void> {
     updateDraft()
   }
 }
-/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
+/** a row's press: the colours of its kind (the heatmap or the draft; 厚肉 its sphere, the colours stay), then to its place */
 function goToCheck(row: CheckRow): void {
   void colourFor(row.kind)
   viewer.goToSpot(row.spot, spotText(row.kind, row.spot))
@@ -1549,6 +1609,10 @@ checkFolder
 checkFolder
   .add(checkState, 'thickness')
   .name('肉厚を調べる')
+  .onChange(() => void updateChecks())
+checkFolder
+  .add(checkState, 'thick')
+  .name('厚肉を調べる')
   .onChange(() => void updateChecks())
 checkFolder
   .add(checkState, 'draft')
@@ -1573,6 +1637,7 @@ function applyBasis(): void {
     try {
       thresholdCtl.setValue(v.thin)
       if (v.draft !== null) requiredCtl.setValue(v.draft)
+      if (v.thick !== null) thickRatioCtl.setValue(v.thick)
     } finally {
       applyingBasis = false
     }
@@ -2197,6 +2262,9 @@ function applyUseVisibility(): void {
   materialCtl?.show(model)
   for (const f of [draftFolder, checkFolder]) f.show(model && molding)
   pressureCtl.show(molding)
+  // 厚肉 is the moulding's (sinks, voids): its rows go with 問題の一覧
+  thickRatioCtl.show(molding)
+  thickNominalCtl.show(molding)
 }
 
 // ---- projected area along the mold-opening direction (for the clamping force)
@@ -2986,6 +3054,7 @@ async function loadFile(file: File): Promise<void> {
       currentModelId = meta.id
       measureTool.clearAll()
       thicknessCache.clear()
+      thickCache.clear()
       thicknessInFlight.clear()
       thicknessState.enabled = false
       draftState.enabled = false // direction and angle stay
@@ -3176,7 +3245,17 @@ testHooks.__cadSpot = () => spotNav.current()
 testHooks.__cadCheck = () => {
   const { result, conditions, current } = checkPanel.state
   if (!result) return null
-  const row = (r: CheckRow) => ({ kind: r.kind, partId: r.spot.partId, faceId: r.spot.faceId, value: r.spot.value, at: r.spot.at, normal: r.spot.normal, area: r.spot.area })
+  const row = (r: CheckRow) => ({
+    kind: r.kind,
+    partId: r.spot.partId,
+    faceId: r.spot.faceId,
+    value: r.spot.value,
+    at: r.spot.at,
+    normal: r.spot.normal,
+    area: r.spot.area,
+    sphere: r.spot.sphere ?? null,
+    ratio: r.spot.ratio ?? null,
+  })
   return { rows: result.rows.map(row), undecided: result.undecided, conditions, current: current ? row(current) : null }
 }
 testHooks.__cadView = () => {

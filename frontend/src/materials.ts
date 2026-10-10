@@ -27,6 +27,8 @@ export interface MaterialValues {
   thin: number
   /** degrees: less is 勾配不足 (a resin's; null: a metal, not moulded) */
   draft: number | null
+  /** times the general wall: a sphere this much across or more is 厚肉 (a resin's; null: a metal) */
+  thick: number | null
   /** where the values come from (shown with the conditions; '' : not said) */
   source: string
 }
@@ -38,27 +40,29 @@ interface MaterialDef extends MaterialValues {
 
 /** a resin's draft: the least of the makers' (Covestro, Celanese, DuPont for deep parts) and the guides' */
 const DRAFT = 0.5
+/** a resin's 厚肉: DuPont's junction to avoid (a rib as thick as the wall, its root R half the wall: a circle 1.5 x the wall) */
+const THICK = 1.5
 /** a metal's least wall: machining, Protolabs Network's recommended (0.5 mm possible) */
 const METAL_THIN = 0.8
 const METAL_SOURCE = 'Protolabs Network の切削の最小肉厚（推奨）'
 
 /** The general standards (docs/material-basis.md has each value's source, with the page) */
 const BUILTIN: readonly MaterialDef[] = [
-  { name: 'PMMA', kind: 'resin', density: 1.19, thin: 0.64, draft: DRAFT, source: 'Protolabs の肉厚の表（下端）・各社の勾配の最小' },
-  { name: 'PC', kind: 'resin', density: 1.2, thin: 1.0, draft: DRAFT, source: 'Protolabs・Fictiv の肉厚（下端）・Covestro の勾配' },
-  { name: 'ABS', kind: 'resin', density: 1.05, thin: 1.14, draft: DRAFT, source: 'Protolabs の肉厚の表（下端）・勾配' },
-  { name: 'PP', kind: 'resin', density: 0.9, thin: 0.89, draft: DRAFT, source: 'Protolabs の肉厚の表（下端）・Fictiv の勾配' },
-  { name: 'PA66', kind: 'resin', density: 1.14, thin: 1.0, draft: DRAFT, source: '旭化成 レオナの設計基準（肉厚）・各社の勾配' },
-  { name: 'POM', kind: 'resin', density: 1.41, thin: 0.76, draft: DRAFT, source: 'Protolabs の肉厚の表（下端）・Celanese の勾配' },
-  { name: 'PS', kind: 'resin', density: 1.05, thin: 0.89, draft: DRAFT, source: 'Protolabs の肉厚の表（下端）・勾配' },
-  { name: 'SS400', kind: 'metal', density: 7.85, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: 'S45C', kind: 'metal', density: 7.85, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: 'SUS304', kind: 'metal', density: 7.93, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: 'A5052', kind: 'metal', density: 2.68, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: 'A6061', kind: 'metal', density: 2.7, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: '銅 C1100', kind: 'metal', density: 8.89, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: '黄銅 C3604', kind: 'metal', density: 8.5, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
-  { name: '純チタン 2 種', kind: 'metal', density: 4.51, thin: METAL_THIN, draft: null, source: METAL_SOURCE },
+  { name: 'PMMA', kind: 'resin', density: 1.19, thin: 0.64, draft: DRAFT, thick: THICK, source: 'Protolabs の肉厚の表（下端）・各社の勾配の最小・DuPont の厚肉' },
+  { name: 'PC', kind: 'resin', density: 1.2, thin: 1.0, draft: DRAFT, thick: THICK, source: 'Protolabs・Fictiv の肉厚（下端）・Covestro の勾配・DuPont の厚肉' },
+  { name: 'ABS', kind: 'resin', density: 1.05, thin: 1.14, draft: DRAFT, thick: THICK, source: 'Protolabs の肉厚の表（下端）・勾配・DuPont の厚肉' },
+  { name: 'PP', kind: 'resin', density: 0.9, thin: 0.89, draft: DRAFT, thick: THICK, source: 'Protolabs の肉厚の表（下端）・Fictiv の勾配・DuPont の厚肉' },
+  { name: 'PA66', kind: 'resin', density: 1.14, thin: 1.0, draft: DRAFT, thick: THICK, source: '旭化成 レオナの設計基準（肉厚）・各社の勾配・DuPont の厚肉' },
+  { name: 'POM', kind: 'resin', density: 1.41, thin: 0.76, draft: DRAFT, thick: THICK, source: 'Protolabs の肉厚の表（下端）・Celanese の勾配・DuPont の厚肉' },
+  { name: 'PS', kind: 'resin', density: 1.05, thin: 0.89, draft: DRAFT, thick: THICK, source: 'Protolabs の肉厚の表（下端）・勾配・DuPont の厚肉' },
+  { name: 'SS400', kind: 'metal', density: 7.85, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: 'S45C', kind: 'metal', density: 7.85, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: 'SUS304', kind: 'metal', density: 7.93, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: 'A5052', kind: 'metal', density: 2.68, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: 'A6061', kind: 'metal', density: 2.7, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: '銅 C1100', kind: 'metal', density: 8.89, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: '黄銅 C3604', kind: 'metal', density: 8.5, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
+  { name: '純チタン 2 種', kind: 'metal', density: 4.51, thin: METAL_THIN, draft: null, thick: null, source: METAL_SOURCE },
 ]
 const BY_NAME = new Map(BUILTIN.map((m) => [m.name, m]))
 export const RESINS: readonly string[] = BUILTIN.filter((m) => m.kind === 'resin').map((m) => m.name)
@@ -72,7 +76,7 @@ export const isMaterial = (name: unknown): name is string => typeof name === 'st
 export function builtin(name: string): MaterialValues {
   const m = BY_NAME.get(name)
   if (!m) throw new Error(`no material ${name}`)
-  return { density: m.density, thin: m.thin, draft: m.draft, source: m.source }
+  return { density: m.density, thin: m.thin, draft: m.draft, thick: m.thick, source: m.source }
 }
 
 export const DENSITY_MIN = 0.1
@@ -80,11 +84,14 @@ export const DENSITY_MAX = 25
 export const THIN_MIN = 0.1
 export const THIN_MAX = 10
 export const SOURCE_MAX = 200
+export const THICK_MIN = 1.05
+export const THICK_MAX = 10
 /** not said: the conditions say so */
 export const BASIS_UNSET = '未設定'
 
-/** the steps the folders take: 閾値 0.01 mm, 必要な勾配 0.1°, 比重 0.001 */
+/** the steps the folders take: 閾値 0.01 mm, 必要な勾配 0.1°, 比重 0.001, 厚肉 0.05 倍 */
 export const thinStep = (v: number): number => Math.round(v * 100) / 100
+export const thickStep = (v: number): number => Math.round(v * 20) / 20
 export const draftStep = (v: number): number => Math.round(v * 10) / 10
 export const densityStep = (v: number): number => Math.round(v * 1000) / 1000
 
@@ -99,6 +106,7 @@ export function validValues(name: string, v: unknown): v is MaterialValues {
     num(x.density, DENSITY_MIN, DENSITY_MAX) &&
     num(x.thin, THIN_MIN, THIN_MAX) &&
     (kind === 'metal' ? x.draft === null : num(x.draft, 0, DRAFT_MAX_DEG)) &&
+    (kind === 'metal' ? x.thick === null : num(x.thick, THICK_MIN, THICK_MAX)) &&
     typeof x.source === 'string'
   )
 }
@@ -109,12 +117,17 @@ export function stepped(v: MaterialValues): MaterialValues {
     density: densityStep(v.density),
     thin: thinStep(v.thin),
     draft: v.draft === null ? null : draftStep(v.draft),
+    thick: v.thick === null ? null : thickStep(v.thick),
     source: v.source.trim().slice(0, SOURCE_MAX),
   }
 }
 
 export const sameValues = (a: MaterialValues, b: MaterialValues): boolean =>
-  a.density === b.density && a.thin === b.thin && a.draft === b.draft && a.source === b.source
+  a.density === b.density && a.thin === b.thin && a.draft === b.draft && a.thick === b.thick && a.source === b.source
+
+/** a material's values as kept before 厚肉 came (no thick): the general standard's thick */
+const withThick = (name: string, v: unknown): unknown =>
+  v && typeof v === 'object' && !('thick' in v) && isMaterial(name) ? { ...v, thick: builtin(name).thick } : v
 
 export interface MaterialStore {
   use: Use
@@ -156,7 +169,8 @@ export function setValues(s: MaterialStore, name: string, v: MaterialValues): vo
 function readEdits(raw: unknown): Record<string, MaterialValues> {
   const out: Record<string, MaterialValues> = {}
   if (!raw || typeof raw !== 'object') return out
-  for (const [name, v] of Object.entries(raw as Record<string, unknown>)) {
+  for (const [name, v0] of Object.entries(raw as Record<string, unknown>)) {
+    const v = withThick(name, v0)
     if (isMaterial(name) && validValues(name, v)) {
       const sv = stepped(v)
       if (!sameValues(sv, builtin(name))) out[name] = sv
@@ -192,7 +206,7 @@ export function loadMaterials(): MaterialStore {
     for (const [name, b] of Object.entries((basis.bases ?? {}) as Record<string, Record<string, unknown>>)) {
       if (!RESINS.includes(name) || !b) continue
       const untouched = b.thin === 1.5 && b.draft === 1 && String(b.source ?? '').trim() === ''
-      const v = { density: builtin(name).density, thin: b.thin, draft: b.draft, source: String(b.source ?? '') }
+      const v = { density: builtin(name).density, thin: b.thin, draft: b.draft, thick: builtin(name).thick, source: String(b.source ?? '') }
       if (!untouched && validValues(name, v)) setValues(s, name, stepped(v as MaterialValues))
     }
     const props = JSON.parse(localStorage.getItem(OLD_PROPS_KEY) ?? '{}') ?? {}
@@ -241,7 +255,8 @@ export function readMaterialsFile(text: string): { values: Record<string, Materi
   if (!d || d.kind !== 'materials' || !d.materials || typeof d.materials !== 'object') throw new Error('材料の基準のファイルではない')
   const values: Record<string, MaterialValues> = {}
   const skipped: string[] = []
-  for (const [name, v] of Object.entries(d.materials as Record<string, unknown>)) {
+  for (const [name, v0] of Object.entries(d.materials as Record<string, unknown>)) {
+    const v = withThick(name, v0) // a file written before 厚肉 came
     if (isMaterial(name) && validValues(name, v)) values[name] = stepped(v)
     else skipped.push(name)
   }

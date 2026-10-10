@@ -47,8 +47,8 @@ STANDARD = {
 }
 RESINS = ["PMMA", "PC", "ABS", "PP", "PA66", "POM", "PS"]
 METALS = ["SS400", "S45C", "SUS304", "A5052", "A6061", "銅 C1100", "黄銅 C3604", "純チタン 2 種"]
-PMMA_SOURCE = "Protolabs の肉厚の表（下端）・各社の勾配の最小"
-PC_SOURCE = "Protolabs・Fictiv の肉厚（下端）・Covestro の勾配"
+PMMA_SOURCE = "Protolabs の肉厚の表（下端）・各社の勾配の最小・DuPont の厚肉"
+PC_SOURCE = "Protolabs・Fictiv の肉厚（下端）・Covestro の勾配・DuPont の厚肉"
 METAL_SOURCE = "Protolabs Network の切削の最小肉厚（推奨）"
 V_ALL = 100 * 60 * 15 + 2 * math.pi * 4**2 * 25 + 40 * 30 * 20  # mm³: the plate, two pins, the block
 RIBBED = TESTDATA / "ribbed_plate.stl"
@@ -164,6 +164,8 @@ with nav_session() as n:
     assert page.inner_text("#props-density") == "PMMA 1.19 g/cm³" and mass() == grams(1.19), (page.inner_text("#props-density"), mass())
     gui_common.open_folder(page, "問題の一覧")
     assert select_text("判定の基準") == "材料に合わせる"
+    # 厚肉 is test_thick_spots.py's: this list is the wall's and the draft's, as written
+    ctl("厚肉を調べる").locator("input").uncheck()
     ctl("一覧を出す").locator("input").check()
     c = wait_conditions(basis_line("PMMA", "0.64", "0.5", PMMA_SOURCE))
     counts = page.inner_text("#check-panel .check-counts")
@@ -199,7 +201,7 @@ with nav_session() as n:
     weight = next(r for r in recs if r and r[0] == "比重")
     assert weight[1:] == ["1.234", "g/cm³", "入力した値（PC に手で）"], weight
     assert meta(recs, "用途") == "射出成形", meta(recs, "用途")
-    assert meta(recs, "材料") == f"PC（一般的な基準: 比重 1.234（手入力）・肉厚の下限 1.0 mm・勾配 0.5°。根拠: {PC_SOURCE}）", meta(recs, "材料")
+    assert meta(recs, "材料") == f"PC（一般的な基準: 比重 1.234（手入力）・肉厚の下限 1.0 mm・勾配 0.5°・厚肉 1.5 倍。根拠: {PC_SOURCE}）", meta(recs, "材料")
     choose("材料", "ABS")
     assert page.inner_text("#props-density") == "ABS 1.05 g/cm³" and float(dens.input_value()) == 1.05
     choose("材料", "PC")
@@ -350,6 +352,7 @@ with nav_session() as n:
     choose("用途", "射出成形")
     assert select_text("材料") == "PC"
     gui_common.open_folder(page, "問題の一覧")
+    ctl("厚肉を調べる").locator("input").uncheck()  # the reload put it back on
     ctl("一覧を出す").locator("input").check()
     wait_conditions(basis_line("PC", "1.5", "0.5", "社外の基準"))
     print("8 reloaded")
@@ -370,7 +373,7 @@ with nav_session() as n:
     old.wait_for_selector("#file-input", state="attached")
     kept = old.evaluate("JSON.parse(localStorage.getItem('cad-viewer:materials'))")
     assert kept["chosen"]["molding"] == "PMMA" and kept["density"] == 1.15 and kept["follow"] is True, kept
-    assert list(kept["edits"]) == ["POM"] and kept["edits"]["POM"] == {"density": 1.41, "thin": 1.2, "draft": 0.8, "source": "社内"}, kept["edits"]
+    assert list(kept["edits"]) == ["POM"] and kept["edits"]["POM"] == {"density": 1.41, "thin": 1.2, "draft": 0.8, "thick": 1.5, "source": "社内"}, kept["edits"]
     old.evaluate("localStorage.setItem('cad-viewer:props', JSON.stringify({ resin: 'PC', density: 1.2, pressure: 55 })); localStorage.removeItem('cad-viewer:materials')")
     old.reload()
     old.wait_for_selector("#file-input", state="attached")

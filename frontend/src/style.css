@@ -2290,7 +2290,7 @@ body.panels-hidden #corner-br {
   position: absolute;
   z-index: 1003; /* over the panels (lil-gui 1001) */
   box-sizing: border-box;
-  width: min(520px, calc(100vw - 32px));
+  width: min(580px, calc(100vw - 32px));
   max-height: calc(100vh - 2 * var(--cv-edge));
   overflow-y: auto;
   display: flex;

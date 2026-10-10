@@ -225,6 +225,8 @@ with nav_session() as n:
     n.load(TESTDATA / "ribbed_plate.stl", props="live", box=RIBBED)
     assert folder_shown()
     gui_common.open_folder(page, "問題の一覧")
+    # 厚肉 is test_thick_spots.py's: this list is the wall's and the draft's, as written
+    set_box("厚肉を調べる", False)
     set_box("一覧を出す", True)
     c = wait_list()
     thin = [r for r in c["rows"] if r["kind"] == "thin"]
