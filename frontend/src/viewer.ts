@@ -49,6 +49,18 @@ const MIN_ZOOM_NEARS = 4
 const MAX_ZOOM_FAR = 0.25
 /** double-click pivot: slide duration, and how long the marker stays */
 const PIVOT_MS = 250
+/** how long a change of view takes on screen: a preset, an axis of the triad, a fit */
+const VIEW_MS = 300
+
+/** a camera pose a view animation goes between (orientation, distance, zoom and screen shift) */
+interface Pose {
+  target: THREE.Vector3
+  q: THREE.Quaternion
+  up: THREE.Vector3
+  dist: number
+  zoom: number
+  shift: THREE.Vector2
+}
 const PIVOT_MARKER_MS = 1000
 /** a press that moves further than this (px) is a drag, not a click */
 export const DRAG_PX = 5
@@ -171,14 +183,17 @@ export class Viewer {
   /** parts shown highlighted (setHighlight) */
   private highlighted = new Set<number>()
   private raycaster = new THREE.Raycaster()
-  /** running double-click pivot slide (camera and target both move) */
-  private viewAnim: {
-    from: THREE.Vector3
-    to: THREE.Vector3
-    fromTarget: THREE.Vector3
-    toTarget: THREE.Vector3
-    start: number
-  } | null = null
+  /**
+   * A running change of view: the double-click pivot slide, a preset, a fit.
+   * The view is already decided (to); the frames go there from where it was.
+   */
+  private viewAnim: { from: Pose; to: Pose; start: number; ms: number } | null = null
+  /**
+   * Presets and fits move smoothly (VIEW_MS). Off under automation (the E2E
+   * read the camera right after a click; __cadViewMotion turns it on for the
+   * script that checks the motion), and always off for prefers-reduced-motion.
+   */
+  private viewMotion = !navigator.webdriver
   private pivotMarker: CSS2DObject | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
   private container: HTMLElement
@@ -841,8 +856,10 @@ export class Viewer {
   fitToView(): void {
     const box = this.modelBBox()
     if (box.isEmpty()) return
+    const from = this.pose()
     this.frameFromHere(box)
     this.rememberFit(null)
+    this.animateFrom(from)
   }
 
   /**
@@ -854,8 +871,10 @@ export class Viewer {
   fitToParts(partIds: readonly number[]): boolean {
     const box = this.partsBox(partIds)
     if (box.isEmpty()) return false
+    const from = this.pose()
     this.frameFromHere(box)
     this.rememberFit([...partIds])
+    this.animateFrom(from)
     return true
   }
 
@@ -1153,39 +1172,103 @@ export class Viewer {
   orbitAround(point: THREE.Vector3): void {
     this.viewAnim = null // a second double-click starts from wherever the first one got to
     this.stopInertia()
-    const from = this.camera.position.clone()
-    const fromTarget = this.target.clone()
-    const forward = fromTarget.clone().sub(from).normalize()
-    const depth = Math.max(point.clone().sub(from).dot(forward), this.camera.near * MIN_ZOOM_NEARS)
-    this.viewAnim = {
-      from,
-      to: point.clone().addScaledVector(forward, -depth),
-      fromTarget,
-      toTarget: point.clone(),
-      start: performance.now(),
-    }
+    const from = this.pose()
+    const forward = from.target.clone().sub(this.camera.position).normalize()
+    const depth = Math.max(point.clone().sub(this.camera.position).dot(forward), this.camera.near * MIN_ZOOM_NEARS)
+    // the same turn and zoom: only the target, and the distance to it, move
+    const to = { ...from, target: point.clone(), dist: depth }
+    this.viewAnim = { from, to, start: performance.now(), ms: PIVOT_MS }
     this.showPivotMarker(point)
+  }
+
+  /** the camera's pose now */
+  private pose(): Pose {
+    const target = this.target.clone()
+    return {
+      target,
+      q: this.camera.quaternion.clone(),
+      up: this.camera.up.clone(),
+      dist: this.camera.position.distanceTo(target),
+      zoom: this.ortho.zoom,
+      shift: this.viewShift.clone(),
+    }
+  }
+
+  /** put the camera at a pose (the loop's controls.update() follows) */
+  private applyPose(p: Pose, up: THREE.Vector3): void {
+    this.camera.up.copy(up)
+    this.camera.position.copy(p.target).addScaledVector(new THREE.Vector3(0, 0, 1).applyQuaternion(p.q), p.dist)
+    this.controls.target.copy(p.target)
+    this.trackball.target.copy(p.target)
+    this.camera.lookAt(p.target)
+    if (this.ortho.zoom !== p.zoom) {
+      this.ortho.zoom = p.zoom
+      this.ortho.updateProjectionMatrix()
+    }
+    if (!this.viewShift.equals(p.shift)) {
+      this.viewShift.copy(p.shift)
+      this.applyViewShift()
+    }
+    this.keepOrthoDepth()
+  }
+
+  /**
+   * The view has just been set (a preset, a fit): show the way there from
+   * `from` instead of a jump, unless motion is off. Whatever reads the view
+   * as decided (rememberFit, the free area) has already done so.
+   */
+  private animateFrom(from: Pose): void {
+    if (!this.viewMotion || matchMedia('(prefers-reduced-motion: reduce)').matches) return
+    const to = this.pose()
+    const scale = Math.max(to.dist, from.dist, 1e-9)
+    const still =
+      from.q.angleTo(to.q) < 1e-6 &&
+      from.target.distanceTo(to.target) < 1e-9 * scale &&
+      Math.abs(from.dist - to.dist) < 1e-9 * scale &&
+      Math.abs(from.zoom / to.zoom - 1) < 1e-9 &&
+      from.shift.distanceTo(to.shift) < 1e-6
+    if (still) return
+    this.viewAnim = { from, to, start: performance.now(), ms: VIEW_MS }
+    this.applyPose(from, from.up)
   }
 
   private stepViewAnim(now: number): void {
     const a = this.viewAnim!
-    const t = THREE.MathUtils.clamp((now - a.start) / PIVOT_MS, 0, 1)
+    const t = THREE.MathUtils.clamp((now - a.start) / a.ms, 0, 1)
+    if (t >= 1) return this.finishViewAnim()
     const k = t * t * (3 - 2 * t) // smoothstep
-    this.camera.position.lerpVectors(a.from, a.to, k)
-    const target = new THREE.Vector3().lerpVectors(a.fromTarget, a.toTarget, k)
-    this.controls.target.copy(target)
-    this.trackball.target.copy(target)
-    this.camera.lookAt(target) // the loop's controls.update() follows
-    if (t >= 1) this.viewAnim = null
+    const q = a.from.q.clone().slerp(a.to.q, k)
+    this.applyPose(
+      {
+        target: a.from.target.clone().lerp(a.to.target, k),
+        q,
+        up: a.to.up,
+        dist: THREE.MathUtils.lerp(a.from.dist, a.to.dist, k),
+        zoom: a.from.zoom * Math.pow(a.to.zoom / a.from.zoom, k),
+        shift: a.from.shift.clone().lerp(a.to.shift, k),
+      },
+      // on the way: the screen's own up (the pose's roll); at the ends, the camera's
+      new THREE.Vector3(0, 1, 0).applyQuaternion(q),
+    )
   }
 
-  /** Jump a running pivot slide to its end, so whatever interrupts it orbits the new centre. */
+  /** Jump a running change of view to its end, so whatever interrupts it starts from there. */
   private finishViewAnim(): void {
     const a = this.viewAnim
     if (!a) return
     this.viewAnim = null
-    this.camera.position.copy(a.to)
-    this.setTarget(a.toTarget)
+    this.applyPose(a.to, a.to.up)
+    this.activeControls().update()
+  }
+
+  /** the view where it is going (a running change of view ends now): before reading it */
+  settleView(): void {
+    this.finishViewAnim()
+  }
+
+  /** turn the smooth changes of view on or off (E2E: they are off under automation) */
+  setViewMotion(on: boolean): void {
+    this.viewMotion = on
   }
 
   private showPivotMarker(at: THREE.Vector3): void {
@@ -1463,6 +1546,7 @@ export class Viewer {
 
   /** Jump to a standard view, keeping the current target and distance. */
   setView(preset: ViewPreset): void {
+    const from = this.pose() // from where it is now, even half way through another change
     this.finishViewAnim()
     this.stopInertia()
     const p = PRESETS[preset]
@@ -1482,6 +1566,7 @@ export class Viewer {
     this.camera.position.copy(this.target).addScaledVector(dir, dist)
     this.camera.lookAt(this.target)
     this.activeControls().update()
+    this.animateFrom(from)
   }
 
   private activeControls(): OrbitControls | TrackballControls {
