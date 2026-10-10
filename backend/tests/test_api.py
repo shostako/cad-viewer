@@ -190,6 +190,21 @@ def test_upload_same_content_another_name(client):
     assert back["id"] == first["id"], (back, first)
 
 
+def test_upload_same_content_one_name_removed(client):
+    """Two names of the same bytes are two entries: removing one leaves the other reused."""
+    from app.store import store
+
+    stl = trimesh.creation.box(extents=(12, 22, 32)).export(file_type="stl")
+    a = client.post("/api/models", files={"file": ("a.stl", stl, "model/stl")}).json()
+    b = client.post("/api/models", files={"file": ("b.stl", stl, "model/stl")}).json()
+    assert a["id"] != b["id"]
+    store.remove(a["id"])
+    again = client.post("/api/models", files={"file": ("b.stl", stl, "model/stl")}).json()
+    assert again["id"] == b["id"], "removing a.stl must not drop b.stl from the index"
+    back = client.post("/api/models", files={"file": ("a.stl", stl, "model/stl")}).json()
+    assert back["id"] not in (a["id"], b["id"]) and back["name"] == "a.stl", "a.stl is read again, as a new entry"
+
+
 @pytest.mark.skipif(not STEP_ASSEMBLY.exists(), reason="run testdata/make_step_assembly.py first")
 def test_upload_same_step_another_name(client):
     """A STEP under another name: that name, the same shape (from the disk cache)."""

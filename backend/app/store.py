@@ -76,9 +76,10 @@ class ModelStore:
 
     def _drop_hash(self, entry: ModelEntry) -> None:
         content_hash = entry.extra.get("hash")
-        key = (content_hash, entry.name)
-        if content_hash and self._by_hash.get(key) == entry.model_id:
-            del self._by_hash[key]
+        if content_hash:
+            key = (content_hash, entry.name)
+            if self._by_hash.get(key) == entry.model_id:
+                del self._by_hash[key]
 
     def list_meta(self) -> list[dict[str, Any]]:
         with self._lock:
