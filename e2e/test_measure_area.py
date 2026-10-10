@@ -23,7 +23,7 @@ import tempfile
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, empty_sidecar, nav_session
+from nav_common import TESTDATA, empty_sidecar, nav_session, put_sidecar
 
 DEG = math.pi / 180
 BOSS_TUBE = 6 - math.tan(2 * DEG) + 1 / math.cos(2 * DEG)
@@ -217,4 +217,18 @@ with nav_session() as n:
         page.wait_for_function("n => document.querySelectorAll('#measure-list li').length === n", arg=len(want), timeout=10000)
         assert rows() == want, ("the rows come back as they were", f.name, rows(), want)
     print("6 kept in the sidecar")
+
+    # ================= a part name with the words in it (Codex on #62) ===============
+    odd = Path(tmp) / "odd_names.step"
+    odd.write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 51)
+    put_sidecar(page, odd, [
+        {"text": f"上 面積 プレート 面#1 面積 {f3(6000)} mm²", "labelText": f"{f3(6000)} mm²", "labelPos": [8, 8, 15], "markers": [[8, 8, 15]], "area": 6000},
+        {"text": f"上 周長 プレート 面#1 周長 {f3(320)}", "labelText": f"周長 {f3(320)}", "labelPos": [8, 8, 15], "perimeter": 320, "holes": []},
+        {"text": f"上 長さ プレート エッジ#2 長さ {f3(100)}", "labelText": f"長さ {f3(100)}", "labelPos": [50, 0, 15], "markers": [[50, 0, 15]], "length": 100},
+    ])
+    n.load(str(odd))
+    page.wait_for_function("() => document.querySelectorAll('#measure-list li').length === 3", timeout=10000)
+    got = [(x["kind"], x["what"]) for x in rows()]
+    assert got == [("area", "上 面積 プレート 面#1"), ("perimeter", "上 周長 プレート 面#1"), ("length", "上 長さ プレート エッジ#2")], got
+    print("7 a part name with the words in it")
 print("MEASURE AREA E2E OK")

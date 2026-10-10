@@ -80,9 +80,13 @@ export function entryRow(raw: EntryData): RowView {
   }
   if (d.annotation) return { kind: 'note', value: d.labelText, unit: '', what: '', a: '', b: '' }
   // a face's area and outer loop, an edge's length (Enter on a first point):
-  // the numbers are kept as they are; what was measured is the text before them
+  // the numbers are kept as they are; what was measured is the text before the
+  // last 「 面積 」 (a part's name may have the word in it too)
   const num = (v: unknown) => typeof v === 'number' && Number.isFinite(v)
-  const before = (word: string) => d.text.split(` ${word} `)[0]
+  const before = (word: string) => {
+    const k = d.text.lastIndexOf(` ${word} `)
+    return k < 0 ? d.text : d.text.slice(0, k)
+  }
   if (num(raw.area)) {
     const what = before('面積')
     return { kind: 'area', value: fmt(raw.area!), unit: AREA_UNIT, what, a: what, b: '' }
