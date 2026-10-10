@@ -38,6 +38,7 @@ import { OTHER_RESIN, PropertiesPanel, REASON_TEXT, RESIN_DENSITY, RESIN_NAMES }
 import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { SpotNav } from './spotnav'
+import { BASIS_MATERIALS, BasisPop, basisText, loadBases, saveBases } from './presets'
 import { spotText } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
@@ -76,6 +77,7 @@ app.innerHTML = `
     <div id="recent-pop-empty">まだ無い（「ファイルを開く」で選んだファイルとドロップしたファイルを、新しい順に 8 件まで覚える）</div>
   </div>
   <div id="report-pop" class="hidden"></div>
+  <div id="basis-pop" class="hidden"></div>
   <div id="corner-br">
     <div id="check-panel" class="hidden"></div>
     <div id="measure-panel" class="hidden">
@@ -810,6 +812,11 @@ function onNavigationKey(e: KeyboardEvent): void {
       e.preventDefault()
       return
     }
+    if (basisPop.shown) {
+      basisPop.hide()
+      e.preventDefault()
+      return
+    }
     // choosing a frame: Esc gives it up (the frame shown stays)
     if (frameTool.active) {
       frameTool.stop()
@@ -1044,6 +1051,23 @@ function saveDraftPrefs(): void {
 
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as ThicknessMethod }
+// 判定の基準 (presets.ts): a material's thickness and draft, kept in this
+// browser. The one in use sets the two folders' values from the start
+const basisStore = loadBases()
+if (basisStore.selected) {
+  const b = basisStore.bases[basisStore.selected]
+  thicknessState.threshold = b.thin
+  draftState.required = b.draft
+}
+/** the folders' values are being set from a basis (not by hand: the basis stays in use) */
+let applyingBasis = false
+/** a value changed by hand: no material's basis is in use any more */
+function basisLeft(): void {
+  if (applyingBasis || !basisStore.selected) return
+  basisStore.selected = ''
+  saveBases(basisStore)
+  basisCtl.updateDisplay()
+}
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
 /** the values the heatmap on screen was painted from (part id -> one per display vertex) */
 let shownThickness: Map<number, Float32Array> | null = null
@@ -1202,10 +1226,11 @@ thicknessFolder
     void updateThickness()
     scheduleChecks()
   })
-thicknessFolder
+const thresholdCtl = thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.1)
   .name('閾値 (mm)')
   .onChange(() => {
+    basisLeft()
     void updateThickness()
     scheduleChecks()
   })
@@ -1271,10 +1296,11 @@ draftFolder
     updateProjection() // the clamping force's projected area follows the direction
     scheduleChecks()
   })
-draftFolder
+const requiredCtl = draftFolder
   .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
   .name('必要な勾配 (°)')
   .onChange(() => {
+    basisLeft()
     saveDraftPrefs()
     updateDraft()
     scheduleChecks()
@@ -1303,6 +1329,7 @@ function checkConditions(): CheckConditions {
     draft: checkState.draft
       ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
       : null,
+    basis: basisStore.selected ? basisText(basisStore.selected, basisStore.bases[basisStore.selected]) : null,
   }
 }
 /** the list's place the marker is on, if it is (a change of the list takes it away) */
@@ -1397,6 +1424,58 @@ checkFolder
   .add(checkState, 'draft')
   .name('抜き勾配を調べる')
   .onChange(() => void updateChecks())
+// 判定の基準: a material's values for the 肉厚 and 抜き勾配 folders (手で決める: as they are set there)
+const basisCtl = checkFolder
+  .add(basisStore, 'selected', { 手で決める: '', ...Object.fromEntries(BASIS_MATERIALS.map((m) => [m, m])) })
+  .name('判定の基準')
+  .onChange(() => {
+    saveBases(basisStore)
+    applyBasis()
+  })
+const basisActions = { edit: () => showBasisPop(!basisPop.shown) }
+const basisEditCtl = checkFolder.add(basisActions, 'edit').name('基準を編集…')
+/** the material in use sets the threshold and the draft (their own onChange recomputes) */
+function applyBasis(): void {
+  const m = basisStore.selected
+  if (m) {
+    const b = basisStore.bases[m]
+    applyingBasis = true
+    try {
+      thresholdCtl.setValue(b.thin)
+      requiredCtl.setValue(b.draft)
+    } finally {
+      applyingBasis = false
+    }
+  }
+  scheduleChecks() // the conditions' line names the basis
+}
+const basisPop = new BasisPop(document.querySelector<HTMLDivElement>('#basis-pop')!, {
+  save: (bases) => {
+    basisStore.bases = bases
+    saveBases(basisStore)
+    applyBasis()
+  },
+})
+/** the card, left of the column at the height of its button */
+function showBasisPop(on: boolean): void {
+  if (!on) return basisPop.hide()
+  basisPop.show(basisStore.bases)
+  const b = basisEditCtl.domElement.getBoundingClientRect()
+  const el = basisPop.el
+  el.style.right = `${Math.round(window.innerWidth - columnLeft() + COLUMN_GAP)}px`
+  el.style.top = `${Math.round(Math.max(COLUMN_MARGIN, Math.min(b.top, window.innerHeight - el.offsetHeight - COLUMN_MARGIN)))}px`
+}
+// a click anywhere else closes it (Esc: its own keys)
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    if (!basisPop.shown) return
+    const t = e.target as Node
+    if (basisPop.el.contains(t) || basisEditCtl.domElement.contains(t)) return
+    basisPop.hide()
+  },
+  { capture: true },
+)
 
 // ---- what is under the cursor (#cursor-tip, the preselection highlight, the part tree's row)
 // One look per frame at most (HoverProbe). In 計測 / 注記 (3D), what a click
