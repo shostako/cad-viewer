@@ -29,7 +29,8 @@ import { ICON, icon } from './icons'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { LENGTH_UNIT, MeasureTool, type EntryData } from './measure'
 import { LIST_HEAD, copyText, drawingRow, entryRow, labelText, listText, recordCells, rowElement, type RowView } from './measurelist'
-import { DIGITS_DEFAULT, DIGITS_MAX, DIGITS_MIN, LENGTH_UNITS, setShown, type LengthUnit } from './sizes'
+import { DIGITS_DEFAULT, DIGITS_MAX, DIGITS_MIN, LENGTH_UNITS, fmt, setFrame, setShown, shown, type Frame, type LengthUnit } from './sizes'
+import { FrameTool } from './frame'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
@@ -259,7 +260,7 @@ function applyEmptyPanel(empty: boolean): void {
   for (const c of [modeCtl, clearCtl, exportBgCtl, reportCtl]) c.show(!empty)
   if (empty) showReportPop(false)
   showDistanceCtl()
-  for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
+  for (const f of [frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -323,6 +324,8 @@ const modeCtl = gui
   .add(state, 'mode', ['なし', '計測', '注記'])
   .name('モード')
   .onChange((mode: string) => {
+    // a mode chosen: the clicks are for it now, not for a frame being chosen
+    frameTool.stop()
     if (mode !== '計測') measureTool.cancelPending()
     drawing2d.measureMode = mode === '計測'
     showDistanceCtl()
@@ -499,6 +502,8 @@ function buildReport(at: Date, image: string | null): Report {
   ]
   // what a B-rep was written in before OCCT read it into mm
   if (shownMeta?.format === 'brep') meta.push(['元のファイルの単位', shownMeta.fileUnit ?? '不明'])
+  // the frame the screen shows points in: the record keeps the model's own coordinates
+  if (!is2D) meta.push(['座標系', shown.frame ? `${frameText(shown.frame)}（記録の値は元の座標系のまま）` : '元の座標系'])
   const tables: ReportTable[] = []
   const parts = is2D ? [] : [...viewer.getPartMeshes().keys()].sort((a, b) => a - b)
   if (parts.length > 1) {
@@ -805,6 +810,15 @@ function onNavigationKey(e: KeyboardEvent): void {
       e.preventDefault()
       return
     }
+    // choosing a frame: Esc gives it up (the frame shown stays)
+    if (frameTool.active) {
+      frameTool.stop()
+      forgetHoverPick()
+      probe.refresh()
+      showModeHint()
+      e.preventDefault()
+      return
+    }
     // a card first (the key list, a failed load's): it is what the eye is on
     if (keyHelp.shown) {
       keyHelp.show(false)
@@ -873,6 +887,61 @@ function onNavigationKey(e: KeyboardEvent): void {
       return
   }
   e.preventDefault()
+}
+
+// ---- 座標系 (frame.ts): an origin and axes of one's own, for the points and ΔX ΔY ΔZ shown
+const frameTool = new FrameTool({
+  // as a mode's hint: Esc (showModeHint) puts the line back
+  say: (text) => setModeHud(text, thicknessHud || modelSummary),
+  changed: (frame) => applyFrame(frame, true),
+})
+const frameFolder = gui.addFolder('座標系')
+frameFolder.close()
+const frameState = { now: '元の座標系' }
+const frameActions = {
+  choose: () => {
+    if (!frameTool.available) {
+      hudInfo.textContent = '座標系は STEP・IGES のモデルだけ（メッシュ形式には B-rep の頂点・稜線・面が無い）'
+      return
+    }
+    forgetHoverPick()
+    frameTool.start()
+    probe.refresh()
+  },
+  reset: () => applyFrame(null, true),
+}
+frameFolder.add(frameActions, 'choose').name('原点と軸を選ぶ')
+const frameResetCtl = frameFolder.add(frameActions, 'reset').name('元の座標系に戻す')
+const frameNowCtl = frameFolder.add(frameState, 'now').name('今の座標系').disable()
+frameResetCtl.disable()
+/** (12.000, 20.000, 10.000), the model's own coordinates (mm, 3 decimals): what a frame is made of */
+const modelPoint = (p: readonly number[]) => `(${p.map((v) => fmt(v)).join(', ')})`
+/** 6 decimals: an axis's direction */
+const modelDir = (d: readonly number[]) => `(${d.map((v) => (Math.abs(v) < 5e-7 ? 0 : v).toFixed(6)).join(', ')})`
+/** the frame (null: the model's own) as text: for 今の座標系 and the 記録 */
+function frameText(f: Frame | null): string {
+  return f ? `原点 ${modelPoint(f.origin)}・X ${modelDir(f.x)}・Y ${modelDir(f.y)}・Z ${modelDir(f.z)}` : '元の座標系'
+}
+/**
+ * Show points and ΔX ΔY ΔZ in this frame (null: the model's own) from now on:
+ * its mark in 3D, the list, the name beside the cursor. say: the status line says so.
+ */
+function applyFrame(frame: Frame | null, say: boolean): void {
+  frameTool.stop()
+  setFrame(frame)
+  viewer.setFrameMarker(frame)
+  frameState.now = frame ? `原点 ${modelPoint(frame.origin)}` : '元の座標系'
+  frameNowCtl.updateDisplay()
+  frameNowCtl.domElement.title = frameText(frame)
+  frameResetCtl.enable(frame !== null)
+  renderMeasureList()
+  forgetHoverPick()
+  probe.refresh()
+  if (say) {
+    hudInfo.textContent = frame
+      ? `座標系を決めた（${frameText(frame)}）— 点と ΔX ΔY ΔZ をこの座標系で出す`
+      : '元の座標系に戻した'
+  }
 }
 
 const sectionFolder = gui.addFolder('断面')
@@ -1355,7 +1424,7 @@ probe.onStop(() => {
   partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
-  if (state.mode !== 'なし' && !is2D && contentShown) {
+  if ((state.mode !== 'なし' || frameTool.active) && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
     if (picked !== null) {
       partTree.markFrom3D(null) // 計測 / 注記 point at faces, edges and vertices, not at parts
@@ -1436,7 +1505,8 @@ function pickUnderCursor(clientX: number, clientY: number): TipContent {
       hoverPickTimer = setTimeout(() => probe.refresh(), hoverPickReady - now)
       return lastPickTip
     }
-    pick = picker.pick(toNdc(clientX, clientY))
+    // a frame's clicks are not the measurement's: they take any kind (frame.ts says which can be used)
+    pick = picker.pick(toNdc(clientX, clientY), frameTool.active ? 'any' : picker.filter)
     const end = performance.now()
     hoverPickReady = viewer.seeThrough ? end + HOVER_PICK_WAIT * (end - now) : 0
   }
@@ -1795,7 +1865,7 @@ panelsShow.addEventListener('click', () => setPanelsHidden(false))
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
+const folders3D = [viewFolder, frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -2400,6 +2470,14 @@ viewport.addEventListener('pointerup', (e) => {
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1])
   downAt = null
   if (e.button === 0) clickTravels = [clickTravels[1], Math.max(travel, moved)]
+  // choosing a frame: a click is its origin or an axis, whatever the mode
+  if (frameTool.active) {
+    if (moved > DRAG_PX || e.button !== 0) return
+    // whatever the 選択 is (it is hidden in なし): the frame says which kinds can be used
+    const pick = picker.pick(toNdc(e.clientX, e.clientY), 'any')
+    if (pick) void frameTool.pick(pick)
+    return
+  }
   if (state.mode === 'なし') return
   if (moved > DRAG_PX || measureTool.busy) return
   const ndc = toNdc(e.clientX, e.clientY)
@@ -2632,6 +2710,9 @@ async function loadFile(file: File): Promise<void> {
       probe.stop()
       preselect.setModel([])
       infoCache.setModel(null)
+      // the frame was the old model's
+      frameTool.setModel(null)
+      applyFrame(null, false)
       thicknessHud = ''
       modeHud = ''
       modelSummary = ''
@@ -2704,6 +2785,7 @@ async function loadFile(file: File): Promise<void> {
         // a mesh model has no B-rep to ask for a size
         infoCache.setModel(meta.format === 'brep' ? meta.id : null)
         measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
+        frameTool.setModel(meta.format === 'brep' ? meta.id : null)
         checkPartNames = new Map(model.parts.map((p) => [p.id, p.name]))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         sectionRange()
@@ -2845,7 +2927,8 @@ testHooks.__cadPropsWait = (ms?: number) => {
 }
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.prepareCamera()
-  const r = picker.pick(toNdc(clientX, clientY))
+  // what a click there takes: a frame's clicks take any kind (the 選択 is the measurement's)
+  const r = picker.pick(toNdc(clientX, clientY), frameTool.active ? 'any' : picker.filter)
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
 

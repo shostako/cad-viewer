@@ -84,7 +84,7 @@ from OCP.gp import gp_Ax1, gp_Circ, gp_Cone, gp_Cylinder, gp_Pln, gp_Pnt, gp_Sph
 from OCP.GProp import GProp_GProps
 from OCP.ShapeAnalysis import ShapeAnalysis_CanonicalRecognition
 from OCP.BRepTools import BRepTools
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON, TopAbs_VERTEX, TopAbs_WIRE
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON, TopAbs_REVERSED, TopAbs_VERTEX, TopAbs_WIRE
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shape
 
@@ -521,6 +521,15 @@ def edge_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
         out.update(_circle(curve.Circle(), span >= 2 * math.pi - TURN_TOL))
         return out
     out["curve"] = GeomAbs_CurveType(ctype).name.removeprefix("GeomAbs_").lower()
+    if ctype == GeomAbs_Line:
+        # a straight edge: its ends and its direction from the start to the end
+        # of its curve (an axis of a coordinate system can be taken from it)
+        a, b = curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter())
+        d = gp_Vec(a, b)
+        out.update(start=_xyz(a), end=_xyz(b))
+        if d.Magnitude() > 0:
+            out["direction"] = _xyz(d.Normalized())
+        return out
     if ctype in (GeomAbs_BSplineCurve, GeomAbs_BezierCurve):
         circ = gp_Circ()
         if ShapeAnalysis_CanonicalRecognition(edge).IsCircle(RECOGNIZE_TOL, circ):
@@ -608,7 +617,9 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
             full=_has_seam(face),
         )
     elif name == "plane":
-        out["normal"] = _xyz(geom.Axis().Direction())
+        # out of the solid: the plane's own normal, turned when the face is reversed
+        n = geom.Axis().Direction()
+        out["normal"] = _xyz(n.Reversed() if face.Orientation() == TopAbs_REVERSED else n)
     elif name == "torus":
         out.update(
             radius=geom.MinorRadius(),

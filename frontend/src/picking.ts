@@ -165,9 +165,12 @@ export class Picker {
     return -at.clone().applyMatrix4(this.viewer.camera.matrixWorldInverse).z
   }
 
-  /** Pick at normalized device coords; returns null when nothing is hit. */
-  pick(ndc: THREE.Vector2): PickResult | null {
-    const f = this.filter
+  /**
+   * Pick at normalized device coords; returns null when nothing is hit.
+   * filter: what may be taken, the 選択's by default (a frame's clicks take any: 座標系)
+   */
+  pick(ndc: THREE.Vector2, filter: PickFilter = this.filter): PickResult | null {
+    const f = filter
     // ワイヤーフレーム / 半透明 draw every visible part's lines, also through
     // the faces in front of them: a click on a drawn line means that line,
     // whichever part it belongs to. Without this the ray hits the (undrawn or

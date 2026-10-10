@@ -2223,3 +2223,12 @@ body.panels-hidden #corner-br {
 #report-page:focus-visible {
   background: var(--cv-accent-hover);
 }
+
+/* 座標系 (viewer.setFrameMarker): the letters at the ends of the chosen frame's axes (their colour: inline) */
+.frame-axis {
+  font-size: var(--cv-fs-sm);
+  font-weight: 700;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.9);
+  pointer-events: none;
+  user-select: none;
+}
