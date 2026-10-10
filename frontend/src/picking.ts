@@ -127,6 +127,30 @@ export class Picker {
     }
   }
 
+  /**
+   * The part under the cursor as the view draws it (the part tree marks its
+   * row from the 3D view): a drawn line first, as a click takes it (in
+   * 半透明 / ワイヤーフレーム every visible part's lines; in the shaded
+   * styles the lines of a curve-only part, which are always drawn), else the
+   * first visible face. In the shaded styles a curve wins only in front of
+   * that face (the face hides what is behind it).
+   */
+  partAt(ndc: THREE.Vector2): number | null {
+    const seeThrough = this.viewer.seeThrough
+    const line = this.snapDrawnLines(ndc, seeThrough ? undefined : (part) => part.indices.length === 0, true)
+    if (line && seeThrough) return line.partId
+    const hit = this.firstVisibleHit(ndc)
+    if (line && (!hit || this.depth(line.point) <= this.depth(hit.point) + 2 * this.pxScale(hit.point))) {
+      return line.partId
+    }
+    return hit ? (hit.object.userData.partId as number) : null
+  }
+
+  /** how far in front of the camera a point is, along the view */
+  private depth(at: THREE.Vector3): number {
+    return -at.clone().applyMatrix4(this.viewer.camera.matrixWorldInverse).z
+  }
+
   /** Pick at normalized device coords; returns null when nothing is hit. */
   pick(ndc: THREE.Vector2): PickResult | null {
     // ワイヤーフレーム / 半透明 draw every visible part's lines, also through
@@ -182,7 +206,7 @@ export class Picker {
    * took a while, only after four times that long (main.ts pickUnderCursor;
    * not at all during a drag).
    */
-  private snapDrawnLines(ndc: THREE.Vector2): PickResult | null {
+  private snapDrawnLines(ndc: THREE.Vector2, only?: (part: PartData) => boolean, curves = false): PickResult | null {
     const cam = this.viewer.camera
     cam.updateMatrixWorld()
     const el = this.viewer.renderer.domElement
@@ -221,7 +245,10 @@ export class Picker {
     const sb = new THREE.Vector3()
 
     for (const part of this.parts.values()) {
-      if (!this.viewer.hasEdgeLines(part.id) || !this.viewer.isPartVisible(part.id)) continue
+      if (only && !only(part)) continue
+      // (loose curves count only for partAt: a click does not take them)
+      const drawn = this.viewer.hasEdgeLines(part.id) || (curves && this.viewer.hasCurveLines(part.id))
+      if (!drawn || !this.viewer.isPartVisible(part.id)) continue
       const mat = this.viewer.getPartMesh(part.id)?.material as
         | (THREE.Material & { clippingPlanes?: THREE.Plane[] | null })
         | undefined

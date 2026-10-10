@@ -15,6 +15,14 @@ const DEFAULT_PART_COLOR = 0x8fb4d8
 const EDGE_COLOR = 0x20262e
 /** loose curves (parts with no faces) — the dark edge color would vanish on the background */
 const CURVE_COLOR = 0xe0b050
+/**
+ * A part whose row in the part tree is under the pointer (setHighlight): its
+ * lines in this cyan, the colour of the hover cues, and its faces lit up by
+ * HIGHLIGHT_EMISSIVE on top of their own colour (the heatmap's too).
+ */
+const HIGHLIGHT_COLOR = 0x55d6ff
+const HIGHLIGHT_EMISSIVE = new THREE.Color(HIGHLIGHT_COLOR).multiplyScalar(0.35)
+const NO_EMISSIVE = new THREE.Color(0x000000)
 const WORLD_UP = new THREE.Vector3(0, 0, 1)
 /**
  * Keep the turntable camera this far (rad, ~0.06 deg) from the poles: lookAt
@@ -156,6 +164,12 @@ export class Viewer {
   private styleListeners: (() => void)[] = []
   /** face parts that have edge lines: the lines, and their colour in the see-through styles */
   private partEdges = new Map<number, { lines: LineSegments2; material: LineMaterial; seeThroughColor: THREE.Color }>()
+  /** the line material of each loose-curve part (no faces) */
+  private partCurves = new Map<number, LineMaterial>()
+  /** the colour each part is drawn in: its own (file or default), the amber of loose curves */
+  private partColors = new Map<number, THREE.Color>()
+  /** parts shown highlighted (setHighlight) */
+  private highlighted = new Set<number>()
   private raycaster = new THREE.Raycaster()
   /** running double-click pivot slide (camera and target both move) */
   private viewAnim: {
@@ -625,13 +639,14 @@ export class Viewer {
     mesh.userData.meshFormat = part.faceRanges.length === 0
     group.add(mesh)
     this.partMeshes.set(part.id, mesh)
+    const curveOnly = part.indices.length === 0
+    this.partColors.set(part.id, curveOnly && part.edges.length >= 6 ? new THREE.Color(CURVE_COLOR) : color.clone())
 
     if (part.edges.length >= 6) {
       const edgeGeo = new LineSegmentsGeometry()
       // pass the typed array directly — Array.from() would box millions of
       // floats into JS numbers on large assemblies (memory blowup / tab freeze)
       edgeGeo.setPositions(part.edges)
-      const curveOnly = part.indices.length === 0
       const edgeMat = new LineMaterial({ color: curveOnly ? CURVE_COLOR : EDGE_COLOR, linewidth: 1.5 })
       const size = new THREE.Vector2()
       this.renderer.getSize(size)
@@ -641,7 +656,8 @@ export class Viewer {
       group.add(lines)
       // loose curves keep their own colour and stay drawn in every style: the
       // lines are all there is of them
-      if (!curveOnly) this.partEdges.set(part.id, { lines, material: edgeMat, seeThroughColor: edgeColorOnDark(color) })
+      if (curveOnly) this.partCurves.set(part.id, edgeMat)
+      else this.partEdges.set(part.id, { lines, material: edgeMat, seeThroughColor: edgeColorOnDark(color) })
     }
 
     this.partGroups.set(part.id, group)
@@ -675,6 +691,11 @@ export class Viewer {
     return this.partEdges.has(partId)
   }
 
+  /** the part is loose curves, drawn as lines in every style */
+  hasCurveLines(partId: number): boolean {
+    return this.partCurves.has(partId)
+  }
+
   /**
    * Switch how the model is drawn. Only material flags, uniforms and
    * visibility change: no geometry is built, and nothing is added per frame.
@@ -694,8 +715,8 @@ export class Viewer {
   /**
    * The style's flags on one part. Owns visible / wireframe / transparent /
    * opacity / depthWrite of the face material and the edge lines' visibility
-   * and colour; the thickness heatmap owns color / vertexColors, so the two
-   * never undo each other.
+   * and colour, and the highlight (emissive, the lines' colour); the thickness
+   * heatmap owns color / vertexColors, so the two never undo each other.
    */
   private applyStyle(partId: number): void {
     const mesh = this.partMeshes.get(partId)
@@ -734,11 +755,40 @@ export class Viewer {
       // order of its triangles
       mat.depthWrite = !xray
     }
+    // A highlighted part (the tree's row under the pointer) glows and draws
+    // its lines in the highlight colour, in every style: 陰影のみ draws them
+    // for it too, as an outline, and ワイヤーフレーム has only the lines.
+    // Uniforms only, no shader rebuild.
+    const lit = this.highlighted.has(partId)
+    for (const m of copy ? [mesh, copy] : [mesh]) {
+      ;(m.material as THREE.MeshStandardMaterial).emissive.copy(lit ? HIGHLIGHT_EMISSIVE : NO_EMISSIVE)
+    }
     if (edges) {
-      edges.lines.visible = s !== 'shaded'
-      if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)
+      edges.lines.visible = s !== 'shaded' || lit
+      if (lit) edges.material.color.set(HIGHLIGHT_COLOR)
+      else if (this.seeThrough) edges.material.color.copy(edges.seeThroughColor)
       else edges.material.color.set(EDGE_COLOR)
     }
+    this.partCurves.get(partId)?.color.set(lit ? HIGHLIGHT_COLOR : CURVE_COLOR)
+  }
+
+  /**
+   * Highlight these parts (the part tree's row under the pointer, or the one
+   * the keyboard is on); an empty list ends it. Only colours change. A saved
+   * image never has it (snapshot).
+   */
+  setHighlight(partIds: Iterable<number>): void {
+    const next = new Set(partIds)
+    const before = this.highlighted
+    this.highlighted = next
+    for (const id of new Set([...before, ...next])) {
+      if (before.has(id) !== next.has(id)) this.applyStyle(id)
+    }
+  }
+
+  /** The colour a part is drawn in (its own, or the amber of loose curves); null for an unknown part. */
+  partColor(partId: number): THREE.Color | null {
+    return this.partColors.get(partId)?.clone() ?? null
   }
 
   /**
@@ -777,6 +827,9 @@ export class Viewer {
     this.partMeshes.clear()
     this.flatCopies.clear() // disposed with their groups above
     this.partEdges.clear()
+    this.partCurves.clear()
+    this.partColors.clear()
+    this.highlighted.clear()
     this.lineMaterials = []
     for (const child of [...this.overlay.children]) this.disposeOverlayObject(child)
     this.viewAnim = null
@@ -793,12 +846,56 @@ export class Viewer {
   fitToView(): void {
     const box = this.modelBBox()
     if (box.isEmpty()) return
+    this.frameFromHere(box)
+    this.rememberFit(null)
+  }
+
+  /**
+   * Zoom to fit these parts as fitToView fits the model (the part tree's この
+   * 部品へ寄る): the same direction and roll, framed in the fit area. Only the
+   * visible ones count, bodies before loose curves (modelBBox). Returns false,
+   * and moves nothing, when none of them is visible.
+   */
+  fitToParts(partIds: readonly number[]): boolean {
+    const box = this.partsBox(partIds)
+    if (box.isEmpty()) return false
+    this.frameFromHere(box)
+    this.rememberFit([...partIds])
+    return true
+  }
+
+  /**
+   * Fit again what the last fit framed (the panels changed: H): the visible
+   * parts after fitToView or a load, the same parts after fitToParts. Parts
+   * that have since been hidden are not framed; none left: nothing moves.
+   */
+  refit(): void {
+    const parts = this.lastFit?.parts
+    if (parts) this.fitToParts(parts)
+    else this.fitToView()
+  }
+
+  /** frame the box from the current view direction (a fit that keeps the direction and roll) */
+  private frameFromHere(box: THREE.Box3): void {
     this.finishViewAnim()
     this.stopInertia()
     const forward = this.target.clone().sub(this.camera.position)
     if (forward.lengthSq() < 1e-20) forward.copy(LOAD_VIEW_DIR).negate()
     this.frameBox(box, forward.normalize())
-    this.rememberFit()
+  }
+
+  /** the box of the visible ones of these parts: their bodies, or their curves if they have no body */
+  private partsBox(partIds: readonly number[]): THREE.Box3 {
+    const bodies = new THREE.Box3()
+    const all = new THREE.Box3()
+    for (const id of partIds) {
+      const group = this.partGroups.get(id)
+      const mesh = this.partMeshes.get(id)
+      if (!group?.visible || !mesh) continue
+      if (mesh.geometry.index?.count) bodies.expandByObject(mesh)
+      else all.expandByObject(group)
+    }
+    return bodies.isEmpty() ? all : bodies
   }
 
   /** The load fit: default oblique direction, Z up, framed in fitArea. */
@@ -808,17 +905,27 @@ export class Viewer {
     this.camera.up.copy(WORLD_UP)
     const box = this.modelBBox()
     if (!box.isEmpty()) this.frameBox(box, LOAD_VIEW_DIR.clone().negate())
-    this.rememberFit()
+    this.rememberFit(null)
   }
 
-  /** the view right after the last fit (fitToView / frameNewModel) */
-  private lastFit: { target: THREE.Vector3; dir: THREE.Vector3; up: THREE.Vector3; dist: number; zoom: number } | null = null
+  /**
+   * the view right after the last fit (fitToView / fitToParts /
+   * frameNewModel), and the parts that fit framed (null: the visible model)
+   */
+  private lastFit: {
+    target: THREE.Vector3
+    dir: THREE.Vector3
+    up: THREE.Vector3
+    dist: number
+    zoom: number
+    parts: number[] | null
+  } | null = null
 
-  private rememberFit(): void {
+  private rememberFit(parts: number[] | null): void {
     const cam = this.camera
     const target = this.target.clone()
     const off = target.clone().sub(cam.position)
-    this.lastFit = { target, dir: off.clone().normalize(), up: cam.up.clone(), dist: off.length(), zoom: cam.zoom }
+    this.lastFit = { target, dir: off.clone().normalize(), up: cam.up.clone(), dist: off.length(), zoom: cam.zoom, parts }
   }
 
   /**
@@ -1194,9 +1301,12 @@ export class Viewer {
     if (!ctx) throw new Error('画像を作れない')
     let restore = () => {}
     this.prepareCamera()
-    // the hover cues are for the screen, not for a document
+    // the hover cues and the highlight of the tree's row under the pointer
+    // are for the screen, not for a document
     const cuesShown = this.cues.visible
     this.cues.visible = false
+    const lit = [...this.highlighted]
+    this.setHighlight([])
     try {
       if (background === 'white') restore = this.applyWhiteBackground()
       this.renderer.render(this.scene, this.camera)
@@ -1205,6 +1315,7 @@ export class Viewer {
     } finally {
       restore()
       this.cues.visible = cuesShown
+      this.setHighlight(lit) // after restore(): it puts back the plain line colours
       // the visible canvas holds the normal frame again (a hidden tab may not
       // run the loop for a while)
       this.renderer.render(this.scene, this.camera)
@@ -1429,7 +1540,7 @@ export class Viewer {
     this.controls.object = to
     this.trackball.object = to
     this.setTarget(target)
-    if (wasAtFit) this.rememberFit()
+    if (wasAtFit) this.rememberFit(this.lastFit?.parts ?? null)
   }
 
   /**
