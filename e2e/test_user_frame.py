@@ -1,6 +1,7 @@
 """E2E: 座標系 (issue #59 P1 7): an origin and axes of one's own.
 
-- 座標系 > 原点と軸を選ぶ asks three clicks, whatever the mode: the origin (a
+- 座標系 > 原点と軸を選ぶ asks three clicks, whatever the mode and the 選択 of
+  計測 (部品 left on: still a vertex, a face): the origin (a
   vertex), Z (a plane's normal), X (a plane's normal, made square to Z). A
   click that cannot be the step's (a plane as the origin, a cylinder along Z
   as X) says why and asks again. Esc gives the choice up.
@@ -115,7 +116,11 @@ with nav_session() as n:
     click_at(top_xy, "face")  # in なし, a click does nothing now
     assert not hud().startswith("座標系"), hud()
 
-    # ---- three clicks (in なし: the mode does not matter), with the wrong kinds said
+    # ---- three clicks (in なし: the mode does not matter), with the wrong kinds said;
+    # the 選択 of 計測 (here 部品, hidden in なし) does not narrow them
+    gui_common.set_mode(page, "計測")
+    gui_common.ctl(page, "選択").locator("select").select_option(label="部品")
+    gui_common.set_mode(page, "なし")
     choose()
     click_at(top_xy, "face")
     assert wait_hud("中心はない").startswith("座標系: この面に中心はない — 原点をクリック"), hud()
@@ -152,6 +157,7 @@ with nav_session() as n:
 
     # ---- in the frame: a vertex beside the cursor, a slanted distance's Δ, a circle's centre
     gui_common.set_mode(page, "計測")
+    gui_common.ctl(page, "選択").locator("select").select_option(label="すべて")
     corner0 = near((0, 0, 15), (10, 10, 15))
     tip = tip_at(corner0)
     assert tip.endswith(pt(in_frame((0, 0, 15)))), ("the corner in the frame", tip)

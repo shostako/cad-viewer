@@ -1505,7 +1505,8 @@ function pickUnderCursor(clientX: number, clientY: number): TipContent {
       hoverPickTimer = setTimeout(() => probe.refresh(), hoverPickReady - now)
       return lastPickTip
     }
-    pick = picker.pick(toNdc(clientX, clientY))
+    // a frame's clicks are not the measurement's: they take any kind (frame.ts says which can be used)
+    pick = picker.pick(toNdc(clientX, clientY), frameTool.active ? 'any' : picker.filter)
     const end = performance.now()
     hoverPickReady = viewer.seeThrough ? end + HOVER_PICK_WAIT * (end - now) : 0
   }
@@ -2472,7 +2473,8 @@ viewport.addEventListener('pointerup', (e) => {
   // choosing a frame: a click is its origin or an axis, whatever the mode
   if (frameTool.active) {
     if (moved > DRAG_PX || e.button !== 0) return
-    const pick = picker.pick(toNdc(e.clientX, e.clientY))
+    // whatever the 選択 is (it is hidden in なし): the frame says which kinds can be used
+    const pick = picker.pick(toNdc(e.clientX, e.clientY), 'any')
     if (pick) void frameTool.pick(pick)
     return
   }
@@ -2925,7 +2927,8 @@ testHooks.__cadPropsWait = (ms?: number) => {
 }
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.prepareCamera()
-  const r = picker.pick(toNdc(clientX, clientY))
+  // what a click there takes: a frame's clicks take any kind (the 選択 is the measurement's)
+  const r = picker.pick(toNdc(clientX, clientY), frameTool.active ? 'any' : picker.filter)
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
 
