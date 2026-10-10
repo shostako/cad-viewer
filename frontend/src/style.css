@@ -102,13 +102,26 @@ body,
 #viewport2d {
   position: absolute;
   inset: 0;
-  background: #f2f2ef;
+  /* the 3D view's background (viewer.ts); a drawing's own page is made this
+     colour too (drawing2d.ts PAGE_COLOUR) */
+  background: #1d2126;
   touch-action: none;
   overflow: hidden;
 }
 
 #viewport2d.hidden {
   display: none;
+}
+
+/* the measurements over a drawing, in screen px (drawing2d.ts). Never takes
+   the pointer: drags, the wheel and snap clicks go to the drawing. */
+#viewport2d .overlay2d-layer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 #viewport canvas {
@@ -380,6 +393,11 @@ body,
 
 #measure-list li:first-child {
   border-top: none;
+}
+
+/* the values can be selected and copied (into a report, Excel); the × cannot */
+#measure-list li > span {
+  user-select: text;
 }
 
 #measure-list button {

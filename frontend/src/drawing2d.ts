@@ -1,12 +1,17 @@
 /** 2D drawing viewer: pan/zoom via viewBox mutation + snap measurement.
  *
- * The backend SVG is injected as-is; we manipulate its viewBox for pan/zoom
- * (keeps getScreenCTM() exact) and append our own <g> for markers/dimensions
- * in the same coordinate space. Snap points carry both svg coords (display)
- * and dxf coords (exact measurement values).
+ * The backend SVG is injected as-is, apart from its page colour (made the 3D
+ * view's background), and pan/zoom changes its viewBox (keeps getScreenCTM()
+ * exact). The measurements are drawn in a second <svg> laid over it, in screen
+ * pixels, and placed again on every pan, zoom, fit and resize: markers, lines
+ * and values keep their size at any zoom and window width. (Drawn in the
+ * drawing's own units, a viewBox about 1e6 wide, a 13 px value needed a font
+ * size of 1e4 units and more, which Chromium caps at 10000: the value shrank
+ * on a window narrower than about 1330 px.) Snap points carry both svg coords
+ * (display) and dxf coords (exact measurement values).
  */
 
-import { toWhitePage, type ExportBackground } from './snapshot'
+import { swapPageColour, toWhitePage, type ExportBackground } from './snapshot'
 
 export interface SnapPoint {
   dxf: [number, number]
@@ -14,26 +19,70 @@ export interface SnapPoint {
   kind: string
 }
 
+/** A distance between two snap points; its values come from their dxf coords. */
+export interface Measurement2D {
+  a: SnapPoint
+  b: SnapPoint
+}
+
+/** A measurement of the list: the id names its row (its ×). */
+export interface Measurement2DEntry extends Measurement2D {
+  id: number
+}
+
+/** The HUD line and the 計測 list row of a measurement: "距離 d (ΔX dx, ΔY dy)" */
+export function measurementText(m: Measurement2D): string {
+  const dx = m.b.dxf[0] - m.a.dxf[0]
+  const dy = m.b.dxf[1] - m.a.dxf[1]
+  return `距離 ${fmt(Math.hypot(dx, dy))} (ΔX ${fmt(Math.abs(dx))}, ΔY ${fmt(Math.abs(dy))})`
+}
+
+/** The page on screen: the 3D view's background (viewer.ts; #viewport2d in style.css too) */
+const PAGE_COLOUR = '#1d2126'
+
 const SNAP_PX = 12
 const SVG_NS = 'http://www.w3.org/2000/svg'
+// the measurement layer, in screen px
+const MARKER_R = 5
+const LINE_PX = 1.5
+const FONT_PX = 13
+const HALO_PX = 3
+const MARKER_COLOUR = '#ffb020'
+const DIM_COLOUR = '#ffd060'
+/** the value's outline: it keeps the pale value readable on the white page of an export */
+const HALO_COLOUR = '#1d2126'
 
 export class Drawing2D {
   private container: HTMLElement
   private hud: (msg: string) => void
   private svg: SVGSVGElement | null = null
+  /**
+   * The drawing's SVG as loaded, before its page colour became the 3D
+   * background: the white export parses it again (text, not a second DOM: a
+   * large drawing would be held twice). On screen a line drawn in the 3D
+   * background's own colour (#1d2126) cannot be told from the swapped page
+   * colour any more; here the page still has ezdxf's colour.
+   */
+  private sourceText: string | null = null
+  /** the measurement layer over the drawing (screen px) and the group it draws in */
+  private layer: SVGSVGElement | null = null
   private overlayG: SVGGElement | null = null
   private snaps: SnapPoint[] = []
   private vb = { x: 0, y: 0, w: 1, h: 1 }
   private baseVb = { x: 0, y: 0, w: 1, h: 1 }
   private pendingSnap: SnapPoint | null = null
-  /** the marker of pendingSnap, removed when the first point is cancelled */
-  private pendingMarker: SVGCircleElement | null = null
+  private items: Measurement2DEntry[] = []
+  private nextId = 1
+  private changeListeners: (() => void)[] = []
   measureMode = false
 
   constructor(container: HTMLElement, hud: (msg: string) => void) {
     this.container = container
     this.hud = hud
     this.bindEvents()
+    // the viewBox is fitted into the box (meet): a resize moves the drawing on
+    // screen, and the layer must follow it. Reported after layout, before paint.
+    new ResizeObserver(() => this.renderOverlay()).observe(container)
   }
 
   load(svgText: string, snaps: SnapPoint[]): void {
@@ -52,75 +101,99 @@ export class Drawing2D {
     this.vb = { x, y, w, h }
     this.baseVb = { x, y, w, h }
 
-    this.overlayG = document.createElementNS(SVG_NS, 'g')
-    // named so a white export can leave the measurement colours alone
-    this.overlayG.setAttribute('class', 'overlay2d')
-    this.svg.appendChild(this.overlayG)
+    // The page is the 3D view's background: the drawing's own page colour
+    // (ezdxf #212830, also the fill of WIPEOUT masks, which must stay unseen)
+    // becomes it. The lines keep the drawing's colours: ezdxf draws them for a
+    // dark page, colour 7 (white / black) in white, and the page is still dark.
+    const page = this.svg.querySelector(':scope > rect')?.getAttribute('fill') ?? null
+    this.sourceText = svgText
+    recolour(this.svg, (css) => swapPageColour(css, page, PAGE_COLOUR))
+
+    // The layer's look (colours, widths, paint order) is in its elements'
+    // attributes, not in style.css: the PNG export serialises a copy of the
+    // layer on its own, and a stylesheet rule would not come along.
+    this.layer = svgEl('svg', { class: 'overlay2d-layer' })
+    this.overlayG = svgEl('g', { class: 'overlay2d' })
+    this.layer.appendChild(this.overlayG)
+    this.container.appendChild(this.layer)
     this.snaps = snaps
     this.pendingSnap = null
-    this.pendingMarker = null
+    this.items = []
+    this.emit()
   }
 
   /** drop the drawing (the next load starts from an empty viewer) */
   clear(): void {
     this.container.replaceChildren()
     this.svg = null
+    this.sourceText = null
+    this.layer = null
     this.overlayG = null
     this.snaps = []
     this.pendingSnap = null
-    this.pendingMarker = null
+    this.items = []
+    this.emit()
   }
 
-  clearMeasurements(): void {
-    if (this.overlayG) this.overlayG.innerHTML = ''
-    this.pendingSnap = null
-    this.pendingMarker = null
-  }
-
-  private changeListeners: (() => void)[] = []
-
-  /** called when a measurement is completed (main.ts ends a pending undo then) */
-  onMeasurement(fn: () => void): void {
+  /** called when the measurements change: one added, removed, cleared, restored, a load */
+  onChange(fn: () => void): void {
     this.changeListeners.push(fn)
   }
 
-  /**
-   * The completed measurements as drawn (the overlay's markup) and how many
-   * they are, to put back after a clear; null when there are none. A chosen
-   * first point is not part of it: it is dropped here.
-   */
-  measurementsSnapshot(): { html: string; count: number } | null {
-    if (!this.overlayG) return null
-    const count = this.overlayG.querySelectorAll('text.dimtext2d').length
-    if (count === 0) return null
-    this.pendingMarker?.remove()
-    this.pendingMarker = null
-    this.pendingSnap = null
-    return { html: this.overlayG.innerHTML, count }
+  private emit(): void {
+    for (const fn of this.changeListeners) fn()
   }
 
-  /** Put back measurements from measurementsSnapshot (undo of a clear). */
-  restoreMeasurements(html: string): void {
-    if (!this.overlayG) return
-    this.overlayG.innerHTML = html
-    this.pendingMarker = null
+  /** the completed measurements, oldest first */
+  measurements(): readonly Measurement2DEntry[] {
+    return this.items
+  }
+
+  /** Delete one measurement (its × in the list). A chosen first point stays. */
+  removeMeasurement(id: number): void {
+    const i = this.items.findIndex((m) => m.id === id)
+    if (i < 0) return
+    this.items.splice(i, 1)
+    this.renderOverlay()
+    this.emit()
+  }
+
+  /** Delete every measurement (計測クリア), and a chosen first point. */
+  clearMeasurements(): void {
+    this.items = []
     this.pendingSnap = null
-    this.updateOverlayScale() // sized for the zoom of now, not of the clear
+    this.renderOverlay()
+    this.emit()
+  }
+
+  /** The completed measurements, to put back after a deletion (restoreMeasurements). */
+  measurementsSnapshot(): Measurement2D[] {
+    return this.items.map(({ a, b }) => ({ a, b }))
+  }
+
+  /**
+   * Replace the measurements with a snapshot (the undo of a deletion), in its
+   * order. A chosen first point stays: the user may have started the next
+   * measurement before undoing.
+   */
+  restoreMeasurements(list: readonly Measurement2D[]): void {
+    this.items = list.map(({ a, b }) => ({ id: this.nextId++, a, b }))
+    this.renderOverlay()
+    this.emit()
   }
 
   /** Drop a chosen first point (Esc). Returns whether there was one. */
   cancelPending(): boolean {
     if (!this.pendingSnap) return false
-    this.pendingMarker?.remove()
-    this.pendingMarker = null
     this.pendingSnap = null
+    this.renderOverlay()
     this.hud('1 点目を取り消した（もう一度 Esc で計測をやめる）')
     return true
   }
 
   private applyViewBox(): void {
     this.svg?.setAttribute('viewBox', `${this.vb.x} ${this.vb.y} ${this.vb.w} ${this.vb.h}`)
-    this.updateOverlayScale()
+    this.renderOverlay()
   }
 
   /** svg-units per screen pixel (uniform thanks to preserveAspectRatio meet) */
@@ -190,39 +263,70 @@ export class Drawing2D {
   }
 
   /**
-   * The drawing as on screen (current viewBox = current pan and zoom, with the
-   * measurement overlay) rasterised at device-pixel resolution. 'white' gives
-   * a white page with the drawing colours made to read on it (whitenDrawing).
+   * The drawing as on screen (current viewBox = current pan and zoom) with the
+   * measurement layer on top, rasterised at device-pixel resolution. 'white'
+   * gives a white page with the drawing colours made to read on it
+   * (whitenDrawing); the measurements keep their colours on either page.
    */
+  /** the drawing as loaded (its own page colour), as a new element; null if it cannot be read */
+  private parseSource(): SVGSVGElement | null {
+    if (!this.sourceText) return null
+    const root = new DOMParser().parseFromString(this.sourceText, 'image/svg+xml').documentElement
+    return root instanceof SVGSVGElement ? root : null
+  }
+
   async snapshot(background: ExportBackground): Promise<HTMLCanvasElement> {
     const svg = this.svg
-    if (!svg) throw new Error('図面が開かれていない')
+    const layer = this.layer
+    if (!svg || !layer) throw new Error('図面が開かれていない')
     const rect = svg.getBoundingClientRect()
     const dpr = window.devicePixelRatio || 1
     const w = Math.max(1, Math.round(rect.width * dpr))
     const h = Math.max(1, Math.round(rect.height * dpr))
     const k = w / rect.width
-    // clone at the click: a load that starts during the async decode can't change it
-    const clone = svg.cloneNode(true) as SVGSVGElement
+    // clone at the click: a load that starts during the async decode can't change it.
+    // White starts from the drawing as loaded (its own page colour, see sourceText),
+    // at the screen's pan and zoom.
+    const clone = (background === 'white' && this.parseSource()) || (svg.cloneNode(true) as SVGSVGElement)
+    clone.setAttribute('viewBox', svg.getAttribute('viewBox') ?? '')
+    clone.setAttribute('preserveAspectRatio', svg.getAttribute('preserveAspectRatio') ?? 'xMidYMid meet')
     clone.removeAttribute('style')
     // the viewBox and preserveAspectRatio come along, so the mapping is the screen's
     clone.setAttribute('width', String(w))
     clone.setAttribute('height', String(h))
     // a standalone SVG image does not inherit the page font
     clone.setAttribute('font-family', getComputedStyle(svg).fontFamily)
-    // a non-scaling stroke is measured in image pixels, which are device pixels here
-    for (const el of Array.from(clone.querySelectorAll('[vector-effect="non-scaling-stroke"]'))) {
-      el.setAttribute('stroke-width', String((Number(el.getAttribute('stroke-width')) || 1) * k))
-    }
     if (background === 'white') whitenDrawing(clone)
 
-    const url = URL.createObjectURL(
-      new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml' }),
-    )
-    try {
+    // The measurements: the layer is in screen px, so its viewBox is its CSS
+    // size and the image scales it to device px like the drawing. Where it is
+    // on screen relative to the drawing, it is in the image.
+    const lr = layer.getBoundingClientRect()
+    const at = { x: (lr.left - rect.left) * k, y: (lr.top - rect.top) * k, w: lr.width * k, h: lr.height * k }
+    let over: SVGSVGElement | null = null
+    if (this.overlayG?.hasChildNodes() && lr.width > 0 && lr.height > 0) {
+      over = layer.cloneNode(true) as SVGSVGElement
+      over.removeAttribute('class')
+      over.setAttribute('viewBox', `0 0 ${lr.width} ${lr.height}`)
+      over.setAttribute('width', String(at.w))
+      over.setAttribute('height', String(at.h))
+      over.setAttribute('font-family', getComputedStyle(layer).fontFamily)
+    }
+
+    const urls: string[] = []
+    const image = async (el: SVGSVGElement): Promise<HTMLImageElement> => {
+      const url = URL.createObjectURL(
+        new Blob([new XMLSerializer().serializeToString(el)], { type: 'image/svg+xml' }),
+      )
+      urls.push(url)
       const img = new Image()
       img.src = url
       await img.decode()
+      return img
+    }
+    try {
+      const img = await image(clone)
+      const overImg = over ? await image(over) : null
       const out = document.createElement('canvas')
       out.width = w
       out.height = h
@@ -232,9 +336,10 @@ export class Drawing2D {
       ctx.fillStyle = background === 'white' ? '#ffffff' : getComputedStyle(this.container).backgroundColor
       ctx.fillRect(0, 0, w, h)
       ctx.drawImage(img, 0, 0, w, h)
+      if (overImg) ctx.drawImage(overImg, at.x, at.y, at.w, at.h)
       return out
     } finally {
-      URL.revokeObjectURL(url)
+      for (const url of urls) URL.revokeObjectURL(url)
     }
   }
 
@@ -261,94 +366,119 @@ export class Drawing2D {
     }
     if (!this.pendingSnap) {
       this.pendingSnap = snap
-      this.pendingMarker = this.addMarker(snap)
+      this.renderOverlay()
       this.hud(`(${snap.dxf[0]}, ${snap.dxf[1]}) を選択 — 相手をクリック`)
       return
     }
-    const a = this.pendingSnap
+    const m: Measurement2DEntry = { id: this.nextId++, a: this.pendingSnap, b: snap }
     this.pendingSnap = null
-    this.pendingMarker = null // part of the measurement now
-    this.addMarker(snap)
-    const dx = snap.dxf[0] - a.dxf[0]
-    const dy = snap.dxf[1] - a.dxf[1]
-    const dist = Math.hypot(dx, dy)
-    this.addDimension(a, snap, dist)
-    this.hud(`距離 ${dist.toFixed(3)} (ΔX ${Math.abs(dx).toFixed(3)}, ΔY ${Math.abs(dy).toFixed(3)})`)
-    for (const fn of this.changeListeners) fn()
+    this.items.push(m)
+    this.renderOverlay()
+    this.hud(measurementText(m))
+    this.emit()
   }
 
-  private addMarker(s: SnapPoint): SVGCircleElement {
-    const c = document.createElementNS(SVG_NS, 'circle')
-    c.setAttribute('cx', String(s.svg[0]))
-    c.setAttribute('cy', String(s.svg[1]))
-    c.setAttribute('fill', '#ffb020')
-    c.classList.add('marker2d')
-    this.overlayG?.appendChild(c)
-    this.updateOverlayScale()
-    return c
+  /** drawing user units -> layer px; null while the viewer is not laid out (hidden) */
+  private drawingToLayer(): DOMMatrix | null {
+    if (!this.svg || !this.layer || this.container.clientWidth === 0) return null
+    const drawing = this.svg.getScreenCTM()
+    const layer = this.layer.getScreenCTM()
+    return drawing && layer ? layer.inverse().multiply(drawing) : null
   }
 
-  private addDimension(a: SnapPoint, b: SnapPoint, dist: number): void {
-    const line = document.createElementNS(SVG_NS, 'line')
-    line.setAttribute('x1', String(a.svg[0]))
-    line.setAttribute('y1', String(a.svg[1]))
-    line.setAttribute('x2', String(b.svg[0]))
-    line.setAttribute('y2', String(b.svg[1]))
-    line.setAttribute('stroke', '#ffd060')
-    line.setAttribute('vector-effect', 'non-scaling-stroke')
-    line.setAttribute('stroke-width', '1.5')
-    this.overlayG?.appendChild(line)
-
-    const text = document.createElementNS(SVG_NS, 'text')
-    text.textContent = dist.toFixed(3)
-    text.setAttribute('x', String((a.svg[0] + b.svg[0]) / 2))
-    text.setAttribute('y', String((a.svg[1] + b.svg[1]) / 2))
-    text.setAttribute('fill', '#ffd060')
-    text.setAttribute('paint-order', 'stroke')
-    text.setAttribute('stroke', '#1d2126')
-    text.setAttribute('stroke-width', '3')
-    text.classList.add('dimtext2d')
-    this.overlayG?.appendChild(text)
-    this.updateOverlayScale()
-  }
-
-  /** keep markers/text screen-constant across zoom levels */
-  private updateOverlayScale(): void {
-    if (!this.overlayG) return
-    const u = this.unitsPerPx()
-    for (const c of Array.from(this.overlayG.querySelectorAll('circle.marker2d'))) {
-      c.setAttribute('r', String(5 * u))
+  /**
+   * Draw the measurements and a chosen first point on the layer, where their
+   * snap points are on screen now: after every change of the view (pan, zoom,
+   * fit, resize) and of the measurements. Each measurement is a group of its
+   * two markers, its line and its value, in the order they were made.
+   */
+  private renderOverlay(): void {
+    const g = this.overlayG
+    if (!g) return
+    g.replaceChildren()
+    const toLayer = this.drawingToLayer()
+    if (!toLayer) return // drawn when the viewer is laid out (the resize observer)
+    const at = (s: SnapPoint): [number, number] => {
+      const p = new DOMPoint(s.svg[0], s.svg[1]).matrixTransform(toLayer)
+      return [p.x, p.y]
     }
-    for (const t of Array.from(this.overlayG.querySelectorAll('text.dimtext2d'))) {
-      t.setAttribute('font-size', String(13 * u))
-      // the dark outline in screen px too: in raw svg units (a viewBox about
-      // 1e6 wide) it is ~0.003 px, and the pale value is lost on a white page
-      t.setAttribute('stroke-width', String(3 * u))
+    for (const m of this.items) {
+      const a = at(m.a)
+      const b = at(m.b)
+      const dim = svgEl('g', { class: 'dim2d' })
+      const value = svgEl('text', {
+        class: 'dimtext2d',
+        // from the middle of the line, on it
+        x: (a[0] + b[0]) / 2,
+        y: (a[1] + b[1]) / 2,
+        fill: DIM_COLOUR,
+        'font-size': FONT_PX,
+        stroke: HALO_COLOUR,
+        'stroke-width': HALO_PX,
+        'stroke-linejoin': 'round',
+        'paint-order': 'stroke',
+      })
+      value.textContent = fmt(Math.hypot(m.b.dxf[0] - m.a.dxf[0], m.b.dxf[1] - m.a.dxf[1]))
+      dim.append(
+        marker(a),
+        marker(b),
+        svgEl('line', {
+          class: 'dimline2d',
+          x1: a[0],
+          y1: a[1],
+          x2: b[0],
+          y2: b[1],
+          stroke: DIM_COLOUR,
+          'stroke-width': LINE_PX,
+        }),
+        value,
+      )
+      g.appendChild(dim)
+    }
+    if (this.pendingSnap) g.appendChild(marker(at(this.pendingSnap)))
+  }
+}
+
+function fmt(v: number): string {
+  return v.toFixed(3)
+}
+
+function svgEl<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  attrs: Record<string, string | number>,
+): SVGElementTagNameMap[K] {
+  const el = document.createElementNS(SVG_NS, tag)
+  for (const [name, value] of Object.entries(attrs)) el.setAttribute(name, String(value))
+  return el
+}
+
+function marker(at: [number, number]): SVGCircleElement {
+  return svgEl('circle', { class: 'marker2d', cx: at[0], cy: at[1], r: MARKER_R, fill: MARKER_COLOUR })
+}
+
+/** Rewrite a drawing's colours: in its <style> rules and in its stroke / fill / style attributes. */
+function recolour(svg: SVGSVGElement, map: (css: string) => string): void {
+  for (const st of Array.from(svg.querySelectorAll('style'))) {
+    st.textContent = map(st.textContent ?? '')
+  }
+  for (const el of Array.from(svg.querySelectorAll('[stroke],[fill],[style]'))) {
+    for (const attr of ['stroke', 'fill', 'style']) {
+      const v = el.getAttribute(attr)
+      if (v) el.setAttribute(attr, map(v))
     }
   }
 }
 
 /**
- * White page for a drawing: the ezdxf background rect (a direct child of the
- * <svg>) turns white, and the drawing colours go through toWhitePage (its
- * page colour -> white, so WIPEOUT masks vanish as on screen; near-white ->
- * black; light colours darkened), in <style> rules and in stroke / fill /
- * style attributes. The measurement overlay keeps its colours. Non-hex
- * colours (`white`, `rgb()`) are not changed: ezdxf writes hex.
+ * White page for a drawing: the page rect (a direct child of the <svg>) turns
+ * white, and the drawing colours go through toWhitePage (the page colour ->
+ * white, so WIPEOUT masks vanish as on screen; near-white -> black; light
+ * colours darkened). Non-hex colours (`white`, `rgb()`) are not changed:
+ * ezdxf writes hex. The measurements are a layer of their own: not touched.
  */
 function whitenDrawing(svg: SVGSVGElement): void {
-  const overlay = svg.querySelector('g.overlay2d')
   const bg = svg.querySelector(':scope > rect')
   const page = bg?.getAttribute('fill') ?? null
-  for (const st of Array.from(svg.querySelectorAll('style'))) {
-    st.textContent = toWhitePage(st.textContent ?? '', page)
-  }
-  for (const el of Array.from(svg.querySelectorAll('[stroke],[fill],[style]'))) {
-    if (overlay?.contains(el)) continue
-    for (const attr of ['stroke', 'fill', 'style']) {
-      const v = el.getAttribute(attr)
-      if (v) el.setAttribute(attr, toWhitePage(v, page))
-    }
-  }
+  recolour(svg, (css) => toWhitePage(css, page))
   bg?.setAttribute('fill', '#ffffff')
 }
