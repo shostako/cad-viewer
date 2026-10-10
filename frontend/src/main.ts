@@ -2117,10 +2117,14 @@ const pressureCtl = propsFolder
 propsPanel.setPressure(propsPrefs.pressure)
 
 // ---- 用途 and 材料: the first two rows of the operation panel (a 3D model's)
+/** the material before a change of the 用途 (a gravity typed was for that material) */
+let materialBefore = materialNow()
 const useCtl = gui
   .add(materialStore, 'use', USE_NAMES)
   .name('用途')
   .onChange(() => {
+    // another 用途 is another material: a gravity typed for the one before goes
+    if (materialNow() !== materialBefore) materialStore.density = null
     saveMaterials(materialStore)
     makeMaterialCtl()
     applyMaterial()
@@ -2162,6 +2166,7 @@ gui.$children.prepend(useCtl.domElement)
 makeMaterialCtl()
 /** the material's gravity and, while 判定の基準 follows it, its threshold and draft */
 function applyMaterial(): void {
+  materialBefore = materialNow()
   applyDensity()
   applyBasis()
 }

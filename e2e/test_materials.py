@@ -208,6 +208,21 @@ with nav_session() as n:
     page.evaluate("document.activeElement.blur()")
     n.settle()
     assert page.inner_text("#props-density") == "PC 1.20 g/cm³", page.inner_text("#props-density")
+    # a gravity by hand, then another 用途: its material is another, the gravity typed goes
+    dens.fill("1.25")
+    dens.press("Enter")
+    page.evaluate("document.activeElement.blur()")
+    n.settle()
+    assert page.inner_text("#props-density") == "PC 1.25 g/cm³（手入力）", page.inner_text("#props-density")
+    choose("用途", "一般")
+    assert page.inner_text("#props-density") == "SS400 7.85 g/cm³" and mass() == grams(7.85), (page.inner_text("#props-density"), mass())
+    choose("用途", "射出成形")
+    assert page.inner_text("#props-density") == "PC 1.20 g/cm³", ("the gravity typed for PC went with the switch", page.inner_text("#props-density"))
+    # 一般 took the list off; it stays off back in 射出成形
+    assert not shown("#check-panel")
+    gui_common.open_folder(page, "問題の一覧")
+    ctl("一覧を出す").locator("input").check()
+    wait_conditions(basis_line("PC", "1.0", "0.5", PC_SOURCE))
     print("3 gravity by hand")
 
     # ================= the card (射出成形: the resins), from the ✎ and from 基準を編集…
