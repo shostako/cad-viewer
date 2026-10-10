@@ -13,6 +13,7 @@ import {
   measureDistance,
   measureEdgeInfo,
   measureFaceInfo,
+  type DistanceMode,
   type EntityRef,
 } from './api'
 import type { PickResult } from './picking'
@@ -39,7 +40,12 @@ export interface EntryData {
   holes?: number[]
   /** an edge's length (mm) */
   length?: number
+  /** a distance between the centres or the largest one (absent: the shortest) */
+  mode?: 'centre' | 'max'
 }
+
+/** the distances other than the shortest, by name: on the status line, the label, the list */
+export const DISTANCE_MODE_NAMES: Record<Exclude<DistanceMode, 'min'>, string> = { centre: '中心間', max: '最大' }
 
 /** what a face or an edge measures by itself */
 type Extent = { kind: 'face'; area: number; perimeter?: number; holes: number[] } | { kind: 'edge'; length: number }
@@ -87,6 +93,8 @@ export class MeasureTool {
   private pendingExtent: Extent | null = null
   private extentListener: (() => void) | null = null
   private entries: MeasureEntry[] = []
+  /** which distance the second point measures (the operation panel's 距離) */
+  distanceMode: DistanceMode = 'min'
   /** the entry lit by setHot */
   private hotId: number | null = null
   private nextId = 1
@@ -152,6 +160,7 @@ export class MeasureTool {
     this.pending = null
     this.pendingExtent = null
     this.busy = true
+    const mode = this.distanceMode // as it was at the click
     // capture: setModel()/clearAll()/cancelPending() can run while the request
     // is in flight (each bumps session). A late result must neither be added to
     // the new model NOR reset the busy flag the active request now owns.
@@ -165,6 +174,7 @@ export class MeasureTool {
         toRef(pick),
         a.pick.point.toArray() as [number, number, number],
         pick.point.toArray() as [number, number, number],
+        mode,
       )
       if (this.modelId !== requestedModelId || this.session !== requestedSession) {
         this.viewer.disposeOverlayObject(a.marker)
@@ -172,6 +182,9 @@ export class MeasureTool {
       }
       // temporary first-click marker is replaced by the restored-from-data entry
       this.viewer.disposeOverlayObject(a.marker)
+      // this pair has no such distance (a plane has no centre, ...): said why, nothing listed
+      if (mode !== 'min' && res.unavailable) return `${DISTANCE_MODE_NAMES[mode]}は測れない — ${res.unavailable}`
+      const named = mode === 'min' ? '' : `${DISTANCE_MODE_NAMES[mode]} `
       const pa = res.pointA
       const pb = res.pointB
       const mid: [number, number, number] = [
@@ -180,14 +193,16 @@ export class MeasureTool {
         (pa[2] + pb[2]) / 2,
       ]
       const data: EntryData = {
-        text: `${this.describe(a.pick)} ↔ ${this.describe(pick)} : ${fmt(res.value)}`,
-        labelText: fmt(res.value),
+        text: `${this.describe(a.pick)} ↔ ${this.describe(pick)} : ${named}${fmt(res.value)}`,
+        labelText: `${named}${fmt(res.value)}`,
         labelPos: mid,
         markers: [a.pick.point.toArray() as [number, number, number], pick.point.toArray() as [number, number, number]],
         ...(res.value > 1e-12 ? { line: [pa, pb] as EntryData['line'] } : {}),
         ...(res.delta ? { delta: res.delta } : {}),
+        ...(mode === 'min' ? {} : { mode }),
       }
       this.addFromData(data)
+      if (mode !== 'min') return `${named}${fmt(res.value)}`
       // two flat things not parallel: their angle too, as an entry of its own
       if (res.angle !== undefined) {
         const [ma, mb] = data.markers!
@@ -336,8 +351,10 @@ export class MeasureTool {
     const p = this.pending
     if (!p) return ''
     const x = this.pendingExtent
-    if (!x) return `${this.describe(p.pick)} を選択 — 相手をクリックで 2 点目（Esc で取り消し）`
-    return `${this.describe(p.pick)} を選択（${extentText(x)}）— 相手をクリックで 2 点目、Enter で一覧へ（Esc で取り消し）`
+    // the second point measures another distance than the shortest: said so
+    const second = this.distanceMode === 'min' ? '2 点目' : `2 点目（${DISTANCE_MODE_NAMES[this.distanceMode]}）`
+    if (!x) return `${this.describe(p.pick)} を選択 — 相手をクリックで ${second}（Esc で取り消し）`
+    return `${this.describe(p.pick)} を選択（${extentText(x)}）— 相手をクリックで ${second}、Enter で一覧へ（Esc で取り消し）`
   }
 
   /**

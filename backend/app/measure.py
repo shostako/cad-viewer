@@ -18,6 +18,17 @@ to its end on B, along the axes. Between two flat things (planar faces,
 straight edges, one of each) that are not parallel, it also carries "angle":
 their angle in degrees, 0 to 90 (angle_between).
 
+A distance request's "mode" (default "min") asks for another distance
+between the same two entities, its answer shaped as the shortest's (value,
+pointA, pointB, delta; "mode" says which):
+- "centre": between their centres (centre_distance). A point for a vertex, a
+  circle, an ellipse, a sphere; an axis for a cylinder, a cone, a torus. Two
+  axes must be parallel (the distance between their lines).
+- "max": the largest distance between their points, for vertices and edges
+  (max_distance).
+A pair that has no such distance answers {"unavailable": why} instead (a plane
+has no centre, crossed axes, a face's largest distance), never a stand-in.
+
 A vertex (vertex_info) says its point.
 
 A face also says its boundary (face_info): "perimeter", the length of its
@@ -59,6 +70,7 @@ from OCP.GeomAbs import (
     GeomAbs_Cone,
     GeomAbs_CurveType,
     GeomAbs_Cylinder,
+    GeomAbs_Ellipse,
     GeomAbs_Line,
     GeomAbs_Plane,
     GeomAbs_Sphere,
@@ -66,7 +78,7 @@ from OCP.GeomAbs import (
     GeomAbs_Torus,
 )
 from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
-from OCP.gp import gp_Circ, gp_Cone, gp_Cylinder, gp_Pln, gp_Pnt, gp_Sphere, gp_Vec
+from OCP.gp import gp_Ax1, gp_Circ, gp_Cone, gp_Cylinder, gp_Pln, gp_Pnt, gp_Sphere, gp_Vec
 from OCP.GProp import GProp_GProps
 from OCP.ShapeAnalysis import ShapeAnalysis_CanonicalRecognition
 from OCP.BRepTools import BRepTools
@@ -98,6 +110,11 @@ RECOGNIZE_TOL = 1e-4
 CURVATURE_MIN = 1e-5
 # rad: a circle this short of a whole turn is still whole
 TURN_TOL = 1e-9
+# two axes count as parallel when the sine of their angle is at most this (a
+# micrometre over a metre); the centre distance of axes is that of parallel ones
+AXIS_PARALLEL_SIN = 1e-6
+# points along each edge where the farthest pair of two edges is first looked for
+MAX_SAMPLES = 64
 
 
 def _resolve(ref: dict[str, Any], meshes: list[PartMesh]) -> TopoDS_Shape:
@@ -128,13 +145,20 @@ def distance(
     meshes: list[PartMesh],
     near_a: list[float] | None = None,
     near_b: list[float] | None = None,
+    mode: str = "min",
 ) -> dict[str, Any]:
-    """Exact minimum distance between two entities (BRepExtrema).
+    """Exact minimum distance between two entities (BRepExtrema); with mode
+    "centre" the distance between their centres (centre_distance), with "max"
+    the largest distance between their points (max_distance).
 
     near_a / near_b (the clicked points, optional) choose the dimension line
     among equally short ones; the value is the same either way.
     """
     sa, sb = _resolve(a, meshes), _resolve(b, meshes)
+    if mode == "centre":
+        return centre_distance(sa, sb, near_a)
+    if mode == "max":
+        return max_distance(sa, sb)
     ext = BRepExtrema_DistShapeShape(sa, sb)
     if not ext.IsDone() or ext.NbSolution() < 1:
         raise MeasureError("distance computation failed")
@@ -160,6 +184,146 @@ def distance(
     if ang is not None and ang > ANGLE_MIN_DEG:
         out["angle"] = ang
     return out
+
+
+def _unavailable(mode: str, why: str) -> dict[str, Any]:
+    """a distance that this pair does not have: said why, nothing measured"""
+    return {"type": "distance", "mode": mode, "unavailable": why}
+
+
+def _answer(mode: str, pa: gp_Pnt, pb: gp_Pnt) -> dict[str, Any]:
+    return {
+        "type": "distance",
+        "mode": mode,
+        "value": pa.Distance(pb),
+        "pointA": _xyz(pa),
+        "pointB": _xyz(pb),
+        "delta": [pb.X() - pa.X(), pb.Y() - pa.Y(), pb.Z() - pa.Z()],
+    }
+
+
+def _centre(shape: TopoDS_Shape) -> tuple[str, Any]:
+    """What a shape is centred on: ("point", gp_Pnt) for a vertex, a circle or
+    an ellipse, a sphere; ("axis", gp_Ax1) for a cylinder, a cone or a torus
+    (B-spline ones recognised as such too); ("none", why) for the rest."""
+    kind = shape.ShapeType()
+    if kind == TopAbs_VERTEX:
+        return "point", BRep_Tool.Pnt_s(TopoDS.Vertex_s(shape))
+    if kind == TopAbs_EDGE:
+        edge = TopoDS.Edge_s(shape)
+        curve = BRepAdaptor_Curve(edge)
+        ctype = curve.GetType()
+        if ctype == GeomAbs_Circle:
+            return "point", curve.Circle().Location()
+        if ctype == GeomAbs_Ellipse:
+            return "point", curve.Ellipse().Location()
+        if ctype in (GeomAbs_BSplineCurve, GeomAbs_BezierCurve):
+            circ = gp_Circ()
+            if ShapeAnalysis_CanonicalRecognition(edge).IsCircle(RECOGNIZE_TOL, circ):
+                return "point", circ.Location()
+        if ctype == GeomAbs_Line:
+            return "none", "直線の稜線に中心はない"
+        return "none", "この稜線に中心はない（円でも楕円でもない）"
+    face = TopoDS.Face_s(shape)
+    surf = BRepAdaptor_Surface(face)
+    stype = surf.GetType()
+    name, geom = {
+        GeomAbs_Cylinder: ("cylinder", surf.Cylinder),
+        GeomAbs_Cone: ("cone", surf.Cone),
+        GeomAbs_Torus: ("torus", surf.Torus),
+        GeomAbs_Sphere: ("sphere", surf.Sphere),
+        GeomAbs_Plane: ("plane", None),
+    }.get(stype, (None, None))
+    geom = geom() if geom else None
+    if name is None and stype in (GeomAbs_BSplineSurface, GeomAbs_BezierSurface):
+        name, geom = _recognize(face) or (None, None)
+    if name in ("cylinder", "cone", "torus"):
+        return "axis", geom.Axis()
+    if name == "sphere":
+        return "point", geom.Location()
+    if name == "plane":
+        return "none", "平面に中心はない"
+    return "none", "この面に中心はない（円筒・円錐・球・トーラスでない）"
+
+
+def _foot(p: gp_Pnt, ax: gp_Ax1) -> gp_Pnt:
+    """the point of the axis's line nearest to p"""
+    d = gp_Vec(ax.Direction())
+    return ax.Location().Translated(d.Multiplied(gp_Vec(ax.Location(), p).Dot(d)))
+
+
+def centre_distance(sa: TopoDS_Shape, sb: TopoDS_Shape, near_a=None) -> dict[str, Any]:
+    """The distance between the centres of two entities (_centre): two points,
+    a point and an axis (to the axis's line), two parallel axes (between their
+    lines: the line drawn across at the click on A). An entity without a centre,
+    or axes that are not parallel, have none: said why."""
+    (ka, ca), (kb, cb) = _centre(sa), _centre(sb)
+    for k, c, which in ((ka, ca, "1 点目"), (kb, cb, "2 点目")):
+        if k == "none":
+            return _unavailable("centre", f"{which}: {c}")
+    if ka == "point" and kb == "point":
+        pa, pb = ca, cb
+    elif ka == "point":
+        pa, pb = ca, _foot(ca, cb)
+    elif kb == "point":
+        pa, pb = _foot(cb, ca), cb
+    else:
+        sin = gp_Vec(ca.Direction()).Crossed(gp_Vec(cb.Direction())).Magnitude()
+        if sin > AXIS_PARALLEL_SIN:
+            return _unavailable("centre", f"軸が平行でない（{math.degrees(math.asin(min(1.0, sin))):.1f}°）")
+        pa = _foot(gp_Pnt(*near_a) if near_a is not None else ca.Location(), ca)
+        pb = _foot(pa, cb)
+    return _answer("centre", pa, pb)
+
+
+def _farthest_on(curve: BRepAdaptor_Curve, p: gp_Pnt) -> gp_Pnt:
+    """the point of the curve farthest from p, exactly: its ends or a point
+    where the distance is extreme (Extrema_ExtPC gives them all)"""
+    cands = [curve.Value(curve.FirstParameter()), curve.Value(curve.LastParameter())]
+    ext = Extrema_ExtPC(p, curve)
+    if ext.IsDone():
+        cands += [ext.Point(i).Value() for i in range(1, ext.NbExt() + 1)]
+    return max(cands, key=lambda q: q.SquareDistance(p))
+
+
+def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
+    """The largest distance between a point of A and a point of B, for vertices
+    and edges (a face's largest needs a definition first: said so).
+
+    A vertex and an edge: the farthest point of the edge, exactly. Two edges:
+    the farthest of MAX_SAMPLES x MAX_SAMPLES points along them, then from each
+    end in turn the exactly farthest point of the other edge, until it grows no
+    more (lines end at their ends, circles at their far points)."""
+    kinds = []
+    for shape, which in ((sa, "1 点目"), (sb, "2 点目")):
+        kind = shape.ShapeType()
+        if kind not in (TopAbs_VERTEX, TopAbs_EDGE):
+            return _unavailable("max", f"{which}: 面の最大の距離は出さない（頂点か稜線を選ぶ）")
+        kinds.append(kind)
+    if kinds == [TopAbs_VERTEX, TopAbs_VERTEX]:
+        return _answer("max", BRep_Tool.Pnt_s(TopoDS.Vertex_s(sa)), BRep_Tool.Pnt_s(TopoDS.Vertex_s(sb)))
+    if kinds[0] == TopAbs_VERTEX:
+        pa = BRep_Tool.Pnt_s(TopoDS.Vertex_s(sa))
+        return _answer("max", pa, _farthest_on(BRepAdaptor_Curve(TopoDS.Edge_s(sb)), pa))
+    if kinds[1] == TopAbs_VERTEX:
+        pb = BRep_Tool.Pnt_s(TopoDS.Vertex_s(sb))
+        return _answer("max", _farthest_on(BRepAdaptor_Curve(TopoDS.Edge_s(sa)), pb), pb)
+    ca, cb = BRepAdaptor_Curve(TopoDS.Edge_s(sa)), BRepAdaptor_Curve(TopoDS.Edge_s(sb))
+
+    def along(c: BRepAdaptor_Curve) -> list[gp_Pnt]:
+        u0, u1 = c.FirstParameter(), c.LastParameter()
+        return [c.Value(u0 + (u1 - u0) * i / (MAX_SAMPLES - 1)) for i in range(MAX_SAMPLES)]
+
+    pa, pb = max(((p, q) for p in along(ca) for q in along(cb)), key=lambda pq: pq[0].SquareDistance(pq[1]))
+    for _ in range(100):
+        qb = _farthest_on(cb, pa)
+        qa = _farthest_on(ca, qb)
+        gain = qa.Distance(qb) - pa.Distance(pb)
+        if gain >= 0:
+            pa, pb = qa, qb  # the exact points, also when they gained nothing
+        if gain <= 1e-12:
+            break
+    return _answer("max", pa, pb)
 
 
 def _flat(shape: TopoDS_Shape) -> tuple[str, gp_Vec] | None:
@@ -472,7 +636,12 @@ def _near(value: Any, name: str = "near") -> tuple[float, float, float] | None:
 def run(request: dict[str, Any], meshes: list[PartMesh]) -> dict[str, Any]:
     mtype = request.get("type")
     if mtype == "distance":
-        return distance(request["a"], request["b"], meshes, _near(request.get("nearA"), "nearA"), _near(request.get("nearB"), "nearB"))
+        mode = request.get("mode", "min")
+        if mode not in ("min", "centre", "max"):
+            raise MeasureError("mode must be min, centre or max")
+        return distance(
+            request["a"], request["b"], meshes, _near(request.get("nearA"), "nearA"), _near(request.get("nearB"), "nearB"), mode
+        )
     if mtype == "edge_info":
         return edge_info(request["ref"], meshes, _near(request.get("near")))
     if mtype == "face_info":
