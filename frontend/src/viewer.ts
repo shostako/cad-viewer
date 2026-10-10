@@ -357,6 +357,54 @@ export class Viewer {
     })
   }
 
+  /**
+   * The measurements' labels never cover one another: where two would, the
+   * later one (in the order they were made) moves down, below the one it
+   * would cover (above them instead, when below would leave the view). Kept
+   * in that order, a label does not jump about while the view turns. Only the measure layer's labels (dimensions, notes); the
+   * saved image reads their places from the page, so it shows them so too.
+   */
+  private spreadLabels(): void {
+    const labels: HTMLElement[] = []
+    for (const o of this.overlay.children) {
+      if (o instanceof CSS2DObject && o.element.style.display !== 'none') labels.push(o.element)
+    }
+    if (labels.length === 0) return
+    for (const el of labels) el.style.marginTop = ''
+    if (labels.length === 1) return
+    const GAP = 2
+    const view = this.renderer.domElement.getBoundingClientRect()
+    const placed: DOMRect[] = []
+    const shifts: number[] = []
+    for (const el of labels) {
+      const r = el.getBoundingClientRect()
+      const touches = (dy: number): DOMRect | undefined =>
+        placed.find(
+          (p) => r.left < p.right + GAP && r.right > p.left - GAP && r.top + dy < p.bottom + GAP && r.bottom + dy > p.top - GAP,
+        )
+      /** move by steps past the placed labels it touches, down or up, until it touches none */
+      const clearOf = (down: boolean): number => {
+        let dy = 0
+        for (let p = touches(dy); p; p = touches(dy)) dy = down ? p.bottom + GAP - r.top : p.top - GAP - r.bottom
+        return dy
+      }
+      let dy = 0
+      if (r.width > 0) {
+        dy = clearOf(true)
+        // pushed below the view (an anchor near its bottom): above the labels instead, if that fits
+        if (r.bottom + dy > view.bottom) {
+          const up = clearOf(false)
+          if (r.top + up >= view.top) dy = up
+        }
+        placed.push(new DOMRect(r.left, r.top + dy, r.width, r.height))
+      }
+      shifts.push(dy)
+    }
+    labels.forEach((el, i) => {
+      if (shifts[i] !== 0) el.style.marginTop = `${shifts[i]}px`
+    })
+  }
+
   /** frames go on for at least ms from now (something changed, or is about to) */
   wake(ms = AWAKE_MS): void {
     this.awakeUntil = Math.max(this.awakeUntil, performance.now() + ms)
@@ -367,6 +415,7 @@ export class Viewer {
     this.prepareCamera()
     this.renderer.render(this.scene, this.camera)
     this.labelRenderer.render(this.scene, this.camera)
+    this.spreadLabels()
     this.lastDrawn = now
     this.framesDrawn++
     for (const fn of this.frameListeners) fn()
