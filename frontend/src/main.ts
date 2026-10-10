@@ -1220,6 +1220,7 @@ function setPanelsHidden(hidden: boolean): void {
   // a view the user has not moved since its fit is fitted again into the
   // area the panels now leave (the same parts: この部品へ寄る's stay framed);
   // a moved view is left as it is
+  viewer.settleView() // a fit still on its way counts as made
   const refit = !is2D && contentShown && viewer.atLastFit
   // a tree row the keyboard is on would keep its part highlighted, unseen
   if (hidden) partTree.releaseFocus()
@@ -1800,6 +1801,7 @@ viewport.addEventListener('pointerup', (e) => {
 viewport.addEventListener('dblclick', (e) => {
   if (state.mode !== 'なし' || e.button !== 0 || Math.max(...clickTravels) > DRAG_PX) return
   const ndc = toNdc(e.clientX, e.clientY)
+  viewer.settleChange() // a preset or a fit on its way: from where it goes
   viewer.prepareCamera()
   const p = picker.surfacePoint(ndc)
   if (p) viewer.orbitAround(p)
@@ -2052,6 +2054,8 @@ testHooks.__cadRenderInfo = () => {
   return { geometries: info.memory.geometries, programs: info.programs?.length ?? 0, calls: info.render.calls }
 }
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
+// presets and fits move smoothly for the user; off under automation unless turned on here
+testHooks.__cadViewMotion = (on: boolean) => viewer.setViewMotion(on)
 testHooks.__cadStallProperties = (ms: number) => __stallNextProperties(ms)
 // how long a load waits for the 体積・重量 values before its fit (no argument: the app's own)
 testHooks.__cadPropsWait = (ms?: number) => {
