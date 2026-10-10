@@ -37,6 +37,7 @@ from OCP.Quantity import Quantity_Color, Quantity_TOC_sRGB
 from OCP.ShapeFix import ShapeFix_Solid
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
+from OCP.TColStd import TColStd_SequenceOfAsciiString
 from OCP.TDataStd import TDataStd_Name
 from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.TDocStd import TDocStd_Document
@@ -120,7 +121,52 @@ def _label_name(label: TDF_Label) -> str:
     return ""
 
 
-def _read_document(data: bytes, filename: str, tmpdir: str) -> TDocStd_Document:
+# a file's length unit as its reader names it -> the short name shown (OCCT reads every unit into mm)
+_STEP_UNITS = {
+    "millimetre": "mm",
+    "millimeter": "mm",
+    "centimetre": "cm",
+    "centimeter": "cm",
+    "metre": "m",
+    "meter": "m",
+    "micrometre": "µm",
+    "micrometer": "µm",
+    "inch": "in",
+    "foot": "ft",
+    "kilometre": "km",
+    "mil": "mil",
+}
+# IGES's global section, unit flag (field 14): 3 means "the name in field 15"
+_IGES_UNITS = {1: "in", 2: "mm", 4: "ft", 5: "mi", 6: "m", 7: "km", 8: "mil", 9: "µm", 10: "cm", 11: "µin"}
+
+
+def _step_unit(reader: STEPCAFControl_Reader) -> str | None:
+    """the length unit the STEP file is written in (its roots'; several: joined)"""
+    lengths, angles, solid = TColStd_SequenceOfAsciiString(), TColStd_SequenceOfAsciiString(), TColStd_SequenceOfAsciiString()
+    reader.ChangeReader().FileUnits(lengths, angles, solid)
+    names = []
+    for i in range(1, lengths.Length() + 1):
+        raw = lengths.Value(i).ToCString().strip()
+        name = _STEP_UNITS.get(raw.lower(), raw)
+        if name and name not in names:
+            names.append(name)
+    return "・".join(names) or None
+
+
+def _iges_unit(reader: IGESCAFControl_Reader) -> str | None:
+    """the length unit the IGES file is written in (its global section)"""
+    gs = reader.IGESModel().GlobalSection()
+    flag = gs.UnitFlag()
+    if flag in _IGES_UNITS:
+        return _IGES_UNITS[flag]
+    name = gs.UnitName()
+    text = name.ToCString().strip() if name is not None else ""
+    return text or None
+
+
+def _read_document(data: bytes, filename: str, tmpdir: str, info: dict | None = None) -> TDocStd_Document:
+    """The file as an XCAF document. info (optional) gets "fileUnit": the
+    length unit the file is written in (OCCT reads it into mm), or None."""
     import os
 
     ext = filename.rsplit(".", 1)[-1].lower()
@@ -137,6 +183,8 @@ def _read_document(data: bytes, filename: str, tmpdir: str) -> TDocStd_Document:
             raise BrepLoadError("STEP read failed (file corrupt or unsupported)")
         if not reader.Transfer(doc):
             raise BrepLoadError("STEP transfer failed")
+        if info is not None:
+            info["fileUnit"] = _safe_unit(_step_unit, reader)
     elif ext in ("iges", "igs"):
         reader = IGESCAFControl_Reader()
         reader.SetColorMode(True)
@@ -145,9 +193,20 @@ def _read_document(data: bytes, filename: str, tmpdir: str) -> TDocStd_Document:
             raise BrepLoadError("IGES read failed (file corrupt or unsupported)")
         if not reader.Transfer(doc):
             raise BrepLoadError("IGES transfer failed")
+        if info is not None:
+            info["fileUnit"] = _safe_unit(_iges_unit, reader)
     else:
         raise BrepLoadError(f"not a B-rep format: .{ext}")
     return doc
+
+
+def _safe_unit(read, reader) -> str | None:
+    """the file's unit, or None when it cannot be told (it only says what the file was in)"""
+    try:
+        return read(reader)
+    except Exception:
+        _log.warning("could not read the file's length unit", exc_info=True)
+        return None
 
 
 def extract_parts(doc: TDocStd_Document) -> tuple[list[Part], TreeNode]:
@@ -623,12 +682,13 @@ def _edge_polyline(edge, ancestors: TopTools_IndexedDataMapOfShapeListOfShape) -
 # ---------------------------------------------------------------- top level
 
 
-def load_brep(data: bytes, filename: str) -> tuple[list[PartMesh], TreeNode, float]:
-    """Full pipeline: bytes -> located parts -> tessellated meshes + tree."""
+def load_brep(data: bytes, filename: str, info: dict | None = None) -> tuple[list[PartMesh], TreeNode, float]:
+    """Full pipeline: bytes -> located parts -> tessellated meshes + tree.
+    info (optional) gets what the file says of itself: "fileUnit"."""
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmpdir:
-        doc = _read_document(data, filename, tmpdir)
+        doc = _read_document(data, filename, tmpdir, info)
     parts, tree = extract_parts(doc)
     parts, tree = merge_loose_shapes(parts, tree)
     defl = combined_deflection(parts)

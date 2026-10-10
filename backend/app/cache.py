@@ -15,7 +15,7 @@ from typing import Any
 CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
 # bump when the binary protocol OR the tessellated output changes: the lazy
 # B-rep re-parse must number parts / faces exactly like the cached mesh
-CACHE_VERSION = 3  # 3: loose IGES faces are sewn into solids
+CACHE_VERSION = 4  # 3: loose IGES faces are sewn into solids; 4: the meta says the file's unit
 
 
 def cache_key(data: bytes, params: str) -> str:
