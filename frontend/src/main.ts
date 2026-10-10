@@ -16,7 +16,6 @@ import {
   __stallNextProjection,
   ProjectionSuperseded,
   type Axis as PullAxis,
-  type ModelMeta,
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
@@ -33,6 +32,7 @@ import { Picker, type FaceHit, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { PartTree } from './tree'
@@ -157,7 +157,8 @@ function show2D(on: boolean): void {
   viewport2d.classList.toggle('hidden', !on)
   viewport.classList.toggle('hidden', on)
   treePanel.classList.toggle('hidden', on || !partTree.hasRows)
-  for (const f of folders3D) f.show(!on)
+  // 表示 always in 3D; the model's folders only while the panel is for a model (applyEmptyPanel)
+  for (const f of folders3D) f.show(!on && (f === viewFolder || modelPanel))
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
@@ -170,6 +171,9 @@ function show2D(on: boolean): void {
 function setContentShown(on: boolean, fileName = ''): void {
   contentShown = on
   shownFileName = on ? fileName : ''
+  // a model or a drawing on screen brings the model's controls (showEmpty
+  // hides them again; a load that replaces a model keeps them meanwhile)
+  if (on) applyEmptyPanel(false)
   // the tab (and the taskbar) names the file: several windows can be told apart
   document.title = shownFileName ? `${shownFileName} — cad-viewer` : 'cad-viewer'
   updateTriad()
@@ -194,7 +198,27 @@ function updateTriad(): void {
 function showEmpty(on: boolean): void {
   emptyHint.classList.toggle('hidden', !on)
   applyFolders(on)
+  // the empty screen hides the model's controls; they come back with content
+  // (setContentShown), not with the start of a load: a first load, or one
+  // that fails, has nothing for them to work on
+  if (on) applyEmptyPanel(true)
   placeCentreCards()
+}
+
+/** the panel shows the model's controls (applyEmptyPanel; show2D keeps to it) */
+let modelPanel = false
+
+/**
+ * Before a file is open the panel holds only what can be set ahead: 表示
+ * (kept for the next file). The mode, the measurements, the image and the
+ * folders that work on a model (断面, 肉厚, 抜き勾配, 体積・重量) come with
+ * the content on screen (setContentShown), not with the start of its load;
+ * a drawing keeps its 3D folders hidden (show2D).
+ */
+function applyEmptyPanel(empty: boolean): void {
+  modelPanel = !empty
+  for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
+  for (const f of [sectionFolder, thicknessFolder, draftFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -269,7 +293,7 @@ const modeCtl = gui
     refreshToolbar()
   })
 const modeSelect = modeCtl.domElement.querySelector('select')!
-gui.add(actions, 'clearMeasure').name('計測クリア')
+const clearCtl = gui.add(actions, 'clearMeasure').name('計測クリア')
 
 // ---- save the view as a PNG
 // The background choice survives a reload, like the view preferences.
@@ -290,7 +314,7 @@ function saveExportPrefs(): void {
 }
 // a select, not a checkbox: E2E scripts click the first checkbox of the panel.
 // Labelled 画像の背景 so nobody takes it for the screen's own background.
-gui
+const exportBgCtl = gui
   .add(exportPrefs, 'background', { 画面のまま: 'screen', 白: 'white' })
   .name('画像の背景')
   .onChange(saveExportPrefs)
@@ -584,7 +608,7 @@ sectionFolder
 // line (#hud-info) shows the model summary; the heatmap writes its own line,
 // which goes back to the summary when the heatmap goes away.
 
-/** the status line of the loaded model (name, parts, tris, size) */
+/** the status line of the loaded model (summary.ts: name, parts, triangles, size) */
 let modelSummary = ''
 /** the last 肉厚 line updateThickness wrote; put back to modelSummary when the heatmap goes away */
 let thicknessHud = ''
@@ -1431,6 +1455,7 @@ folderDefaults = new Map(
   [viewFolder, presetFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder].map((f) => [f, !f._closed]),
 )
 applyFolders(!contentShown)
+applyEmptyPanel(!contentShown)
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: unknown }
 
@@ -1911,11 +1936,6 @@ function showTree(model: ModelData): void {
   }
 }
 
-function fmtBBox(meta: ModelMeta): string {
-  const d = meta.bbox.max.map((v, i) => v - meta.bbox.min[i])
-  return d.map((v) => v.toFixed(1)).join(' × ')
-}
-
 // generation token: a newer loadFile call supersedes older in-flight ones
 let loadGen = 0
 
@@ -1990,10 +2010,7 @@ async function loadFile(file: File): Promise<void> {
       treePanel.classList.add('hidden')
 
       if (meta.format === 'drawing') {
-        const d = meta.bbox2d
-          ? meta.bbox2d.max.map((v, i) => (v - meta.bbox2d!.min[i]).toFixed(1)).join(' × ')
-          : '?'
-        modelSummary = `${meta.name} — 2D図面, ${d} (計測モードで端点/中心スナップ)`
+        modelSummary = drawingSummaryText(meta)
         const svg = await fetchDrawingSvg(meta.id)
         if (gen !== loadGen) return
         sectionTool.enabled = false
@@ -2010,10 +2027,7 @@ async function loadFile(file: File): Promise<void> {
       show2D(false)
       // known from the upload already: the heatmap / draft can restore it at any
       // point of the load
-      const partInfo = meta.partCount > 1 ? `${meta.partCount} parts, ` : ''
-      modelSummary =
-        `${meta.name} — ${partInfo}${meta.triangleCount.toLocaleString()} tris, ` +
-        `サイズ ${fmtBBox(meta)} (単位はファイル依存)`
+      modelSummary = modelSummaryText(meta)
       // The mesh, the sidecar and the 体積・重量 values at once. The restored
       // measurement list and the values panel are panels the one fit of this
       // load must keep clear of, so both are wanted before the fit. (The
@@ -2085,9 +2099,12 @@ async function loadFile(file: File): Promise<void> {
     const detail = e instanceof Error ? e.message : String(e)
     loadCard.fail(file.name, reason, detail)
     // Nothing on screen (the old model went before the failure, or there was
-    // none): the plain empty screen, as at start-up. The failed card has
-    // 別のファイルを選ぶ; closing it brings back the open card.
-    if (!contentShown) show2D(false)
+    // none): the plain empty screen, as at start-up, its panel too (表示 only).
+    // The failed card has 別のファイルを選ぶ; closing it brings back the open card.
+    if (!contentShown) {
+      applyEmptyPanel(true)
+      show2D(false)
+    }
   }
 }
 

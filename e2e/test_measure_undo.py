@@ -65,7 +65,7 @@ with sync_playwright() as p:
     def mode():
         return ctl("モード").locator("select").input_value()
 
-    def load(path, wait_text="tris"):
+    def load(path, wait_text="三角形"):
         page.set_input_files("#file-input", path)
         page.wait_for_function(
             "([w, n]) => { const t = document.querySelector('#hud-info').textContent;"
@@ -293,7 +293,7 @@ with sync_playwright() as p:
     page.unroute("**/api/models")
     held[0].continue_()
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')"
+        "document.querySelector('#hud-info').textContent.includes('三角形')"
         " && document.querySelector('#hud-info').textContent.includes('ribbed_plate.stl')",
         timeout=60000,
     )
@@ -319,7 +319,7 @@ with sync_playwright() as p:
     print("7 model switch ok")
 
     # ---- 8. 2D: Esc drops the first snap point
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     set_mode("計測")
 
     def svg_click(dxf_x, dxf_y):
@@ -388,7 +388,7 @@ with sync_playwright() as p:
     page.wait_for_function("document.querySelector('#undo-toast').classList.contains('hidden')", timeout=5000)
     # well inside the toast's time: the reload ended the undo, not its timer
     assert time.monotonic() - t0 < UNDO_S / 2, ("9b", time.monotonic() - t0)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D図面')", timeout=30000)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D 図面')", timeout=30000)
     page.keyboard.press("Control+z")
     page.wait_for_timeout(300)
     assert dims() == [], ("9b the measurements of the drawing before the reload came back", dims())

@@ -245,7 +245,7 @@ try:
         page.set_input_files("#file-input", STEP)
         page.wait_for_function(
             "(() => { const t = document.querySelector('#hud-info').textContent;"
-            " return t.includes('tris') && t.includes('mini_mold.step') })()",
+            " return t.includes('三角形') && t.includes('mini_mold.step') })()",
             timeout=60000,
         )
         assert save_btn.is_enabled(), "a model is open: the button works"
@@ -479,7 +479,7 @@ try:
         # ---- (c) 2D drawing ---------------------------------------------------------
         page.set_input_files("#file-input", DXF)
         page.wait_for_function(
-            "document.querySelector('#hud-info').textContent.includes('2D図面')", timeout=60000
+            "document.querySelector('#hud-info').textContent.includes('2D 図面')", timeout=60000
         )
         assert save_btn.is_enabled()
 
@@ -585,7 +585,7 @@ try:
         page.wait_for_function(
             "document.querySelector('#hud-info').textContent.includes('colours_drawing.dxf')", timeout=60000
         )
-        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D図面')")
+        page.wait_for_function("document.querySelector('#hud-info').textContent.includes('2D 図面')")
         settle()
         set_background("白")
         CSIZE = (100, 50)

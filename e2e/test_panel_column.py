@@ -154,7 +154,7 @@ with sync_playwright() as p:
     settle()
 
     page.set_input_files("#file-input", STEP)
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
     page.wait_for_function("!document.querySelector('#props-panel').classList.contains('hidden')"
                            " && document.querySelector('#props-total') !== null", timeout=60000)
     settle(800)

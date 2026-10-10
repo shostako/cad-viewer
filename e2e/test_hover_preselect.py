@@ -757,7 +757,7 @@ def run(page, nav, infos):
     print("(p) ok")
 
     # ================= (q) a 2D drawing: no highlight, no label, its own lines =======
-    nav.load(DXF, wait_text="2D図面")
+    nav.load(DXF, wait_text="2D 図面")
     drawing = hud()
     set_mode("計測")
     assert hud() == drawing, ("a drawing keeps its own status line", hud())
@@ -772,7 +772,7 @@ def run(page, nav, infos):
     nav.load(STEP)
     line = hud()
     print("(r) loaded in 計測:", line)
-    assert "tris" in line and line.endswith(" — " + MEASURE_HINT), line
+    assert "三角形" in line and line.endswith(" — " + MEASURE_HINT), line
     set_mode("なし")
     assert hud() == line[: -len(" — " + MEASURE_HINT)], ("(r) back to the summary", hud())
     set_mode("注記")

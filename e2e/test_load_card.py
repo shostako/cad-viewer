@@ -129,7 +129,7 @@ with sync_playwright() as p:
     assert c["moving"], "1 a moving bar after the upload"
     page.unroute("**/mesh.bin")
     meshes[0].continue_()
-    wait_until("document.querySelector('#hud-info').textContent.includes('tris')")
+    wait_until("document.querySelector('#hud-info').textContent.includes('三角形')")
     assert not card()["shown"], "1 the card goes with the model on screen"
     assert not visible("#empty-hint")
 
@@ -144,7 +144,7 @@ with sync_playwright() as p:
     page.unroute("**/mesh.bin")
     meshes[0].continue_()
     wait_until(
-        "document.querySelector('#hud-info').textContent.includes('tris')"
+        "document.querySelector('#hud-info').textContent.includes('三角形')"
         " && document.querySelector('#hud-info').textContent.includes('ribbed_plate.stl')"
     )
     assert not card()["shown"]
@@ -182,7 +182,7 @@ with sync_playwright() as p:
         page.unroute("**/mesh.bin")
         meshes[0].continue_()
         wait_until(
-            "document.querySelector('#hud-info').textContent.includes('tris')"
+            "document.querySelector('#hud-info').textContent.includes('三角形')"
             " && document.querySelector('#hud-info').textContent.includes('ribbed_plate.stl')"
         )
         assert not card()["shown"]
@@ -272,7 +272,7 @@ with sync_playwright() as p:
         page.click("#load-another")
     fc.value.set_files(STEP)
     wait_until(
-        "document.querySelector('#hud-info').textContent.includes('tris')"
+        "document.querySelector('#hud-info').textContent.includes('三角形')"
         " && document.querySelector('#hud-info').textContent.includes('mini_mold.step')"
     )
     assert not card()["shown"], "5 the next load's success clears the failed card"
@@ -303,7 +303,7 @@ with sync_playwright() as p:
     assert not centred_left_of_panel("#load-card") and above_panel("#load-card"), "6 the loading card under the panel"
     page.unroute("**/mesh.bin")
     meshes[0].continue_()
-    wait_until("document.querySelector('#hud-info').textContent.includes('tris')")
+    wait_until("document.querySelector('#hud-info').textContent.includes('三角形')")
     page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
     assert visible("#empty-hint") and not centred_left_of_panel("#empty-hint")

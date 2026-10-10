@@ -21,7 +21,7 @@ with sync_playwright() as p:
 
     page.set_input_files("#file-input", STL)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')",
+        "document.querySelector('#hud-info').textContent.includes('三角形')",
         timeout=15000,
     )
     page.wait_for_timeout(800)  # let camera/grid settle & render
@@ -29,7 +29,7 @@ with sync_playwright() as p:
     print("HUD:", hud)
     page.screenshot(path="/tmp/cad_viewer_loaded.png")
 
-    assert "304 tris" in hud, f"unexpected HUD: {hud}"
+    assert "304 三角形" in hud, f"unexpected HUD: {hud}"
     assert "80.0 × 50.0 × 12.0" in hud, f"unexpected bbox: {hud}"
     if errors:
         print("PAGE ERRORS:", errors)

@@ -23,7 +23,7 @@ NOTE = f"分離テスト{int(time.time())}"
 def load(page, path):
     page.set_input_files("#file-input", path)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000
+        "document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000
     )
     page.wait_for_timeout(600)
 

@@ -94,7 +94,7 @@ with nav_session() as n:
     with page.expect_file_chooser() as fc:
         btn("open").click()
     fc.value.set_files(n.paths["step"])
-    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('tris')", timeout=60000)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
     n.settle()
     assert enabled() == ACTIONS and pressed() == ["mode-none"], (enabled(), pressed())
     assert page.title() == "mini_mold.step — cad-viewer", ("2 the tab names the file", page.title())
@@ -197,7 +197,7 @@ with nav_session() as n:
     gui_common.set_mode(page, "なし")
 
     # ---- 10. a drawing: no 注記, 断面 or 表示スタイル; N S W do nothing, M measures
-    n.load(DXF, wait_text="2D図面")
+    n.load(DXF, wait_text="2D 図面")
     assert page.title() == "plate_drawing.dxf — cad-viewer", page.title()
     assert enabled() == ["open", "fit", "mode-none", "mode-measure", "png", "help"], enabled()
     before = select.input_value()

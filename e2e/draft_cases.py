@@ -294,14 +294,14 @@ def run(parts: str) -> None:
 
             def summary_line():
                 t = hud()
-                assert "tris" in t and "肉厚" not in t and "エラー" not in t, ("status line", t)
+                assert "三角形" in t and "肉厚" not in t and "エラー" not in t, ("status line", t)
 
             if "a" in parts:
                 # ================= (a) mini_mold ==========================================
-                # a0. nothing to colour on the empty screen: the box snaps back
-                open_folder("抜き勾配")
-                toggle("色分け", True)
-                assert not checked("色分け"), "a0 ticked on the empty screen"
+                # a0. nothing to colour on the empty screen: the folder is not there
+                # (the panel holds 表示 only until a file is open, issue #47 item 3)
+                title = page.locator(".lil-gui .lil-title", has_text=re.compile("^抜き勾配$")).first
+                assert title.count() == 1 and not title.is_visible(), "a0 抜き勾配 on the empty screen"
                 assert not legend_shown(), "a0 legend over an empty scene"
 
                 nav.load(STEP, props="live")
@@ -462,9 +462,9 @@ def run(parts: str) -> None:
                 expect({"TOP": TOP}, {"TOP": "ok"}, "a9 +Z")
 
             if "b" in parts:
-                open_folder("抜き勾配")  # also when (a) did not run
                 # ================= (b) frustum with 2 deg walls ===========================
                 nav.load(FRUSTUM, props="live")
+                open_folder("抜き勾配")  # also when (a) did not run (the empty screen has no such folder)
                 assert not checked("色分け"), "a new model starts uncoloured"
                 assert not legend_shown()
                 for p in F_PTS.values():
@@ -643,9 +643,9 @@ def run(parts: str) -> None:
                 assert calls() == plain["陰影＋稜線"], "b8 the part mesh is drawn again"
 
             if "c" in parts:  # (c), (d) and (e) build on each other
-                open_folder("抜き勾配")
                 # ================= (c) thickness heatmap: one at a time ===================
                 nav.load(STEP, props="live")
+                open_folder("抜き勾配")  # the empty screen has no such folder
                 open_folder("肉厚")
                 on_face(TOP)
                 B_TOP = colours({"TOP": TOP})["TOP"]
@@ -775,7 +775,7 @@ def run(parts: str) -> None:
 
                 # ================= (d) drawing, reload reset ==============================
                 toggle("色分け", True)
-                nav.load(DXF, wait_text="2D図面", props="live")  # no hold left armed for the direct load in d2
+                nav.load(DXF, wait_text="2D 図面", props="live")  # no hold left armed for the direct load in d2
                 title = page.locator(".lil-gui .lil-title", has_text=re.compile("^抜き勾配$")).first
                 assert not title.is_visible(), "the folder must be hidden on a drawing"
                 assert not legend_shown()
@@ -797,7 +797,7 @@ def run(parts: str) -> None:
                 held_mesh[0].continue_()
                 page.unroute("**/mesh.bin")
                 page.wait_for_function(
-                    "document.querySelector('#hud-info').textContent.includes('tris')"
+                    "document.querySelector('#hud-info').textContent.includes('三角形')"
                     " && document.querySelector('#hud-info').textContent.includes('mini_mold.step')",
                     timeout=60000,
                 )
@@ -812,6 +812,8 @@ def run(parts: str) -> None:
                 set_required(2.5)
                 page.reload()
                 page.wait_for_load_state("networkidle")
+                # the empty screen has no 抜き勾配: a model brings it, with the remembered settings
+                nav.load(STEP, props="live")
                 open_folder("抜き勾配")
                 assert dir_text() == "−Z", dir_text()
                 assert float(ctl("必要な勾配").locator("input").input_value()) == 2.5
@@ -820,6 +822,7 @@ def run(parts: str) -> None:
                 page.evaluate(f"localStorage.setItem('{DRAFT_KEY}', JSON.stringify({{dir: 'bogus', required: 99}}))")
                 page.reload()
                 page.wait_for_load_state("networkidle")
+                nav.load(STEP, props="live")
                 assert dir_text() == "+Z", dir_text()
                 assert float(ctl("必要な勾配").locator("input").input_value()) == 1.0
 

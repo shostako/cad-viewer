@@ -27,7 +27,7 @@ NOTE = f"inflight検証{int(time.time())}"
 def load(page):
     page.set_input_files("#file-input", STEP)
     page.wait_for_function(
-        "document.querySelector('#hud-info').textContent.includes('tris')",
+        "document.querySelector('#hud-info').textContent.includes('三角形')",
         timeout=15000,
     )
 

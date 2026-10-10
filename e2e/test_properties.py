@@ -111,7 +111,7 @@ try:
         def folder(name):
             return page.locator(".lil-gui").filter(has=page.locator(":scope > .lil-title", has_text=name)).first
 
-        def load(path, wait_text="tris"):
+        def load(path, wait_text="三角形"):
             page.set_input_files("#file-input", path)
             page.wait_for_function(
                 "([w, n]) => { const t = document.querySelector('#hud-info').textContent;"
@@ -301,7 +301,7 @@ try:
         # 9. drawings: no panel, no request
         requests = []
         page.on("request", lambda r: requests.append(r.url) if "/properties" in r.url else None)
-        load(DXF, wait_text="2D図面")
+        load(DXF, wait_text="2D 図面")
         page.wait_for_timeout(300)
         assert hidden("#props-panel")
         assert not requests, requests
@@ -314,7 +314,7 @@ try:
         page.evaluate("window.__cadStallProperties(2000); window.__cadPropsWait(0)")
         page.set_input_files("#file-input", STEP)
         page.wait_for_function("document.querySelector('#props-status')?.textContent === '計算中…'", timeout=60000)
-        load(DXF, wait_text="2D図面")
+        load(DXF, wait_text="2D 図面")
         page.wait_for_timeout(2500)
         assert hidden("#props-panel"), "a stale answer brought the panel back"
         page.close()

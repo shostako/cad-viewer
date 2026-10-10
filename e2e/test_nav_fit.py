@@ -116,7 +116,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     set_rotate("ターンテーブル")
 
     # A9. 2D drawing: F / Home fit the drawing; then 3D again (aspect must survive)
-    load(DXF, wait_text="2D図面")
+    load(DXF, wait_text="2D 図面")
     svg = "#viewport2d svg"
     def vbox():
         return [float(x) for x in page.get_attribute(svg, "viewBox").split()]
@@ -139,7 +139,7 @@ with nav_session(boxes=("runner", "tiny", "huge")) as n:
     #      canvas has caught up by then depends on timing (a frame may pass
     #      while the mesh is fetched), so the cycle runs with several sizes.
     for w, h in ((900, 700), (1100, 650), (800, 900), (1280, 800)):
-        load(DXF, wait_text="2D図面")
+        load(DXF, wait_text="2D 図面")
         page.set_viewport_size({"width": w, "height": h})
         load(STEP)
         _, _, cw, ch = canvas_rect()
