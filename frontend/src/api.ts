@@ -72,7 +72,7 @@ export async function fetchMesh(modelId: string): Promise<MeshPack> {
 
 export interface EntityRef {
   partId?: number
-  kind: 'face' | 'edge' | 'vertex' | 'point'
+  kind: 'face' | 'edge' | 'vertex' | 'part' | 'point'
   id?: number
   xyz?: [number, number, number]
 }

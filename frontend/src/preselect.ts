@@ -204,6 +204,25 @@ export class Preselect {
       this.group.add(this.edge)
       return true
     }
+    // a whole part (選択: 部品): all of its triangles; a curve-only part, all of its lines
+    if (pick.kind === 'part' && part.indices.length === 0) {
+      if (part.edges.length < 6) return false
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions(part.edges)
+      this.edge = new LineSegments2(geo, this.edgeMaterial)
+      this.edge.renderOrder = ORDER + 1
+      this.group.add(this.edge)
+      return true
+    }
+    if (pick.kind === 'part') {
+      const geo = this.faceGeometry(pick.partId)
+      if (!geo) return false
+      geo.setDrawRange(0, Infinity)
+      this.face = new THREE.Mesh(geo, this.faceMaterial)
+      this.face.renderOrder = ORDER
+      this.group.add(this.face)
+      return true
+    }
     // a face: its range of the part's triangles, drawn from the part's own
     // buffers (the picker's BVH is indirect: the index keeps the face order)
     const r = part.faceRanges.find((f) => f.faceId === pick.id)
@@ -292,7 +311,8 @@ export class InfoCache {
 
   /** The cursor is on `pick` now (null: on nothing). Another face, edge or vertex starts the wait. */
   rest(pick: PickResult | null): void {
-    const key = pick && pick.id > 0 ? keyOf(pick) : null
+    // a whole part has no size or point of its own to ask for
+    const key = pick && pick.id > 0 && pick.kind !== 'part' ? keyOf(pick) : null
     if (key === this.restKey) return
     clearTimeout(this.timer)
     this.timer = undefined

@@ -530,6 +530,8 @@ export class MeasureTool {
 
 /** 面#6, エッジ#2, 頂点#5: the B-rep entity of a pick, as the HUD and the list name it */
 function entityName(pick: PickResult): string {
+  // a whole part (選択: 部品) is named by its part: 「core_pin 全体」
+  if (pick.kind === 'part') return '全体'
   return `${{ vertex: '頂点', edge: 'エッジ', face: '面' }[pick.kind]}#${pick.id}`
 }
 
