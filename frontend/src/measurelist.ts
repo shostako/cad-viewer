@@ -101,11 +101,12 @@ function axesOf(delta: [number, number, number]): { axes: [string, string, strin
  * unit and decimals (「(L=0.9895 in)」). With mm and 3 decimals: the saved text.
  */
 function edgeLengthShown(what: string, raw: EntryData): string {
-  const m = / \(L=([\d.]+)\)/.exec(what)
+  // at the end: the text ends with it (a part's name before could hold the same letters)
+  const m = / \(L=([\d.]+)\)$/.exec(what)
   if (!m) return what
   const v = (raw as { edgeLength?: unknown }).edgeLength
   const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(m[1])
-  return what.replace(m[0], ` (L=${showLen(n)}${unitTag()})`)
+  return `${what.slice(0, m.index)} (L=${showLen(n)}${unitTag()})`
 }
 
 /** a side of a distance at least this long (mm) makes it slanted: half the list's first 3 decimals */
