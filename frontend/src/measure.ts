@@ -50,6 +50,8 @@ export interface EntryData {
    * kept: the number is read out of the text then.
    */
   value?: number
+  /** a size of an edge (a circle's ⌀, an arc's R): the edge's length (mm), as the text's (L=…) says it */
+  edgeLength?: number
 }
 
 /** the distances other than the shortest, by name: on the status line, the label, the list */
@@ -431,11 +433,13 @@ export class MeasureTool {
       let size: Size | null = null
       // an edge says its length too: "円エッジ ⌀8.000 (L=25.133)", "円弧 R5.000 (L=7.854)"
       let length = ''
+      let edgeLength: number | null = null
       let extent: Extent | null = null
       if (pick.kind === 'edge') {
         const info = await measureEdgeInfo(requestedModelId, toRef(pick), near)
         size = edgeSize(info)
         length = ` (L=${fmt(info.length)})`
+        edgeLength = info.length
         extent = { kind: 'edge', length: info.length }
       } else if (pick.kind === 'face') {
         const info = await measureFaceInfo(requestedModelId, toRef(pick), near)
@@ -456,6 +460,7 @@ export class MeasureTool {
         // a whole circle's label at its centre (a hole's middle), the rest where it was measured
         labelPos: size.centre ?? size.at ?? near,
         value: size.value,
+        ...(pick.kind === 'edge' && edgeLength !== null ? { edgeLength } : {}),
         ...(size.centre ? { centre: size.centre } : {}),
       })
     } catch {

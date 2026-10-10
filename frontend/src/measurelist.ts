@@ -16,7 +16,7 @@ import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { DISTANCE_MODE_NAMES, type EntryData } from './measure'
-import { areaUnit, fmt, lenUnit, showArea, showDegNum, showLen, showPoint } from './sizes'
+import { areaUnit, fmt, lenUnit, showArea, showDegNum, showLen, showPoint, unitTag } from './sizes'
 
 export type RowKind =
   | 'distance'
@@ -58,6 +58,8 @@ export interface RowView {
   q?: Quantity
   /** a distance's ΔX, ΔY, ΔZ in mm (signed, as saved) */
   delta?: [number, number, number]
+  /** what was measured as saved (its numbers in mm: an edge's L): the 記録's 対象 A */
+  aRecord?: string
 }
 
 /** what a number measures: a length (mm), an area (mm²), an angle (°) */
@@ -87,10 +89,27 @@ function xyzOf(v: unknown): [number, number, number] | null {
  */
 function axesOf(delta: [number, number, number]): { axes: [string, string, string]; where?: string; delta: [number, number, number] } {
   const axes = delta.map((c) => showLen(Math.abs(c))) as [string, string, string]
-  const zero = showLen(0)
-  const along = axes.filter((c) => c !== zero).length
+  // slanted or not by the numbers themselves, not as shown: coarse decimals
+  // (inches, 0 decimals) write small sides as 0 and would hide them
+  const along = delta.filter((c) => Math.abs(c) >= SLANT_MM).length
   return along >= 2 ? { axes, where: `ΔX\u00a0${axes[0]}　ΔY\u00a0${axes[1]}　ΔZ\u00a0${axes[2]}`, delta } : { axes, delta }
 }
+
+/**
+ * An edge's length in a size's text (「円エッジ (L=25.133)」) as shown: the
+ * number saved with the entry (edgeLength), else the text's, in the display's
+ * unit and decimals (「(L=0.9895 in)」). With mm and 3 decimals: the saved text.
+ */
+function edgeLengthShown(what: string, raw: EntryData): string {
+  const m = / \(L=([\d.]+)\)/.exec(what)
+  if (!m) return what
+  const v = (raw as { edgeLength?: unknown }).edgeLength
+  const n = typeof v === 'number' && Number.isFinite(v) ? v : Number(m[1])
+  return what.replace(m[0], ` (L=${showLen(n)}${unitTag()})`)
+}
+
+/** a side of a distance at least this long (mm) makes it slanted: half the list's first 3 decimals */
+const SLANT_MM = 5e-4
 
 /** the number saved with the entry (value), else the one in its text */
 function savedNum(raw: EntryData, inText: string): number {
@@ -156,7 +175,8 @@ export function entryRow(raw: EntryData): RowView {
   // "core_pin 円エッジ ⌀8.000 (L=25.133)", "円筒面 ⌀8.000"
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
   if (d.labelText.startsWith('⌀') && dia) {
-    const what = `${dia[1]}${dia[3]}`.trim()
+    const saved = `${dia[1]}${dia[3]}`.trim()
+    const what = edgeLengthShown(saved, raw)
     const centre = xyzOf(raw.centre)
     const n = savedNum(raw, dia[2])
     return {
@@ -167,6 +187,7 @@ export function entryRow(raw: EntryData): RowView {
       mark: '⌀',
       what,
       a: what,
+      aRecord: saved,
       b: '',
       ...(centre ? { where: `中心\u00a0${showPoint(centre)}` } : {}),
     }
@@ -175,9 +196,10 @@ export function entryRow(raw: EntryData): RowView {
   // "pin 曲面 R1.000（クリックした点）": the last R of the text (a part's name may have one)
   const rad = /^(.*) (S?R)([\d.]+)((?:（[^）]*）)?(?: \(L=[\d.]+\))?)$/.exec(d.text)
   if (/^S?R[\d.]+$/.test(d.labelText) && rad) {
-    const what = `${rad[1]}${rad[4]}`
+    const saved = `${rad[1]}${rad[4]}`
+    const what = edgeLengthShown(saved, raw)
     const n = savedNum(raw, rad[3])
-    return { kind: 'radius', ...shownNum('len', n), num: n, q: 'len', mark: rad[2], what, a: what, b: '' }
+    return { kind: 'radius', ...shownNum('len', n), num: n, q: 'len', mark: rad[2], what, a: what, aRecord: saved, b: '' }
   }
   // "body 円錐面 勾配 2.000°": a cone's half angle
   const draft = /^(.*) 勾配 ([\d.]+)°$/.exec(d.text)
@@ -246,7 +268,7 @@ export function rowCells(r: RowView): string[] {
 export function recordCells(r: RowView): (string | number)[] {
   if (r.num === undefined || !r.q) return rowCells(r)
   const d = r.delta ? r.delta.map((c) => Math.abs(c)) : ['', '', '']
-  return [KIND_NAME[r.kind], r.num, RECORD_UNIT[r.q], r.a, r.b, ...d]
+  return [KIND_NAME[r.kind], r.num, RECORD_UNIT[r.q], r.aRecord ?? r.a, r.b, ...d]
 }
 
 /** words before a label's number that the list's mark leaves out */

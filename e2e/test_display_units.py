@@ -65,7 +65,7 @@ with nav_session() as n:
     def rows():
         return page.evaluate(
             "[...document.querySelectorAll('#measure-list li')].map(li => [li.dataset.kind, li.querySelector('.m-value')?.textContent ?? '',"
-            " li.querySelector('.m-where')?.textContent ?? ''])"
+            " li.querySelector('.m-where')?.textContent ?? '', li.querySelector('.m-what')?.textContent ?? ''])"
         )
 
     def labels():
@@ -101,7 +101,7 @@ with nav_session() as n:
     # ---- three measurements: a pin's diameter, a distance, an angle (with its distance 0)
     gui_common.set_mode(page, "計測")
     pin_side, pin_top, plate_top, plate_front = (75, 26, 30), (75, 30, 40), (90, 50, 15), (50, 0, 7.5)
-    click(pin_side)
+    click((75, 26, 40), "edge")  # the second pin's top rim: a circle, ⌀8, its length 8π
     page.wait_for_function("document.querySelectorAll('#measure-list li[data-kind=diameter]').length === 1", timeout=10000)
     page.keyboard.press("Escape")
     n.settle()
@@ -123,9 +123,11 @@ with nav_session() as n:
     page.wait_for_function(f"document.querySelector('#hud-info').textContent.includes('距離 {SLANT:.3f}')", timeout=10000)
     mm_rows, mm_labels = rows(), labels()
     by_kind = {}
-    for k, v, w in mm_rows:
+    for k, v, w, _ in mm_rows:
         by_kind.setdefault(k, []).append((v, w))
     assert by_kind["diameter"][0][0] == "⌀8.000 mm", by_kind
+    dia_what = next(t for k, _, _, t in mm_rows if k == "diameter")
+    assert dia_what == f"core_pin 円エッジ (L={8 * math.pi:.3f})", dia_what
     assert sorted(v for v, _ in by_kind["distance"]) == sorted(["0.000 mm", "25.000 mm", f"{SLANT:.3f} mm"]), by_kind
     assert by_kind["angle"][0][0] == "90.000°", by_kind
     assert {"⌀8.000 mm", "25.000 mm", "90.000°"} <= set(mm_labels), mm_labels
@@ -147,8 +149,11 @@ with nav_session() as n:
     set_shown("インチ", 4)
     in_rows = rows()
     by_kind = {}
-    for k, v, w in in_rows:
+    for k, v, w, _ in in_rows:
         by_kind.setdefault(k, []).append((v, w))
+    # the rim's length in the text, in inches too
+    dia_what = next(t for k, _, _, t in in_rows if k == "diameter")
+    assert dia_what == f"core_pin 円エッジ (L={8 * math.pi / IN:.4f} in)", dia_what
     assert by_kind["diameter"][0][0] == f"⌀{8 / IN:.4f} in", by_kind
     assert sorted(v for v, _ in by_kind["distance"]) == sorted([f"{0:.4f} in", f"{25 / IN:.4f} in", f"{SLANT / IN:.4f} in"]), by_kind
     d = [abs(a - b) / IN for a, b in zip(SLANT_AT, (0, 0, 15))]
@@ -195,11 +200,13 @@ with nav_session() as n:
     dists = [r for r in recs[head + 1 :] if r and r[0] == "距離"]
     assert dists and all(r[2] == "mm" for r in dists), dists
     assert any(abs(float(r[1]) - 25) < 1e-9 for r in dists), dists
+    dia = next(r for r in recs[head + 1 :] if r and r[0] == "直径")
+    assert dia[2] == "mm" and abs(float(dia[1]) - 8) < 1e-9 and dia[3] == f"core_pin 円エッジ (L={8 * math.pi:.3f})", ("the record's: mm", dia)
     print("4 record in mm", [r[1:3] for r in dists])
 
     # ---- mm with 6 decimals: the saved number's digits (its text has 3)
     set_shown("mm", 6)
-    six = [v for k, v, _ in rows() if k == "distance"]
+    six = [v for k, v, _, _ in rows() if k == "distance"]
     assert f"{SLANT:.6f} mm" in six, (six, SLANT)
 
     # ---- back to mm and 3: as before, to the character
@@ -209,15 +216,28 @@ with nav_session() as n:
 
     # ---- the choice survives a reload; an old entry (its text only) is shown from its text
     set_shown("インチ", 4)
-    put_sidecar(page, old, [{"text": "plate 面#6 ↔ plate 面#1 : 25.400", "labelText": "25.400", "labelPos": [50, 30, 15], "markers": [[50, 30, 15], [50, 30, 0]]}])
+    put_sidecar(
+        page,
+        old,
+        [
+            {"text": "plate 面#6 ↔ plate 面#1 : 25.400", "labelText": "25.400", "labelPos": [50, 30, 15], "markers": [[50, 30, 15], [50, 30, 0]]},
+            # a small slanted one: 10 by 10 mm
+            {"text": "plate 頂点#1 ↔ plate 頂点#2 : 14.142", "labelText": "14.142", "labelPos": [5, 5, 15], "markers": [[0, 0, 15], [10, 10, 15]], "delta": [10, 10, 0]},
+        ],
+    )
     page.reload()
     page.wait_for_selector("#file-input", state="attached")
     n.load(str(old))
     assert gui_common.ctl(page, "計測の単位").locator("select").evaluate("s => s.options[s.selectedIndex].text") == "インチ"
     r = rows()
-    assert r == [["distance", f"{1:.4f} in", ""]], r
+    small = f"ΔX\u00a0{10 / IN:.4f}　ΔY\u00a0{10 / IN:.4f}　ΔZ\u00a0{0:.4f}"
+    assert [x[:3] for x in r] == [["distance", f"{1:.4f} in", ""], ["distance", f"{math.hypot(10, 10) / IN:.4f} in", small]], r
     assert f"{1:.4f} in" in labels(), labels()
-    print("5 reload, old entry", r)
+    # 0 decimals: the small sides read 0, the distance is still slanted (its sides are said)
+    set_shown("インチ", 0)
+    r0 = rows()
+    assert r0[1][2] == "ΔX\u00a00　ΔY\u00a00　ΔZ\u00a00", r0
+    print("5 reload, old entries", r, r0[1])
 
     # ---- a file written in inches: said on the status line, read into mm, named in the 記録
     n.load(str(INCH_BLOCK), wait_text="元の単位")
