@@ -148,6 +148,8 @@ with nav_session() as n:
         P = pick(cur)["point"]
         v0 = view()
         k0 = kscale(v0)
+        # no marker left from before: the one awaited below is this click's
+        page.wait_for_selector(".pivot-marker", state="detached", timeout=2000)
         page.mouse.dblclick(*cur)
         # the marker enters the page with the next drawn frame (on a loaded machine, after the
         # double-click has returned), and stays 1 s

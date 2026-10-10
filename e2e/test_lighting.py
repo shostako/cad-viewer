@@ -115,7 +115,7 @@ with nav_session() as n:
             assert abs(lv[a] - lv[b]) >= STEP, ("2 two faces seen together look alike", a, b, lv)
     for part in ("plate", "block"):
         faces = [f"{part} +Z", f"{part} -Y", f"{part} +X"]
-        assert lv[f"{part} +Z"] == max(lv[f] for f in faces), ("2 the top must be the brightest", part, lv)
+        assert all(lv[f"{part} +Z"] > lv[f] for f in faces[1:]), ("2 the top must be the brightest", part, lv)
 
     # ---- 3. the block keeps its blue on every face seen
     want = chroma(BLUE)

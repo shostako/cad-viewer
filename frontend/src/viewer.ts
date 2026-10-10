@@ -13,8 +13,10 @@ import { thicknessColors } from './thickness'
 
 /**
  * The room's soft light, from every side but unevenly: three.js's
- * RoomEnvironment (r185) seen from its centre, as spherical harmonics
- * (LightProbeGenerator on a 512 px cube; 256 px gives the same to 0.5 %). The
+ * RoomEnvironment (r185) seen from its centre, as spherical harmonics. Made
+ * once: a CubeCamera at the room's centre renders it into a 512 px half-float
+ * WebGLCubeRenderTarget, and LightProbeGenerator.fromCubeRenderTarget turns
+ * that into the probe's coefficients (256 px gives the same to 0.5 %). The
  * room is grey, so each term is one number for r, g and b.
  *
  * The room is built +Y up and is left so on the +Z-up model: the top faces get
