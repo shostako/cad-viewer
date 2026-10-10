@@ -763,10 +763,11 @@ def run(parts: str) -> None:
                 assert same(colours({"TOP": TOP})["TOP"], T), "c12 heatmap colour"
 
                 # c13. a measure line written while the heatmap is on stays when it goes off
+                # (the line is final once the face's area has come: it says it then)
                 nav.set_mode("計測")
                 x, y = project(TOP)
                 page.mouse.click(x, y)
-                page.wait_for_function("document.querySelector('#hud-info').textContent.includes('を選択')")
+                page.wait_for_function("document.querySelector('#hud-info').textContent.includes('を選択（面積')")
                 msg = hud()
                 toggle("ヒートマップ", False)
                 assert hud() == msg, ("c13 the measure line was replaced", msg, hud())
