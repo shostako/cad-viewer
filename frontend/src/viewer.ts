@@ -256,6 +256,8 @@ export class Viewer {
   private pivotMarker: CSS2DObject | null = null
   /** the marker of the place a legend went to (goToSpot), until clearSpot */
   private spotMarker: CSS2DObject | null = null
+  /** the place the marker is on (goToSpot), while it is up */
+  private spotShown: Spot | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
   private container: HTMLElement
   /**
@@ -1146,7 +1148,13 @@ export class Viewer {
     this.frameBox(box, dir.clone().negate())
     this.rememberFit(null, box)
     this.showSpotMarker(new THREE.Vector3(...spot.at), text)
+    this.spotShown = spot
     this.animateFrom(from)
+  }
+
+  /** the place goToSpot went to, while its marker is up (null: none) */
+  get shownSpot(): Spot | null {
+    return this.spotShown
   }
 
   /**
@@ -1160,6 +1168,7 @@ export class Viewer {
 
   /** the marker only (goToSpot puts the next one up; what H frames stays) */
   private removeSpotMarker(): void {
+    this.spotShown = null
     if (!this.spotMarker) return
     this.wake()
     this.scene.remove(this.spotMarker)

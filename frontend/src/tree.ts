@@ -44,7 +44,7 @@ interface Row {
 }
 
 // icons: 16 x 16, drawn in the button's text colour
-const ONLY_ICON =
+export const ONLY_ICON =
   '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4">' +
   '<g opacity=".45"><rect x="2" y="2" width="5" height="5" rx="1"/><rect x="9" y="2" width="5" height="5" rx="1"/>' +
   '<rect x="2" y="9" width="5" height="5" rx="1"/></g>' +
@@ -289,6 +289,12 @@ export class PartTree {
     if (row === this.litRow) return
     this.litRow = row
     this.hooks.highlight(row ? row.parts : [])
+  }
+
+  /** show these parts alone (the problem list's この部品だけ表示: as a row's これだけ表示) */
+  showOnly(ids: readonly number[]): void {
+    const mine = new Set(ids)
+    this.apply((id) => mine.has(id))
   }
 
   /** Show / hide the parts as want says (was: shown now), then bring the boxes and buttons up to date. */
