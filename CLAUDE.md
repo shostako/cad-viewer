@@ -84,6 +84,17 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - **マージ** — CI が緑で、レビューの指摘が片付いたら、squash でマージしてよい（ユーザー了承済み）。マージしたら issue #8 のチェックを更新する。
 - **記録** — 作業の要点を `logs/yyyy-MM.md` に残す（`## yyyy-MM-dd 作業概要`）。後の作業で役に立つ教訓は、同じ日の節に「記憶候補」として書く（手元で取り込む）。
 
+## 版と変更履歴
+
+- 変更履歴は `CHANGELOG.md`（Keep a Changelog 1.1.0 の日本語版、セマンティック バージョニング、0.x 系）。利用者向けに、画面や振る舞いで何が変わったかを平易な日本語で書く。各版の先頭に要点を太字で 1 文、分類は 追加／変更／修正／削除、1 つの変更は 1〜2 行で PR の番号を付ける。関数名などの内部の話は書かない。
+- 版の番号は、CHANGELOG の一番上の版、`backend/app/__init__.py` の `__version__`、`backend/pyproject.toml`、`frontend/package.json` と `package-lock.json`（先頭と `packages[""]`）でそろえる。`backend/tests/test_version.py` が確かめる。`GET /api/health` は `{"status": "ok", "version": …}` を返す。
+- **機能の PR は CHANGELOG に触らない。** 並行の PR が同じ所に書いて衝突し、そのたびに CI をやり直すことになるため。
+- **版を出すとき** は、版の PR（枝 `release/vX.Y.Z`）で次をする。
+  - 前のタグから後にマージされた PR（`git log vPREV..origin/master --oneline`）を元に、CHANGELOG の先頭に `## [X.Y.Z] — yyyy-MM-dd`（出した日、東京時間）の節を書き、末尾に比較のリンクを足す。新しい機能があればマイナー、直しだけならパッチを上げる。
+  - 版の番号を上げる。frontend の 2 つは `(cd frontend && npm version X.Y.Z --no-git-tag-version)` でそろう。
+  - マージの直前に master が進んでいたら、載せ直して、増えた PR を節に足す（タグに入る変更と節をそろえる）。
+  - マージしたら、その squash のコミットに注釈付きタグを打って push する（`git tag -a vX.Y.Z <sha> -m "vX.Y.Z" && git push origin vX.Y.Z`）。
+
 ## アーキテクチャ
 
 ```
