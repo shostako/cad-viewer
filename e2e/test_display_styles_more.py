@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from display_common import BG, CURVE, LABELS, TESTDATA, box_stl, diff, display_session, pt_seg, quad, tri_stl
+from nav_common import classic_basis
 
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
 IGES = TESTDATA / "loose_faces_box.igs"
@@ -60,6 +61,8 @@ def box_tri_edges(lo, hi):
 
 with display_session() as d:
     page = d.page
+    # the checks at the app's own 1.5 mm and 1.0° (判定の基準 手で決める), as written: the default is the material's
+    classic_basis(page)
     paths = {}
     for name, tris in (("walls", A + B), ("ref_a", A + TINY_HI), ("ref_b", B + TINY_LO)):
         paths[name] = os.path.join(d.tmp, f"{name}.stl")

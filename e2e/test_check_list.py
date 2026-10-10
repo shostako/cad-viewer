@@ -33,7 +33,7 @@ import tempfile
 from pathlib import Path
 
 import gui_common
-from nav_common import BASE_URL, TESTDATA, nav_session
+from nav_common import BASE_URL, TESTDATA, classic_basis, nav_session
 
 TOL = 1e-3
 PINS = ((25, 30), (75, 30))
@@ -174,6 +174,8 @@ open_box_stl(open_box)
 
 with nav_session() as n:
     page = n.page
+    # the checks at the app's own 1.5 mm and 1.0° (判定の基準 手で決める), as written: the default is the material's
+    classic_basis(page)
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     n.stub_sidecar()
 

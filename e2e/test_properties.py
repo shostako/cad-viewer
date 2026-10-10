@@ -2,7 +2,8 @@
 
 Expected values come from how the test models are built (make_step_assembly.py:
 plate 100x60x15, two core pins r4 h25, cavity block 40x30x20; the STL boxes
-written here), the resin table of the specification, and the camera state.
+written here), the materials' gravities of the specification (the general
+standards, docs/material-basis.md), and the camera state.
 Needs the same servers as the other E2E scripts, with a backend that has
 GET /api/models/{id}/properties.
 """
@@ -20,6 +21,7 @@ TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
 DXF = str(TESTDATA / "plate_drawing.dxf")
 PREFS = "cad-viewer:props"
+MATERIALS = "cad-viewer:materials"
 
 V = {"plate": 100 * 60 * 15, "core_pin": math.pi * 4**2 * 25, "cavity_block": 40 * 30 * 20}
 A = {
@@ -101,7 +103,7 @@ try:
         assert r.ok, ("upload", r.status, r.text())
         r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": []})
         assert r.ok, ("empty sidecar", r.status, r.text())
-        page.evaluate(f"localStorage.removeItem('{PREFS}')")
+        page.evaluate(f"localStorage.removeItem('{PREFS}'); localStorage.removeItem('{MATERIALS}')")
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
 
@@ -202,26 +204,23 @@ try:
         assert title() == "合計（表示中 4/4 部品）"
         check_total(V_ALL, A_ALL, 1.19)
 
-        # 4. resin and specific gravity
+        # 4. the material (the operation panel's 材料) and its gravity; one typed by hand
         folder("体積・重量").locator(":scope > .lil-title").click()
-        resin = ctl("樹脂").locator("select")
+        material = ctl("材料").locator("select")
         dens = ctl("比重").locator("input")
 
-        def resin_shown():
-            return resin.evaluate("s => s.options[s.selectedIndex].text")
+        def material_shown():
+            return material.evaluate("s => s.options[s.selectedIndex].text")
 
         for name in ("PC", "PP"):
-            resin.select_option(label=name)
+            material.select_option(label=name)
             assert abs(float(dens.input_value()) - DENSITY[name]) < 1e-9, dens.input_value()
             assert page.inner_text("#props-density") == f"{name} {DENSITY[name]:.2f} g/cm³"
             check_total(V_ALL, A_ALL, DENSITY[name])
         dens.fill("1.234")
         dens.press("Enter")
-        assert resin_shown() == "その他", resin_shown()
-        assert page.inner_text("#props-density") == "比重 1.234 g/cm³"
-        check_total(V_ALL, A_ALL, 1.234)
-        resin.select_option(label="その他")
-        assert abs(float(dens.input_value()) - 1.234) < 1e-9
+        assert material_shown() == "PP", ("a gravity typed keeps the material", material_shown())
+        assert page.inner_text("#props-density") == "PP 1.234 g/cm³（手入力）"
         check_total(V_ALL, A_ALL, 1.234)
         before = page.evaluate("window.__cadView().position")
         dens.click()
@@ -275,17 +274,17 @@ try:
         check_total(V_ALL, A_ALL, 1.234)
         ctl("有効").locator("input").click()
 
-        # 7. resin and gravity survive a reload
+        # 7. the material and the gravity typed survive a reload
         page.wait_for_timeout(1000)  # let the sidecar save settle
         page.goto(BASE_URL)
         page.wait_for_load_state("networkidle")
         load(STEP)
         wait_values()
-        assert resin_shown() == "その他" and abs(float(dens.input_value()) - 1.234) < 1e-9
-        assert page.inner_text("#props-density") == "比重 1.234 g/cm³"
+        assert material_shown() == "PP" and abs(float(dens.input_value()) - 1.234) < 1e-9
+        assert page.inner_text("#props-density") == "PP 1.234 g/cm³（手入力）"
         check_total(V_ALL, A_ALL, 1.234)
         folder("体積・重量").locator(":scope > .lil-title").click()
-        resin.select_option(label="PMMA")
+        material.select_option(label="PMMA")
         assert page.inner_text("#props-density") == "PMMA 1.19 g/cm³"
 
         # 8. mesh formats: one part, no table, the unit note
@@ -413,9 +412,15 @@ try:
             page.wait_for_function("document.querySelector('#hud-info').textContent.includes('相手をクリック')")
             page.mouse.click(b["x"], b["y"])
             page.wait_for_function(f"document.querySelectorAll('#measure-list li').length > {n}", timeout=10000)
-            page.wait_for_timeout(100)
             added += 1
-            st = stack()
+            # the column settles in a few frames (the GUI gives way, then the list
+            # grows): read it once two readings agree (a loaded machine is slow)
+            st, prev = stack(), None
+            for _ in range(30):
+                if st == prev:
+                    break
+                page.wait_for_timeout(100)
+                prev, st = st, stack()
             if st["scrolls"] or added >= 12:
                 break
         print("12 no table:", added, "added,", st)
@@ -430,7 +435,7 @@ try:
             page.wait_for_timeout(50)
         page.wait_for_timeout(1000)  # let the sidecar save (now empty) settle
 
-        page.evaluate(f"localStorage.removeItem('{PREFS}')")
+        page.evaluate(f"localStorage.removeItem('{PREFS}'); localStorage.removeItem('{MATERIALS}')")
         page.screenshot(path="/tmp/cad_viewer_properties.png")
         if errors:
             print("PAGE ERRORS:", errors)

@@ -35,11 +35,30 @@ import { FrameTool } from './frame'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
-import { OTHER_RESIN, PropertiesPanel, REASON_TEXT, RESIN_DENSITY, RESIN_NAMES } from './properties'
+import { PropertiesPanel, REASON_TEXT, fmtDensity } from './properties'
 import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { SpotNav } from './spotnav'
-import { BASIS_MATERIALS, BasisPop, basisText, loadBases, saveBases } from './presets'
+import {
+  METALS,
+  RESINS,
+  USE_LABEL,
+  USE_NAMES,
+  basisText,
+  current,
+  densityStep,
+  fmtThin,
+  isEdited,
+  loadMaterials,
+  materialsFile,
+  materialsFor,
+  saveMaterials,
+  setValues,
+  valuesOf,
+  type MaterialValues,
+  type Use,
+} from './materials'
+import { MaterialPop } from './materialpop'
 import { spotText } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
@@ -200,6 +219,7 @@ function show2D(on: boolean): void {
   for (const f of folders3D) f.show(f === viewFolder || (!on && modelPanel))
   for (const c of viewFolder.controllers) c.show(c === themeCtl || (!on && (c !== speedCtl || viewPrefs.autoRotate)))
   presetFolder.show(!on)
+  applyUseVisibility()
   const note = [...modeSelect.options].find((o) => o.text === '注記')
   if (note) note.disabled = on
   if (on && state.mode === '注記') modeCtl.setValue('なし')
@@ -270,6 +290,7 @@ function applyEmptyPanel(empty: boolean): void {
   if (empty) showReportPop(false)
   showDistanceCtl()
   for (const f of [frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
+  applyUseVisibility()
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -582,6 +603,18 @@ function buildReport(at: Date, image: string | null): Report {
   if (shownMeta?.format === 'brep') meta.push(['元のファイルの単位', shownMeta.fileUnit ?? '不明'])
   // the frame the screen shows points in: the record keeps the model's own coordinates
   if (!is2D) meta.push(['座標系', shown.frame ? `${frameText(shown.frame)}（記録の値は元の座標系のまま）` : '元の座標系'])
+  // what the model was looked at for, and the material its weight and its checks are of
+  if (!is2D) {
+    const name = materialNow()
+    const v = materialValues()
+    const gravity = materialStore.density !== null ? `比重 ${fmtDensity(materialStore.density)}（手入力）` : `比重 ${fmtDensity(v.density)}`
+    const draft = v.draft !== null && materialStore.use === 'molding' ? `・勾配 ${v.draft}°` : ''
+    meta.push(['用途', USE_LABEL[materialStore.use]])
+    meta.push([
+      '材料',
+      `${name}（${isEdited(materialStore, name) ? '直した値' : '一般的な基準'}: ${gravity}・肉厚の下限 ${fmtThin(v.thin)} mm${draft}。根拠: ${v.source.trim() || '未設定'}）`,
+    ])
+  }
   const tables: ReportTable[] = []
   const parts = is2D ? [] : [...viewer.getPartMeshes().keys()].sort((a, b) => a - b)
   if (parts.length > 1) {
@@ -604,7 +637,8 @@ function buildReport(at: Date, image: string | null): Report {
     ]),
     empty: 'なし',
   })
-  if (!is2D) {
+  // 一般 has no 問題の一覧 (the moulding's checks)
+  if (!is2D && materialStore.use === 'molding') {
     const checks = checkPanel.cells()
     tables.push(
       checks
@@ -623,8 +657,8 @@ function buildReport(at: Date, image: string | null): Report {
             empty: checkPanel.shown ? '計算中だった（一覧ができてから記録する）' : '出していない（操作パネルの「問題の一覧」で出す）',
           },
     )
-    tables.push(...(propsPanel.reportTables() ?? [{ title: '体積・重量', head: [], rows: [], empty: '計算中か、計算できなかった' }]))
   }
+  if (!is2D) tables.push(...(propsPanel.reportTables() ?? [{ title: '体積・重量', head: [], rows: [], empty: '計算中か、計算できなかった' }]))
   return {
     fileName: shownFileName,
     stem: stampedName(shownFileName, at, '記録'),
@@ -897,8 +931,8 @@ function onNavigationKey(e: KeyboardEvent): void {
       e.preventDefault()
       return
     }
-    if (basisPop.shown) {
-      basisPop.hide()
+    if (materialPop.shown) {
+      materialPop.hide()
       e.preventDefault()
       return
     }
@@ -1136,21 +1170,28 @@ function saveDraftPrefs(): void {
 
 // ---- thickness heatmap
 const thicknessState = { enabled: false, threshold: 1.5, method: 'ray' as ThicknessMethod }
-// 判定の基準 (presets.ts): a material's thickness and draft, kept in this
-// browser. The one in use sets the two folders' values from the start
-const basisStore = loadBases()
-if (basisStore.selected) {
-  const b = basisStore.bases[basisStore.selected]
-  thicknessState.threshold = b.thin
-  draftState.required = b.draft
+// 材料と用途 (materials.ts): the material in use gives the specific gravity
+// and, while 判定の基準 follows it, the 肉厚 folder's 閾値 and the 抜き勾配
+// folder's 必要な勾配, from the start. Kept in this browser (saved once read:
+// what the app kept before materials comes along the first time).
+const materialStore = loadMaterials()
+saveMaterials(materialStore)
+/** the material in use */
+const materialNow = (): string => current(materialStore)
+/** its values (its edit, or its general standard) */
+const materialValues = (): MaterialValues => valuesOf(materialStore, materialNow())
+if (materialStore.follow) {
+  const v = materialValues()
+  thicknessState.threshold = v.thin
+  if (v.draft !== null) draftState.required = v.draft
 }
-/** the folders' values are being set from a basis (not by hand: the basis stays in use) */
+/** the folders' values are being set from the material (not by hand: 判定の基準 stays on it) */
 let applyingBasis = false
-/** a value changed by hand: no material's basis is in use any more */
+/** a value changed by hand: 判定の基準 is 手で決める now */
 function basisLeft(): void {
-  if (applyingBasis || !basisStore.selected) return
-  basisStore.selected = ''
-  saveBases(basisStore)
+  if (applyingBasis || !materialStore.follow) return
+  materialStore.follow = false
+  saveMaterials(materialStore)
   basisCtl.updateDisplay()
 }
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
@@ -1312,7 +1353,7 @@ thicknessFolder
     scheduleChecks()
   })
 const thresholdCtl = thicknessFolder
-  .add(thicknessState, 'threshold', 0.1, 10, 0.1)
+  .add(thicknessState, 'threshold', 0.1, 10, 0.01)
   .name('閾値 (mm)')
   .onChange(() => {
     basisLeft()
@@ -1414,7 +1455,7 @@ function checkConditions(): CheckConditions {
     draft: checkState.draft
       ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
       : null,
-    basis: basisStore.selected ? basisText(basisStore.selected, basisStore.bases[basisStore.selected]) : null,
+    basis: materialStore.follow ? basisText(materialNow(), materialValues()) : null,
   }
 }
 /** the list's place the marker is on, if it is (a change of the list takes it away) */
@@ -1513,52 +1554,59 @@ checkFolder
   .add(checkState, 'draft')
   .name('抜き勾配を調べる')
   .onChange(() => void updateChecks())
-// 判定の基準: a material's values for the 肉厚 and 抜き勾配 folders (手で決める: as they are set there)
+// 判定の基準: the material's values for the 肉厚 and 抜き勾配 folders, or as
+// they are set there (手で決める: a value changed by hand comes here by itself)
 const basisCtl = checkFolder
-  .add(basisStore, 'selected', { 手で決める: '', ...Object.fromEntries(BASIS_MATERIALS.map((m) => [m, m])) })
+  .add(materialStore, 'follow', { 材料に合わせる: true, 手で決める: false })
   .name('判定の基準')
   .onChange(() => {
-    saveBases(basisStore)
+    saveMaterials(materialStore)
     applyBasis()
   })
-const basisActions = { edit: () => showBasisPop(!basisPop.shown) }
+const basisActions = { edit: () => showMaterialPop(!materialPop.shown, basisEditCtl.domElement) }
 const basisEditCtl = checkFolder.add(basisActions, 'edit').name('基準を編集…')
-/** the material in use sets the threshold and the draft (their own onChange recomputes) */
+/** while 判定の基準 follows the material: its threshold and draft (their own onChange recomputes) */
 function applyBasis(): void {
-  const m = basisStore.selected
-  if (m) {
-    const b = basisStore.bases[m]
+  if (materialStore.follow) {
+    const v = materialValues()
     applyingBasis = true
     try {
-      thresholdCtl.setValue(b.thin)
-      requiredCtl.setValue(b.draft)
+      thresholdCtl.setValue(v.thin)
+      if (v.draft !== null) requiredCtl.setValue(v.draft)
     } finally {
       applyingBasis = false
     }
   }
   scheduleChecks() // the conditions' line names the basis
 }
-const basisPop = new BasisPop(document.querySelector<HTMLDivElement>('#basis-pop')!, {
-  save: (bases) => {
-    basisStore.bases = bases
-    saveBases(basisStore)
-    applyBasis()
+/** every material's values now (the card shows the 用途's, keeps the rest) */
+const allMaterialValues = (): Record<string, MaterialValues> =>
+  Object.fromEntries([...METALS, ...RESINS].map((m) => [m, valuesOf(materialStore, m)]))
+const materialPop = new MaterialPop(document.querySelector<HTMLDivElement>('#basis-pop')!, {
+  save: (values) => {
+    for (const [name, v] of Object.entries(values)) setValues(materialStore, name, v)
+    saveMaterials(materialStore)
+    applyMaterial()
+    return materialsFile(materialStore)
   },
 })
-/** the card, left of the column at the height of its button */
-function showBasisPop(on: boolean): void {
-  if (!on) return basisPop.hide()
-  basisPop.show(basisStore.bases)
-  placeBesideColumn(basisPop.el, basisEditCtl.domElement)
+/** the button the card was opened from (a click on it toggles, not closes and opens) */
+let materialPopAnchor: HTMLElement | null = null
+/** the card, left of the column at the height of the button it was opened from */
+function showMaterialPop(on: boolean, anchor: HTMLElement): void {
+  if (!on) return materialPop.hide()
+  materialPopAnchor = anchor
+  materialPop.show(materialsFor(materialStore.use), allMaterialValues(), materialsFile(materialStore))
+  placeBesideColumn(materialPop.el, anchor)
 }
 // a click anywhere else closes it (Esc: its own keys)
 window.addEventListener(
   'pointerdown',
   (e) => {
-    if (!basisPop.shown) return
+    if (!materialPop.shown) return
     const t = e.target as Node
-    if (basisPop.el.contains(t) || basisEditCtl.domElement.contains(t)) return
-    basisPop.hide()
+    if (materialPop.el.contains(t) || materialPopAnchor?.contains(t)) return
+    materialPop.hide()
   },
   { capture: true },
 )
@@ -1733,30 +1781,23 @@ function nearlyEqual(a: THREE.Matrix4, b: THREE.Matrix4): boolean {
 }
 
 // ---- volume / area / weight
-// Resin, specific gravity and cavity pressure survive a reload, like the view
-// preferences.
+// The cavity pressure survives a reload, like the view preferences (the
+// material and its gravity are materials.ts's).
 const PROPS_PREFS_KEY = 'cad-viewer:props'
 /** cavity pressure (MPa) for the clamping force: the default, and the range accepted */
 const PRESSURE_DEFAULT = 40
 const PRESSURE_MAX = 500
-const propsPrefs = { resin: 'PMMA', density: RESIN_DENSITY.PMMA, pressure: PRESSURE_DEFAULT }
+const propsPrefs = { density: materialValues().density, pressure: PRESSURE_DEFAULT }
 try {
   const saved = JSON.parse(localStorage.getItem(PROPS_PREFS_KEY) ?? '{}')
   const p = saved.pressure
   if (typeof p === 'number' && Number.isFinite(p) && p > 0 && p <= PRESSURE_MAX) propsPrefs.pressure = p
-  if (RESIN_NAMES.includes(saved.resin)) {
-    propsPrefs.resin = saved.resin
-    propsPrefs.density = RESIN_DENSITY[saved.resin]
-  } else if (saved.resin === OTHER_RESIN && Number.isFinite(saved.density) && saved.density > 0) {
-    propsPrefs.resin = OTHER_RESIN
-    propsPrefs.density = saved.density
-  }
 } catch {
   /* defaults */
 }
 function savePropsPrefs(): void {
   try {
-    localStorage.setItem(PROPS_PREFS_KEY, JSON.stringify(propsPrefs))
+    localStorage.setItem(PROPS_PREFS_KEY, JSON.stringify({ pressure: propsPrefs.pressure }))
   } catch {
     /* best-effort */
   }
@@ -2031,36 +2072,30 @@ const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
 const folders3D = [viewFolder, frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
-const resinCtl = propsFolder
-  .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
-  .name('樹脂')
-  .onChange((r: string) => {
-    // その他 keeps the current value: it is what the user typed
-    if (r !== OTHER_RESIN) {
-      propsPrefs.density = RESIN_DENSITY[r]
-      densityCtl.updateDisplay()
-    }
-    applyDensity()
-  })
-// min without max: lil-gui draws a slider only when both are set. step 0.001
-// keeps values like 1.185 as typed.
+// The material's gravity, or one typed here for it (手入力: the material and
+// its 判定の基準 stay; another material chosen drops it). Typing the
+// material's own value back is the material's again. min without max: lil-gui
+// draws a slider only when both are set. step 0.001 keeps values like 1.185 as typed.
 const densityCtl = propsFolder
   .add(propsPrefs, 'density')
   .min(0.001)
   .step(0.001)
   .name('比重 (g/cm³)')
   .onChange(() => {
-    // a typed value that differs from the resin's own is その他. Never guess a
-    // resin from the value (ABS and PS are both 1.05).
-    if (propsPrefs.resin !== OTHER_RESIN && propsPrefs.density !== RESIN_DENSITY[propsPrefs.resin]) {
-      propsPrefs.resin = OTHER_RESIN
-      resinCtl.updateDisplay()
-    }
+    const d = propsPrefs.density
+    if (!Number.isFinite(d) || d <= 0) materialStore.density = null // an emptied field: the material's
+    else materialStore.density = densityStep(d) === materialValues().density ? null : densityStep(d)
+    saveMaterials(materialStore)
     applyDensity()
   })
+densityCtl.domElement.title = '使っている材料の比重。ここで打つと手入力（材料と判定の基準はそのまま）。材料そのものの値は「材料の基準」で直す'
+/** the gravity the weight is from: typed by hand, or the material's */
 function applyDensity(): void {
-  propsPanel.setDensity(propsPrefs.density, propsPrefs.resin)
-  savePropsPrefs()
+  const name = materialNow()
+  const hand = materialStore.density
+  propsPrefs.density = hand ?? materialValues().density
+  densityCtl.updateDisplay()
+  propsPanel.setDensity(propsPrefs.density, name, hand !== null, !isEdited(materialStore, name))
 }
 applyDensity()
 // the clamping force: projected area (along the 抜き勾配 direction) x this
@@ -2081,6 +2116,89 @@ const pressureCtl = propsFolder
   })
 propsPanel.setPressure(propsPrefs.pressure)
 
+// ---- 用途 and 材料: the first two rows of the operation panel (a 3D model's)
+/** the material before a change of the 用途 (a gravity typed was for that material) */
+let materialBefore = materialNow()
+const useCtl = gui
+  .add(materialStore, 'use', USE_NAMES)
+  .name('用途')
+  .onChange(() => {
+    // another 用途 is another material: a gravity typed for the one before goes
+    if (materialNow() !== materialBefore) materialStore.density = null
+    saveMaterials(materialStore)
+    makeMaterialCtl()
+    applyMaterial()
+    applyUse()
+  })
+useCtl.domElement.title = '射出成形: 成形品として見る（樹脂、抜き勾配・問題の一覧・型締力まで）。一般: 構造物として見る（金属と樹脂。成形だけの行を隠す）'
+let materialCtl: ReturnType<typeof gui.add> | null = null
+/**
+ * 材料: the 用途's materials, the one chosen for it (materialStore.chosen[use]).
+ * Made again when the 用途 changes (lil-gui's options() would put the row at
+ * the panel's end), right under 用途; its ✎ opens 材料の基準.
+ */
+function makeMaterialCtl(): void {
+  const shown = materialCtl ? !materialCtl._hidden : true
+  materialCtl?.destroy()
+  const use: Use = materialStore.use
+  const ctl = gui
+    .add(materialStore.chosen, use, materialsFor(use) as string[])
+    .name('材料')
+    .onChange(() => {
+      materialStore.density = null // a gravity typed for the other material
+      saveMaterials(materialStore)
+      applyMaterial()
+    })
+  ctl.domElement.classList.add('cv-material')
+  const edit = document.createElement('button')
+  edit.type = 'button'
+  edit.className = 'cv-material-edit'
+  edit.title = '材料の基準（比重・肉厚の下限・勾配・根拠）を見る・直す'
+  edit.setAttribute('aria-label', '材料の基準を編集')
+  edit.append(icon(ICON.edit, 13))
+  edit.addEventListener('click', () => showMaterialPop(!materialPop.shown || materialPopAnchor !== edit, edit))
+  ctl.domElement.append(edit)
+  useCtl.domElement.after(ctl.domElement)
+  ctl.show(shown)
+  materialCtl = ctl
+}
+gui.$children.prepend(useCtl.domElement)
+makeMaterialCtl()
+/** the material's gravity and, while 判定の基準 follows it, its threshold and draft */
+function applyMaterial(): void {
+  materialBefore = materialNow()
+  applyDensity()
+  applyBasis()
+}
+/**
+ * What the 用途 shows: 射出成形 every check; 一般 not the moulding's own
+ * (抜き勾配, 問題の一覧, the projected area and the clamping force), and
+ * what they had on screen goes (the draft colours, the list).
+ */
+function applyUse(): void {
+  applyUseVisibility()
+  if (materialStore.use === 'general') {
+    if (draftState.enabled) {
+      draftState.enabled = false
+      updateDraft()
+    }
+    if (checkState.enabled) {
+      checkState.enabled = false
+      void updateChecks()
+    }
+  }
+  updateProjection()
+}
+/** the rows of the 用途 and the material (a 3D model's), and the moulding's folders (射出成形's) */
+function applyUseVisibility(): void {
+  const model = modelPanel && !is2D
+  const molding = materialStore.use === 'molding'
+  useCtl.show(model)
+  materialCtl?.show(model)
+  for (const f of [draftFolder, checkFolder]) f.show(model && molding)
+  pressureCtl.show(molding)
+}
+
 // ---- projected area along the mold-opening direction (for the clamping force)
 // Asked again when the visible parts or the direction change; the latest
 // request wins, and answers are kept per model, axis and set of parts.
@@ -2099,7 +2217,8 @@ function cancelProjection(): void {
 }
 function updateProjection(): void {
   const modelId = currentModelId
-  if (!modelId || is2D || !viewer.hasFaces()) {
+  // 一般: no mould, no clamping force
+  if (!modelId || is2D || !viewer.hasFaces() || materialStore.use === 'general') {
     cancelProjection()
     return
   }

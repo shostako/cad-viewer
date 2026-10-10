@@ -37,7 +37,7 @@ import tempfile
 
 from PIL import Image
 
-from nav_common import BG, DXF, STEP_SRC, SURFACE, cross, nav_session, norm, sub
+from nav_common import BG, DXF, STEP_SRC, SURFACE, classic_basis, cross, nav_session, norm, sub
 
 # The shared mini_mold.step: every sidecar request is answered in the page
 # (see run()), so other scripts' notes on it never show here.
@@ -190,6 +190,8 @@ def run(parts: str) -> None:
 
         with nav_session() as nav:
             page = nav.page
+            # the checks at the app's own 1.5 mm and 1.0° (判定の基準 手で決める), as written: the default is the material's
+            classic_basis(page)
             settle, project, pick, ctl, click_button = nav.settle, nav.project, nav.pick, nav.ctl, nav.click_button
             # The shared backend may hold measure markers on mini_mold from other
             # runs; they would be drawn over the sample points. Saves stay in the

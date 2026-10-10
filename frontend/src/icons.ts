@@ -19,6 +19,7 @@ import {
   ImageDown,
   MapPin,
   MoveHorizontal,
+  Pencil,
   Radius,
   Rotate3d,
   Ruler,
@@ -52,6 +53,7 @@ export const ICON = {
   centre: Crosshair,
   max: Expand,
   done: Check,
+  edit: Pencil,
 } satisfies Record<string, IconNode>
 
 /** an icon as an <svg> in the text colour; decorative (the control carries the name) */

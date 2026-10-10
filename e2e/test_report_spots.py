@@ -25,7 +25,7 @@ import re
 from PIL import Image
 
 import gui_common
-from nav_common import TESTDATA, nav_session
+from nav_common import TESTDATA, classic_basis, nav_session
 
 RIBBED = TESTDATA / "ribbed_plate.stl"
 BOX = ((-40, -25, 0), (40, 25, 12))
@@ -66,6 +66,8 @@ blue = lambda r, g, b: b > 170 and b > 1.5 * r
 
 with nav_session() as n:
     page = n.page
+    # the checks at the app's own 1.5 mm and 1.0° (判定の基準 手で決める), as written: the default is the material's
+    classic_basis(page)
 
     def colouring():
         return page.evaluate(

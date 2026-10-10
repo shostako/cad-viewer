@@ -14,6 +14,7 @@
  * thickness.py).
  */
 import * as THREE from 'three'
+import { fmtThin } from './materials'
 
 export type ThicknessMethod = 'ray' | 'ball'
 
@@ -98,10 +99,8 @@ export function thicknessTipText(v: number | null): string {
   return v === null ? 'データなし' : `${v.toFixed(2)} mm`
 }
 
-/** a length on the legend: the threshold moves in 0.1 mm steps */
-function mm(v: number): string {
-  return v.toFixed(1)
-}
+/** a length on the legend: the threshold moves in 0.01 mm steps (1.5, 0.64; twice them 3.0, 1.28) */
+const mm = fmtThin
 
 /** CSS colour (sRGB hex) of a linear colour, as the screen shows it unshaded */
 function css(c: ArrayLike<number>): string {
