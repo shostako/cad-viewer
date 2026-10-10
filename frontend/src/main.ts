@@ -2024,7 +2024,13 @@ testHooks.__cadView = () => {
 // WebGL resource counters of the last frame: a style switch must build no geometry
 testHooks.__cadRenderInfo = () => {
   const info = viewer.renderer.info
-  return { geometries: info.memory.geometries, programs: info.programs?.length ?? 0, calls: info.render.calls }
+  return {
+    geometries: info.memory.geometries,
+    programs: info.programs?.length ?? 0,
+    calls: info.render.calls,
+    // frames drawn so far: they stop while nothing changes
+    frames: viewer.frameCount,
+  }
 }
 testHooks.__cadStallSidecar = (ms: number) => __stallNextSidecar(ms)
 // presets and fits move smoothly for the user; off under automation unless turned on here
