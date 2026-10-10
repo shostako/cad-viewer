@@ -6,6 +6,7 @@
  * diameter (hole/boss measurement, the injection-molding bread & butter).
  */
 import * as THREE from 'three'
+import { CSS2DObject } from 'three/examples/jsm/renderers/CSS2DRenderer.js'
 import {
   measureDistance,
   measureEdgeInfo,
@@ -36,6 +37,14 @@ export interface MeasureEntry {
 
 const MARKER_COLOR = 0xffb020
 const DIM_COLOR = 0xffd060
+/** the entry whose row the pointer is on: preselect.ts's cyan (style.css --cv-pick) */
+const HOT_COLOR = 0x55d6ff
+/**
+ * The unit of every measured length: OCCT reads STEP and IGES into mm (its
+ * default session unit), and only B-rep models are measured. Shown on the 3D
+ * labels and in the list; the saved entries keep the bare numbers.
+ */
+export const LENGTH_UNIT = 'mm'
 
 export class MeasureTool {
   private viewer: Viewer
@@ -48,6 +57,8 @@ export class MeasureTool {
   private partNames: ReadonlyMap<number, string> | null = null
   private pending: { pick: PickResult; marker: THREE.Object3D } | null = null
   private entries: MeasureEntry[] = []
+  /** the entry lit by setHot */
+  private hotId: number | null = null
   private nextId = 1
   private listeners: (() => void)[] = []
   busy = false
@@ -170,8 +181,9 @@ export class MeasureTool {
         objects.push(line)
       }
       if (data.labelText) {
+        // a length says its unit (a note is the user's own text)
         const label = this.viewer.makeLabel(
-          data.labelText,
+          data.annotation ? data.labelText : `${data.labelText} ${LENGTH_UNIT}`,
           new THREE.Vector3(...data.labelPos),
           data.annotation ? 'note-label' : 'dim-label',
         )
@@ -308,6 +320,38 @@ export class MeasureTool {
   private addEntry(label: string, objects: THREE.Object3D[], data: EntryData): void {
     this.entries.push({ id: this.nextId++, label, objects, data })
     this.emit()
+  }
+
+  /**
+   * Light one entry's label, line and points in the cyan of the preselection
+   * (its row is under the pointer), or none (null). Only colours and a class
+   * change: nothing is rebuilt.
+   */
+  setHot(id: number | null): void {
+    if (id === this.hotId) return
+    this.hotId = id
+    for (const e of this.entries) {
+      const hot = e.id === id
+      for (const o of e.objects) {
+        if (o instanceof CSS2DObject) o.element.classList.toggle('hot', hot)
+        else if (o instanceof THREE.Line) (o.material as THREE.LineBasicMaterial).color.setHex(hot ? HOT_COLOR : DIM_COLOR)
+        else if (o instanceof THREE.Mesh) (o.material as THREE.MeshBasicMaterial).color.setHex(hot ? HOT_COLOR : MARKER_COLOR)
+      }
+    }
+  }
+
+  /** the entry whose 3D label is drawn at this point of the page (client px), if any */
+  entryAt(x: number, y: number): number | null {
+    // the last drawn is on top
+    for (let i = this.entries.length - 1; i >= 0; i--) {
+      for (const o of this.entries[i].objects) {
+        if (!(o instanceof CSS2DObject)) continue
+        const r = o.element.getBoundingClientRect()
+        // (a label out of the view is not displayed: an empty box)
+        if (r.width > 0 && x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return this.entries[i].id
+      }
+    }
+    return null
   }
 
   remove(id: number): void {

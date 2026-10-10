@@ -30,7 +30,7 @@ export interface Measurement2DEntry extends Measurement2D {
   id: number
 }
 
-/** The HUD line and the 計測 list row of a measurement: "距離 d (ΔX dx, ΔY dy)" */
+/** The HUD line of a measurement: "距離 d (ΔX dx, ΔY dy)" (its list row: measurelist.ts drawingRow) */
 export function measurementText(m: Measurement2D): string {
   const dx = m.b.dxf[0] - m.a.dxf[0]
   const dy = m.b.dxf[1] - m.a.dxf[1]
