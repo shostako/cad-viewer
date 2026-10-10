@@ -17,9 +17,12 @@ of radius 4 at (25, 30) and (75, 30) z 15..40, the cavity block
 30..70 x 15..45 x 15..35. Distances on screen from __cadProject; what a click
 takes from __cadPick (the same pick as the click and the hover).
 """
+import io
 import math
 import tempfile
 from pathlib import Path
+
+from PIL import Image
 
 import gui_common
 from nav_common import TESTDATA, empty_sidecar, nav_session
@@ -50,6 +53,16 @@ with nav_session() as n:
 
     def pick(xy):
         return n.pick(xy)
+
+    LIGHT_BLUE = (0x55, 0xD6, 0xFF)  # the preselection's 水色 (preselect.ts PRESELECT_COLOR)
+
+    def blueness(xyz):
+        """how near the pixel at the point is to 水色 (1) rather than to the plain pin (0), a 5 x 5 mean"""
+        x, y = n.project(xyz)
+        img = Image.open(io.BytesIO(page.screenshot())).convert("RGB")
+        px = [img.getpixel((int(x) + dx, int(y) + dy)) for dx in range(-2, 3) for dy in range(-2, 3)]
+        mean = [sum(c[i] for c in px) / len(px) for i in range(3)]
+        return mean
 
     n.load(str(mold))
     assert not filter_ctl().is_visible(), "選択 only in 計測 / 注記"
@@ -93,6 +106,7 @@ with nav_session() as n:
     set_filter("頂点")
     v = pick(p18)
     assert v and v["kind"] == "vertex" and math.dist(v["point"], corner) < 1e-3, v
+    assert pick(p15) is None, ("頂点 alone: none near the middle of an edge", pick(p15))
     print("2 vertex", v)
 
     # ---- 部品: a whole part, and the clearance between two
@@ -101,10 +115,30 @@ with nav_session() as n:
     xy = n.project(pin2_front)
     p = pick(xy)
     assert p and p["kind"] == "part", p
+    # the highlight is the whole pin: on its side under the cursor, its top too
+    # (with 面 only the side is tinted: the top keeps the pin's own colour)
+    pin2_top = (75, 30, 40)
+    page.mouse.move(10, 10)
+    n.settle()
+    plain = blueness(pin2_top)
     page.mouse.move(*xy)
     n.settle()
     page.wait_for_timeout(200)
     assert page.inner_text("#cursor-tip") == "core_pin · 全体", page.inner_text("#cursor-tip")
+    lit = blueness(pin2_top)
+    set_filter("面")
+    page.mouse.move(xy[0] + 1, xy[1])
+    n.settle()
+    page.wait_for_timeout(200)
+    face_only = blueness(pin2_top)
+    set_filter("部品")
+    page.mouse.move(*xy)
+    n.settle()
+    page.wait_for_timeout(200)
+    to_blue = lambda c: math.dist(c, LIGHT_BLUE)
+    assert to_blue(lit) < to_blue(plain) - 40, ("部品: the pin's top is tinted too", plain, lit)
+    assert to_blue(face_only) > to_blue(lit) + 40, ("面: the top keeps its colour", face_only, lit)
+    print("2b the whole pin lit", [round(v) for v in plain], [round(v) for v in lit], [round(v) for v in face_only])
     page.mouse.click(*xy)
     n.settle()
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('core_pin 全体 を選択')", timeout=5000)
