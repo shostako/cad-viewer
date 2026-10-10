@@ -135,6 +135,8 @@ def _resolve(ref: dict[str, Any], meshes: list[PartMesh]) -> TopoDS_Shape:
     if mesh is None:
         raise MeasureError(f"unknown partId: {part_id}")
 
+    if kind == "part":  # a whole part (選択: 部品): its shape, every solid and face of it
+        return mesh.part.shape
     topo_map = {"face": mesh.face_map, "edge": mesh.edge_map, "vertex": mesh.vertex_map}.get(kind)
     if topo_map is None:
         raise MeasureError(f"unknown entity kind: {kind}")
@@ -228,6 +230,8 @@ def _centre(shape: TopoDS_Shape) -> tuple[str, Any]:
         if ctype == GeomAbs_Line:
             return "none", "直線の稜線に中心はない"
         return "none", "この稜線に中心はない（円でも楕円でもない）"
+    if kind != TopAbs_FACE:
+        return "none", "部品全体に中心はない"
     face = TopoDS.Face_s(shape)
     surf = BRepAdaptor_Surface(face)
     stype = surf.GetType()
@@ -307,7 +311,8 @@ def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
     for shape, which in ((sa, "1 点目"), (sb, "2 点目")):
         kind = shape.ShapeType()
         if kind not in (TopAbs_VERTEX, TopAbs_EDGE):
-            return _unavailable("max", f"{which}: 面の最大の距離は出さない（頂点か稜線を選ぶ）")
+            what = "面" if kind == TopAbs_FACE else "部品全体"
+            return _unavailable("max", f"{which}: {what}の最大の距離は出さない（頂点か稜線を選ぶ）")
         kinds.append(kind)
     if kinds == [TopAbs_VERTEX, TopAbs_VERTEX]:
         return _answer("max", BRep_Tool.Pnt_s(TopoDS.Vertex_s(sa)), BRep_Tool.Pnt_s(TopoDS.Vertex_s(sb)))

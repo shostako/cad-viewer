@@ -14,7 +14,12 @@ THREE.BufferGeometry.prototype.computeBoundsTree = computeBoundsTree
 THREE.BufferGeometry.prototype.disposeBoundsTree = disposeBoundsTree
 THREE.Mesh.prototype.raycast = acceleratedRaycast
 
-export type EntityKind = 'vertex' | 'edge' | 'face'
+export type EntityKind = 'vertex' | 'edge' | 'face' | 'part'
+/**
+ * What a click may take (the operation panel's 選択): anything (a vertex, else
+ * an edge near the cursor, else the face), one kind alone, or a whole part.
+ */
+export type PickFilter = 'any' | 'face' | 'edge' | 'vertex' | 'part'
 
 export interface PickResult {
   partId: number
@@ -37,8 +42,12 @@ export interface FaceHit {
 
 const VERTEX_SNAP_PX = 14
 const EDGE_SNAP_PX = 10
+/** px: how near a vertex or an edge a click takes it when that kind alone may be picked (farther: nothing) */
+const FILTER_SNAP_PX = 24
 
 export class Picker {
+  /** what a click may take (PickFilter); the hover preselection asks the same pick, so it shows the same */
+  filter: PickFilter = 'any'
   private raycaster = new THREE.Raycaster()
   private parts = new Map<number, PartData>()
   private meshes: THREE.Mesh[] = []
@@ -153,20 +162,23 @@ export class Picker {
 
   /** Pick at normalized device coords; returns null when nothing is hit. */
   pick(ndc: THREE.Vector2): PickResult | null {
+    const f = this.filter
     // ワイヤーフレーム / 半透明 draw every visible part's lines, also through
     // the faces in front of them: a click on a drawn line means that line,
     // whichever part it belongs to. Without this the ray hits the (undrawn or
     // see-through) face of the part in front, and a measurement silently
     // takes the wrong part.
-    if (this.viewer.seeThrough) {
-      const drawn = this.snapDrawnLines(ndc)
+    if (this.viewer.seeThrough && f !== 'face' && f !== 'part') {
+      const drawn = this.snapDrawnLines(ndc, undefined, false, f === 'any' ? 'any' : f)
       if (drawn) return drawn
+      if (f !== 'any') return null // a vertex or an edge alone: none near
     }
     const hit = this.firstVisibleHit(ndc)
     if (!hit) return null
     const partId = hit.object.userData.partId as number
     const part = this.parts.get(partId)
     if (!part || hit.faceIndex === undefined || hit.faceIndex === null) return null
+    if (f === 'part') return { partId, kind: 'part', id: partId, point: hit.point.clone() }
 
     // snap candidates must respect the same clipping planes as the hit —
     // a clipped-away vertex/edge within snap radius must not win
@@ -175,13 +187,19 @@ export class Picker {
     }
     const clip = hitMat.clippingPlanes ?? []
 
-    // 1) vertex snap (screen-space)
-    const v = this.snapVertex(part, hit.point, clip)
-    if (v) return v
+    // 1) vertex snap (screen-space); a vertex alone: farther, and nothing else
+    if (f === 'any' || f === 'vertex') {
+      const v = this.snapVertex(part, hit.point, clip, f === 'vertex' ? FILTER_SNAP_PX : VERTEX_SNAP_PX)
+      if (v) return v
+      if (f === 'vertex') return null
+    }
 
-    // 2) edge snap (screen-space distance to edge segments)
-    const e = this.snapEdge(part, hit.point, clip)
-    if (e) return e
+    // 2) edge snap (screen-space distance to edge segments); an edge alone: likewise
+    if (f === 'any' || f === 'edge') {
+      const e = this.snapEdge(part, hit.point, clip, f === 'edge' ? FILTER_SNAP_PX : EDGE_SNAP_PX)
+      if (e) return e
+      if (f === 'edge') return null
+    }
 
     // 3) face
     // Mesh formats (STL/3MF/...) ship faceRanges: [] — no B-rep face ids exist.
@@ -206,7 +224,15 @@ export class Picker {
    * took a while, only after four times that long (main.ts pickUnderCursor;
    * not at all during a drag).
    */
-  private snapDrawnLines(ndc: THREE.Vector2, only?: (part: PartData) => boolean, curves = false): PickResult | null {
+  private snapDrawnLines(
+    ndc: THREE.Vector2,
+    only?: (part: PartData) => boolean,
+    curves = false,
+    want: 'any' | 'vertex' | 'edge' = 'any',
+  ): PickResult | null {
+    // a kind alone is looked for farther, and the other kind not at all
+    const vR = want === 'vertex' ? FILTER_SNAP_PX : want === 'edge' ? -1 : VERTEX_SNAP_PX
+    const eR = want === 'edge' ? FILTER_SNAP_PX : want === 'vertex' ? -1 : EDGE_SNAP_PX
     const cam = this.viewer.camera
     cam.updateMatrixWorld()
     const el = this.viewer.renderer.domElement
@@ -236,10 +262,10 @@ export class Picker {
       d < bestD - 0.5 || (d <= bestD + 0.5 && depth < bestDepth)
 
     let vBest: PickResult | null = null
-    let vD = VERTEX_SNAP_PX
+    let vD = vR
     let vDepth = Infinity
     let eBest: { part: PartData; seg: number; point: THREE.Vector3 } | null = null
-    let eD = EDGE_SNAP_PX
+    let eD = eR
     let eDepth = Infinity
     const sa = new THREE.Vector3()
     const sb = new THREE.Vector3()
@@ -261,12 +287,12 @@ export class Picker {
         if (va.z > -near) continue // behind the camera
         toScreen(va, sa)
         const d = Math.hypot(sa.x - cx, sa.y - cy)
-        if (d > VERTEX_SNAP_PX || !better(d, sa.z, vD, vDepth) || !visibleAt(clip, p)) continue
+        if (d > vR || !better(d, sa.z, vD, vDepth) || !visibleAt(clip, p)) continue
         vD = d
         vDepth = sa.z
         vBest = { partId: part.id, kind: 'vertex', id: i / 3 + 1, point: p.clone() } // 1-based, as snapVertex
       }
-      if (vBest) continue // a vertex beats any edge; still look for nearer vertices in other parts
+      if (vBest || eR < 0) continue // a vertex beats any edge; still look for nearer vertices in other parts
 
       const segs = part.edges
       for (let s = 0; s * 6 + 5 < segs.length; s++) {
@@ -285,7 +311,7 @@ export class Picker {
         const l2 = dx * dx + dy * dy
         const t = l2 > 0 ? THREE.MathUtils.clamp(((cx - sa.x) * dx + (cy - sa.y) * dy) / l2, 0, 1) : 0
         const d = Math.hypot(sa.x + t * dx - cx, sa.y + t * dy - cy)
-        if (d > EDGE_SNAP_PX) continue
+        if (d > eR) continue
         // the 3D point: on the segment, nearest the pick ray (perspective-correct)
         ray.distanceSqToSegment(a, b, undefined, onSeg)
         const depth = -p.copy(onSeg).applyMatrix4(view).z
@@ -311,8 +337,9 @@ export class Picker {
     part: PartData,
     hitPoint: THREE.Vector3,
     clip: THREE.Plane[] = [],
+    px = VERTEX_SNAP_PX,
   ): PickResult | null {
-    const maxDist = VERTEX_SNAP_PX * this.pxScale(hitPoint)
+    const maxDist = px * this.pxScale(hitPoint)
     let best = -1
     let bestD = maxDist
     const vs = part.vertices
@@ -339,8 +366,9 @@ export class Picker {
     part: PartData,
     hitPoint: THREE.Vector3,
     clip: THREE.Plane[] = [],
+    px = EDGE_SNAP_PX,
   ): PickResult | null {
-    const maxDist = EDGE_SNAP_PX * this.pxScale(hitPoint)
+    const maxDist = px * this.pxScale(hitPoint)
     const segs = part.edges
     let bestD = maxDist
     let bestSeg = -1

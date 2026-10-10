@@ -29,7 +29,7 @@ import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { MeasureTool, type EntryData } from './measure'
 import { copyText, drawingRow, entryRow, listText, rowElement, type RowView } from './measurelist'
 import { toModelData, type ModelData } from './model'
-import { Picker, type FaceHit, type PickResult } from './picking'
+import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
 import { OTHER_RESIN, PropertiesPanel, REASON_TEXT, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
@@ -329,9 +329,26 @@ const distanceCtl = gui
     // a first point that waits says what its partner will measure
     if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
   })
-/** 距離 shows in 計測 on a 3D model (a drawing measures its own way; the empty screen has nothing to measure) */
+// 選択 (計測 / 注記 on a 3D model): what a click may take; the hover preselection shows the same
+const FILTER_OPTIONS: Record<string, PickFilter> = { すべて: 'any', 面: 'face', 稜線: 'edge', 頂点: 'vertex', 部品: 'part' }
+/** 「稜線だけ」 in the status line's hint (nothing for すべて) */
+const FILTER_NAMES: Record<PickFilter, string> = { any: '', face: '面', edge: '稜線', vertex: '頂点', part: '部品全体' }
+const filterCtl = gui
+  .add(picker, 'filter', FILTER_OPTIONS)
+  .name('選択')
+  .onChange(() => {
+    // what is under a still cursor may be another thing now; the hint names the filter
+    forgetHoverPick()
+    probe.refresh()
+    if (modeHud && hudInfo.textContent === modeHud) {
+      if (measureTool.hasPending) setModeHud(measureTool.pendingStatus(), modeBase)
+      else showModeHint()
+    }
+  })
+/** 距離 shows in 計測 on a 3D model (a drawing measures its own way; the empty screen has nothing to measure), 選択 in 注記 too */
 function showDistanceCtl(): void {
   distanceCtl.show(modelPanel && state.mode === '計測' && !is2D)
+  filterCtl.show(modelPanel && (state.mode === '計測' || state.mode === '注記') && !is2D)
 }
 showDistanceCtl()
 const clearCtl = gui.add(actions, 'clearMeasure').name('計測クリア')
@@ -765,10 +782,11 @@ function setModeHud(text: string, base = ''): void {
 measureTool.onPendingExtent(() => {
   if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
 })
-/** what the mode asks the next click for ('' in なし) */
+/** what the mode asks the next click for ('' in なし); a 選択 other than すべて says what a click takes */
 function modeHint(): string {
-  if (state.mode === '計測') return measureTool.available ? MEASURE_HINT : MEASURE_MESH_HINT
-  if (state.mode === '注記') return NOTE_HINT
+  const only = picker.filter === 'any' ? '' : `${FILTER_NAMES[picker.filter]}だけ・`
+  if (state.mode === '計測') return measureTool.available ? MEASURE_HINT.replace('（', `（${only}`) : MEASURE_MESH_HINT
+  if (state.mode === '注記') return NOTE_HINT.replace('（', `（${only}`)
   return ''
 }
 function showModeHint(): void {
