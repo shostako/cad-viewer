@@ -60,7 +60,9 @@ with nav_session(boxes=("runner",)) as n:
             P,
         )
         page.mouse.dblclick(*cur)
-        assert marker_rect() is not None, "marker must show"
+        # the marker enters the page with the next drawn frame (on a loaded machine, after the
+        # double-click has returned), and stays 1 s
+        page.wait_for_selector(".pivot-marker", state="attached", timeout=500)
         page.wait_for_timeout(450)  # the slide takes 250 ms; the marker stays 1 s
         m = marker_rect()
         assert m and math.dist(m, centre) <= 3, (mode, "marker", m)
