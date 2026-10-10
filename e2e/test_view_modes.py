@@ -174,7 +174,8 @@ with sync_playwright() as p:
     #    visible (and clickable) under the card, and the 3D-only folders stay
     #    hidden only while a drawing is shown
     load(DXF, wait_text="2D図面")
-    assert page.locator("#viewport2d svg").count() == 1
+    # the drawing; its measurement layer (another svg over it) goes with it below
+    assert page.locator("#viewport2d > svg:not(.overlay2d-layer)").count() == 1
     page.route("**/drawing.svg", lambda route: route.abort())
     try:
         page.set_input_files("#file-input", DXF)
