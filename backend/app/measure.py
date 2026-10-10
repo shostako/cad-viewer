@@ -13,9 +13,12 @@ clicked. They never change the value; they choose where the dimension line
 is drawn when the minimum is reached at many places (two parallel faces:
 anywhere they overlap), so that the line stands where the user clicked.
 
-Between two flat things (planar faces, straight edges, one of each) that are
-not parallel, the distance's answer also carries "angle": their angle in
-degrees, 0 to 90 (angle_between).
+The distance's answer carries "delta": the dimension line from its end on A
+to its end on B, along the axes. Between two flat things (planar faces,
+straight edges, one of each) that are not parallel, it also carries "angle":
+their angle in degrees, 0 to 90 (angle_between).
+
+A vertex (vertex_info) says its point.
 
 A face or an edge (face_info, edge_info) says its size by its kind:
 - cylinder, circle: "radius" and "diameter", and "full" (a whole turn: a hole
@@ -61,7 +64,7 @@ from OCP.GeomAPI import GeomAPI_ProjectPointOnSurf
 from OCP.gp import gp_Circ, gp_Cone, gp_Cylinder, gp_Pln, gp_Pnt, gp_Sphere, gp_Vec
 from OCP.GProp import GProp_GProps
 from OCP.ShapeAnalysis import ShapeAnalysis_CanonicalRecognition
-from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON
+from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE, TopAbs_IN, TopAbs_ON, TopAbs_VERTEX
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS, TopoDS_Edge, TopoDS_Face, TopoDS_Shape
 
@@ -141,6 +144,8 @@ def distance(
         "value": value,
         "pointA": [pa.X(), pa.Y(), pa.Z()],
         "pointB": [pb.X(), pb.Y(), pb.Z()],
+        # from A to B along the axes (the line's own ends: exact, as the value)
+        "delta": [pb.X() - pa.X(), pb.Y() - pa.Y(), pb.Z() - pa.Z()],
     }
     ang = angle_between(sa, sb)
     if ang is not None and ang > ANGLE_MIN_DEG:
@@ -394,6 +399,14 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
     return out
 
 
+def vertex_info(ref: dict, meshes: list[PartMesh]) -> dict[str, Any]:
+    """A vertex's point, from the B-rep (the display mesh's copy is float32)."""
+    shape = _resolve(ref, meshes)
+    if shape.ShapeType() != TopAbs_VERTEX:
+        raise MeasureError(f"not a vertex: {ref}")
+    return {"type": "vertex", "point": _xyz(BRep_Tool.Pnt_s(TopoDS.Vertex_s(shape)))}
+
+
 def _near(value: Any) -> tuple[float, float, float] | None:
     """a clicked point as given, [x, y, z]; None when there is none"""
     if value is None:
@@ -415,4 +428,6 @@ def run(request: dict[str, Any], meshes: list[PartMesh]) -> dict[str, Any]:
         return edge_info(request["ref"], meshes, _near(request.get("near")))
     if mtype == "face_info":
         return face_info(request["ref"], meshes, _near(request.get("near")))
+    if mtype == "vertex_info":
+        return vertex_info(request["ref"], meshes)
     raise MeasureError(f"unknown measurement type: {mtype}")

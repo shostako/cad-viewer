@@ -84,6 +84,14 @@ export interface DistanceResult {
   pointB: [number, number, number]
   /** degrees (0..90) between two flat things (planar faces, straight edges) that are not parallel */
   angle?: number
+  /** pointB - pointA: the dimension line along the axes */
+  delta?: [number, number, number]
+}
+
+export interface VertexInfoResult {
+  type: 'vertex'
+  /** exact, from the B-rep (the display mesh's copy is float32) */
+  point: [number, number, number]
 }
 
 /** a point, or a direction */
@@ -178,6 +186,10 @@ export function measureEdgeInfo(modelId: string, ref: EntityRef, near?: Xyz) {
 /** near: the clicked point, for the radius of curvature there (a surface of no simple kind) */
 export function measureFaceInfo(modelId: string, ref: EntityRef, near?: Xyz) {
   return measureRequest<FaceInfoResult>(modelId, { type: 'face_info', ref, near })
+}
+
+export function measureVertexInfo(modelId: string, ref: EntityRef) {
+  return measureRequest<VertexInfoResult>(modelId, { type: 'vertex_info', ref })
 }
 
 /** Per-vertex thickness per part (0 = no data). method: ray=fast, ball=rolling ball (exact at junctions) */

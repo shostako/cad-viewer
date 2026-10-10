@@ -1,6 +1,6 @@
 /**
  * What a click would pick in 計測 / 注記, shown before the click (hover
- * preselection), and the exact size (⌀, R, SR, 勾配) for its label.
+ * preselection), and the exact size (⌀, R, SR, 勾配) or point for its label.
  *
  * The highlight is light blue (水色), apart from the orange / yellow of the
  * measurements and the green of the notes: a face is tinted, an edge drawn
@@ -14,10 +14,10 @@ import * as THREE from 'three'
 import { LineMaterial } from 'three/examples/jsm/lines/LineMaterial.js'
 import { LineSegments2 } from 'three/examples/jsm/lines/LineSegments2.js'
 import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeometry.js'
-import { measureEdgeInfo, measureFaceInfo } from './api'
+import { measureEdgeInfo, measureFaceInfo, measureVertexInfo } from './api'
 import type { PartData } from './model'
 import type { PickResult } from './picking'
-import { edgeSize, faceSize, type Size } from './sizes'
+import { edgeSize, faceSize, pointText, sizeText, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** 水色; #cursor-tip[data-kind='pick'] (style.css) frames the label in the same colour */
@@ -249,26 +249,26 @@ export class Preselect {
 
 const X_AXIS = new THREE.Vector3(1, 0, 0)
 
-/** ms the cursor stays on one face or edge before its size is asked for */
-export const SIZE_REST_MS = 150
+/** ms the cursor stays on one face, edge or vertex before its exact facts are asked for */
+export const INFO_REST_MS = 150
 
 /**
- * The exact size of a face or an edge for the label (sizes.ts: ⌀, R, SR,
- * 勾配), from the backend (edge_info / face_info: the B-rep, not the display
- * mesh). Only a size the whole face or edge has: the radius of curvature at a
- * point of a B-spline is not asked for (it would change along it; a click
- * tells it). Asked once the cursor has stayed on the entity for SIZE_REST_MS,
- * not for every entity it passes over, and once per entity of a model: the
- * answer (a size, or none: flat, or the request failed) is kept until another
- * model is opened. `learned` is called when an answer comes for the entity
- * under the cursor.
+ * What the label adds to an entity's name, exact, from the backend (the
+ * B-rep, not the display mesh): a face's or an edge's size (sizes.ts: ⌀, R,
+ * SR, 勾配), a vertex's point. Only a size the whole face or edge has: the
+ * radius of curvature at a point of a B-spline is not asked for (it would
+ * change along it; a click tells it). Asked once the cursor has stayed on the
+ * entity for INFO_REST_MS, not for every entity it passes over, and once per
+ * entity of a model: the answer (a text, or none: a flat face, or the request
+ * failed) is kept until another model is opened. `learned` is called when an
+ * answer comes for the entity under the cursor.
  */
-export class SizeCache {
+export class InfoCache {
   private modelId: string | null = null
   /** per model (a new map on setModel: a late answer for the old model goes to the old map) */
-  private known = new Map<string, Size | null>()
+  private known = new Map<string, string | null>()
   private asked = new Set<string>()
-  /** the face / edge the cursor is on; null: none (or a vertex) */
+  /** the face / edge / vertex the cursor is on; null: none */
   private restKey: string | null = null
   private timer: ReturnType<typeof setTimeout> | undefined
   private readonly learned: () => void
@@ -285,14 +285,14 @@ export class SizeCache {
     this.asked = new Set()
   }
 
-  /** the size of the face / edge; null: none, or not known yet */
-  get(pick: PickResult): Size | null {
+  /** the text for the face / edge / vertex (⌀8.000, (70.000, 15.000, 35.000)); null: none, or not known yet */
+  get(pick: PickResult): string | null {
     return this.known.get(keyOf(pick)) ?? null
   }
 
-  /** The cursor is on `pick` now (null: on nothing). Another face or edge starts the wait. */
+  /** The cursor is on `pick` now (null: on nothing). Another face, edge or vertex starts the wait. */
   rest(pick: PickResult | null): void {
-    const key = pick && pick.kind !== 'vertex' && pick.id > 0 ? keyOf(pick) : null
+    const key = pick && pick.id > 0 ? keyOf(pick) : null
     if (key === this.restKey) return
     clearTimeout(this.timer)
     this.timer = undefined
@@ -305,7 +305,13 @@ export class SizeCache {
       const known = this.known
       this.asked.add(key)
       // no click point: no radius of curvature at a point is asked for
-      const answer = ref.kind === 'edge' ? measureEdgeInfo(modelId, ref).then(edgeSize) : measureFaceInfo(modelId, ref).then(faceSize)
+      const text = (s: Size | null) => (s ? sizeText(s) : null)
+      const answer =
+        ref.kind === 'vertex'
+          ? measureVertexInfo(modelId, ref).then((i) => pointText(i.point))
+          : ref.kind === 'edge'
+            ? measureEdgeInfo(modelId, ref).then((i) => text(edgeSize(i)))
+            : measureFaceInfo(modelId, ref).then((i) => text(faceSize(i)))
       void answer.then(
         (s) => {
           known.set(key, s)
@@ -317,7 +323,7 @@ export class SizeCache {
           if (known === this.known) this.asked.delete(key)
         },
       )
-    }, SIZE_REST_MS)
+    }, INFO_REST_MS)
   }
 }
 

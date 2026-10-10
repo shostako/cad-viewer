@@ -5,7 +5,7 @@
   plate 面#6"); a note is its own text. The 3D labels say mm too (a note's
   does not).
 - A row's copy and the head's すべてコピー put tab-separated lines on the
-  clipboard (種類, 値, 単位, 対象 A, 対象 B): Excel pastes them into cells. A
+  clipboard (種類, 値, 単位, 対象 A, 対象 B, ΔX, ΔY, ΔZ): Excel pastes them into cells. A
   diameter's 値 is the bare number. The copy works from the keyboard too.
 - The × stays the row's only button (other scripts press "the row's button").
 - The row under the pointer lights its label (class hot) and its points (the
@@ -40,7 +40,7 @@ NOTE_AT = (62, 40, 35)  # on the block's top too, away from the distance's point
 PIN_SIDES = ((75, 26, 27), (79, 30, 27), (77.83, 27.17, 27))
 MARKER = (0xFF, 0xB0, 0x20)
 HOT = (0x55, 0xD6, 0xFF)
-HEAD = "種類\t値\t単位\t対象 A\t対象 B"
+HEAD = "種類\t値\t単位\t対象 A\t対象 B\tΔX\tΔY\tΔZ"
 # saved before the change: a distance, an edge's diameter, a note, and text that is no measurement
 OLD_ENTRIES = [
     {"text": "面#6 ↔ 面#3 : 12.500", "labelText": "12.500", "labelPos": [60, 20, 25],
@@ -181,9 +181,10 @@ with sync_playwright() as p:
     assert label("ゲート位置").inner_text() == "ゲート位置"
 
     # ---- 2. copying: a row, all of them, from the keyboard
-    line_dist = f"距離\t20.000\tmm\t{a}\t{b}"
-    line_dia = "直径\t8.000\tmm\tcore_pin 円筒面\t"
-    line_note = "注記\tゲート位置\t\t\t"
+    # the parallel tops: the line through the click stands straight (ΔZ only)
+    line_dist = f"距離\t20.000\tmm\t{a}\t{b}\t0.000\t0.000\t20.000"
+    line_dia = "直径\t8.000\tmm\tcore_pin 円筒面\t\t\t\t"
+    line_note = "注記\tゲート位置\t\t\t\t\t\t"
     copy1 = page.locator("#measure-list li").nth(0).locator(".m-copy")
     copy1.click()
     page.wait_for_timeout(100)
@@ -193,7 +194,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(100)
     text = clipboard()
     assert text == "\n".join([HEAD, line_dist, line_dia, line_note]), ("2 すべてコピー", text)
-    assert all(len(line.split("\t")) == 5 for line in text.split("\n")), "2 five cells a line"
+    assert all(len(line.split("\t")) == 8 for line in text.split("\n")), "2 eight cells a line"
     assert "コピーした" in page.inner_text("#measure-copy-all")
     page.evaluate("navigator.clipboard.writeText('')")
     page.locator("#measure-list li").nth(1).locator(".m-copy").focus()
@@ -270,12 +271,13 @@ with sync_playwright() as p:
     page.click("#measure-copy-all")
     page.wait_for_timeout(100)
     assert clipboard().split("\n")[1:] == [
-        "距離\t12.500\tmm\t面#6\t面#3",
-        "直径\t4.000\tmm\t円エッジ (L=12.566)\t",
-        "注記\t古い注記\t\t\t",
-        "\t\t\t手で書いた行\t",
-        "距離\t1.000\tmm\t面#1\t面#2",
-        "注記\t最後の注記\t\t\t",
+        # saved before the axes: none in the copy
+        "距離\t12.500\tmm\t面#6\t面#3\t\t\t",
+        "直径\t4.000\tmm\t円エッジ (L=12.566)\t\t\t\t",
+        "注記\t古い注記\t\t\t\t\t\t",
+        "\t\t\t手で書いた行\t\t\t\t",
+        "距離\t1.000\tmm\t面#1\t面#2\t\t\t",
+        "注記\t最後の注記\t\t\t\t\t\t",
     ], clipboard()
 
     # ---- 6. a copy while a note is being typed: the first click copies, the note stays open
@@ -286,7 +288,7 @@ with sync_playwright() as p:
     page.evaluate("navigator.clipboard.writeText('')")
     page.locator("#measure-list li").nth(0).locator(".m-copy").click()
     page.wait_for_timeout(100)
-    assert clipboard() == "距離\t12.500\tmm\t面#6\t面#3", ("6 the first click copies", clipboard())
+    assert clipboard() == "距離\t12.500\tmm\t面#6\t面#3\t\t\t", ("6 the first click copies", clipboard())
     assert page.locator(".note-input").count() == 1 and page.input_value(".note-input") == "書きかけ", "6 the note stays open"
     page.keyboard.press("Escape")
     gui_common.set_mode(page, "なし")

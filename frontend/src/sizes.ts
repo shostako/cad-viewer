@@ -41,6 +41,11 @@ export function fmtDeg(v: number): string {
 /** what the list adds to a local radius's name */
 export const LOCAL_NOTE = '（クリックした点）'
 
+/** a point as text: (12.000, 20.000, 10.000) */
+export function pointText(p: readonly [number, number, number]): string {
+  return `(${p.map(fmt).join(', ')})`
+}
+
 /** the size as text: ⌀8.000, R5.000, SR4.000, 勾配 2.000° */
 export function sizeText(s: Size): string {
   return s.mark === '勾配' ? `勾配 ${fmtDeg(s.value)}` : `${s.mark}${fmt(s.value)}`

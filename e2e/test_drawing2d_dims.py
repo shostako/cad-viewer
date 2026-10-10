@@ -374,10 +374,11 @@ try:
         page.click("#measure-copy-all")
         page.wait_for_function("window.__copied.length === 1", timeout=5000)
         lines = page.evaluate("window.__copied[0]").split("\n")
-        assert lines[0] == "種類\t値\t単位\t対象 A\t対象 B" and len(lines) == len(current) + 1, lines
+        assert lines[0] == "種類\t値\t単位\t対象 A\t対象 B\tΔX\tΔY\tΔZ" and len(lines) == len(current) + 1, lines
         for line, m in zip(lines[1:], current):
             d, dx, dy = expected(m)
-            assert line == f"距離\t{d:.3f}\t\tΔX {dx:.3f}\tΔY {dy:.3f}", ("the copied line", line, m)
+            # a drawing has no entity names and no ΔZ: its ΔX and ΔY in their own cells
+            assert line == f"距離\t{d:.3f}\t\t\t\t{dx:.3f}\t{dy:.3f}\t", ("the copied line", line, m)
         print("list rows and copy ok")
 
         def check_view(tag):

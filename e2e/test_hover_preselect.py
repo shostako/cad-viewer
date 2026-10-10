@@ -1,9 +1,10 @@
 """E2E: in 計測 / 注記, what a click would pick is shown before the click
 (hover preselection): the face tinted, the edge drawn thick, the vertex ringed,
 in light blue (水色); its name beside the cursor (#cursor-tip) as the measure
-list names it, with the exact ⌀ of a circular edge / cylindrical face once the
-backend has answered; after the first point, a dotted line from it to the
-candidate; the status line says which point the next click gives.
+list names it, with the exact ⌀ of a circular edge / cylindrical face, and a
+vertex's point, once the backend has answered; after the first point, a
+dotted line from it to the candidate; the status line says which point the
+next click gives.
 
 Expected values never come from the code under test. They come from how
 mini_mold.step is built (testdata/make_step_assembly.py: plate 100x60x15,
@@ -45,6 +46,8 @@ PIN2_RIM = (75, 26, 40)  # on pin 2's top circle, the side toward the camera (-Y
 PIN2_SIDE = (75 + 4 * math.cos(math.radians(-60)), 30 + 4 * math.sin(math.radians(-60)), 27)
 # the shortest distance from the block's top face (z 35, x 30..70, y 15..45) to the corner: from (70, 15, 35)
 TOP_TO_CORNER = math.dist((70, 15, 35), CORNER)
+# the corner's label: its name, then its point (the backend's, exact)
+CORNER_AT = " (100.000, 0.000, 15.000)"
 
 
 def main():
@@ -262,9 +265,10 @@ def run(page, nav, infos):
     assert hit and hit["kind"] == "vertex" and math.dist(hit["point"], CORNER) < 1e-6, ("the snap takes the corner", hit)
     vertex_b = hit
     hover(v_xy)
+    page.wait_for_function(f"document.querySelector('#cursor-tip')?.textContent.endsWith({CORNER_AT!r})", timeout=10000)
     t = tip_text("(e) vertex")
     print("(e) vertex label:", t)
-    assert t == name_of(hit, "plate"), (t, hit)
+    assert t == name_of(hit, "plate") + CORNER_AT, (t, hit)
     h = frame()
     ring = [(c_xy[0] + 7.75 * math.cos(a), c_xy[1] + 7.75 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 24, endpoint=False)]
     inside = [(c_xy[0] + 2.5 * math.cos(a), c_xy[1] + 2.5 * math.sin(a)) for a in np.linspace(0, 2 * math.pi, 8, endpoint=False)]
@@ -437,7 +441,7 @@ def run(page, nav, infos):
     # the vertex: the label, then the click takes that very vertex
     hover(v_xy)
     t_b = tip_text("(g) B")
-    assert t_b == name_of(vertex_b, "plate"), t_b
+    assert t_b == name_of(vertex_b, "plate") + CORNER_AT, ("the point is known already", t_b)
     page.mouse.click(*v_xy)
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('距離')", timeout=10000)
     # the row: the value with its unit first, what was measured under it
@@ -445,7 +449,8 @@ def run(page, nav, infos):
         "[...document.querySelectorAll('#measure-list li')].map(li =>"
         " [li.querySelector('.m-value').textContent, li.querySelector('.m-what').textContent])"
     )
-    want = [f"{TOP_TO_CORNER:.3f} mm", f"{t_a.replace(' · ', ' ')} ↔ {t_b.replace(' · ', ' ')}"]
+    # the list names the vertex as the label does, without its point (the label's addition)
+    want = [f"{TOP_TO_CORNER:.3f} mm", f"{t_a.replace(' · ', ' ')} ↔ {t_b.removesuffix(CORNER_AT).replace(' · ', ' ')}"]
     print("(g) row:", rows, "want", want)
     assert rows == [want], (rows, want)
     assert hud() == f"距離 {TOP_TO_CORNER:.3f}", hud()

@@ -826,13 +826,19 @@ body,
   font-weight: 400;
 }
 
-#measure-list .m-what {
+#measure-list .m-what,
+#measure-list .m-where {
   color: var(--cv-text-3);
   font-size: var(--cv-fs-xs);
   line-height: 1.35;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* where: numbers the narrow list must not cut off (it wraps between ΔX, ΔY, ΔZ instead) */
+#measure-list .m-where {
+  white-space: normal;
 }
 
 /* the copy before the × on screen; the × stays the row's first (only) button */
