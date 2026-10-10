@@ -9,7 +9,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageDraw
 from playwright.sync_api import sync_playwright
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
@@ -50,8 +50,11 @@ with sync_playwright() as p:
     print(f"box on screen: {w:.0f} x {h:.0f} px")
     assert h > 800 * 0.4, ("全体表示 must frame the box, not the axis lines", h)
 
-    # the axis lines are visible (amber), not the near-background edge color
+    # the axis lines are visible (amber), not the near-background edge color.
+    # Not counted on the part tree: its mark for the curves is amber too
     img = Image.open(io.BytesIO(page.screenshot())).convert("RGB")
+    t = page.locator("#tree-panel").bounding_box()
+    ImageDraw.Draw(img).rectangle((t["x"], t["y"], t["x"] + t["width"], t["y"] + t["height"]), fill=(0, 0, 0))
     amber = sum(1 for px in img.getdata() if max(abs(a - b) for a, b in zip(px, CURVE)) < 40)
     print("amber pixels:", amber)
     assert amber > 100, amber
