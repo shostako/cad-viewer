@@ -19,7 +19,7 @@ import {
   type ModelProperties,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
-import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
+import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_LABELS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
@@ -30,9 +30,11 @@ import { copyText, drawingRow, entryRow, listText, rowElement, type RowView } fr
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
-import { OTHER_RESIN, PropertiesPanel, RESIN_DENSITY, RESIN_NAMES } from './properties'
+import { OTHER_RESIN, PropertiesPanel, REASON_TEXT, RESIN_DENSITY, RESIN_NAMES } from './properties'
 import { SectionTool, type Axis } from './section'
+import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { SpotNav } from './spotnav'
+import { spotText } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
@@ -68,6 +70,7 @@ app.innerHTML = `
     <div id="recent-pop-empty">まだ無い（「ファイルを開く」で選んだファイルとドロップしたファイルを、新しい順に 8 件まで覚える）</div>
   </div>
   <div id="corner-br">
+    <div id="check-panel" class="hidden"></div>
     <div id="measure-panel" class="hidden">
       <div id="measure-head">
         <span id="measure-title">計測</span>
@@ -130,6 +133,7 @@ const loadCard = new LoadCard(
   placeCentreCards,
 )
 const propsEl = document.querySelector<HTMLDivElement>('#props-panel')!
+const checkPanelEl = document.querySelector<HTMLDivElement>('#check-panel')!
 
 const viewer = new Viewer(viewport)
 // bottom left, outside #viewport: its clicks never reach the canvas (pick, pivot, controls)
@@ -148,6 +152,7 @@ const partTree = new PartTree(treePanel, {
   setVisible: (changes) => {
     for (const [id, on] of changes) viewer.setPartVisible(id, on)
     spotNav.revalidate() // a list of places holds for the parts it was made from
+    scheduleChecks()
     propsPanel.refresh()
     updateProjection()
     probe.refresh() // a part under a still cursor may have gone (its row mark, its value)
@@ -236,7 +241,7 @@ let modelPanel = false
 function applyEmptyPanel(empty: boolean): void {
   modelPanel = !empty
   for (const c of [modeCtl, clearCtl, exportBgCtl]) c.show(!empty)
-  for (const f of [sectionFolder, thicknessFolder, draftFolder, propsFolder]) f.show(!empty && !is2D)
+  for (const f of [sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
 }
 
 /** room kept between a centre card and the operation panel, and the window's edge */
@@ -764,6 +769,27 @@ function refreshHeatmapHud(): void {
   // (and replaces) the line; not over a measure result that replaced it
   if (thicknessHud && hudInfo.textContent === thicknessHud) setThicknessHud(heatmapHud())
 }
+/** a thickness being fetched for the current model, by method (the heatmap and the problem list ask for the same one) */
+const thicknessInFlight = new Map<ThicknessMethod, Promise<Map<number, Float32Array>>>()
+/**
+ * The current model's thickness by `method`: the cached one, else fetched once
+ * (a second ask while it is on its way waits for the same answer). The one
+ * who uses the answer caches it (an answer nobody wants any more is not kept:
+ * the heatmap's late answers are dropped).
+ */
+function thicknessFor(method: ThicknessMethod): Promise<Map<number, Float32Array>> {
+  const cached = thicknessCache.get(method)
+  if (cached) return Promise.resolve(cached)
+  let p = thicknessInFlight.get(method)
+  if (!p) {
+    const asked: Promise<Map<number, Float32Array>> = fetchThickness(currentModelId!, method).finally(() => {
+      if (thicknessInFlight.get(method) === asked) thicknessInFlight.delete(method)
+    })
+    thicknessInFlight.set(method, asked)
+    p = asked
+  }
+  return p
+}
 async function updateThickness(): Promise<void> {
   if (!currentModelId) return
   if (!thicknessState.enabled) {
@@ -780,7 +806,7 @@ async function updateThickness(): Promise<void> {
     let data = thicknessCache.get(requestedMethod)
     if (!data) {
       setThicknessHud(requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...')
-      data = await fetchThickness(requestedId, requestedMethod)
+      data = await thicknessFor(requestedMethod) // the problem list's ask may be on its way already
       if (
         requestedGen !== loadGen ||
         requestedId !== currentModelId ||
@@ -832,11 +858,17 @@ thicknessFolder
 thicknessFolder
   .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
   .name('方式')
-  .onChange(() => void updateThickness())
+  .onChange(() => {
+    void updateThickness()
+    scheduleChecks()
+  })
 thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.1)
   .name('閾値 (mm)')
-  .onChange(() => void updateThickness())
+  .onChange(() => {
+    void updateThickness()
+    scheduleChecks()
+  })
 
 // ---- draft angle (抜き勾配)
 function updateDraft(): void {
@@ -897,6 +929,7 @@ draftFolder
     saveDraftPrefs()
     updateDraft()
     updateProjection() // the clamping force's projected area follows the direction
+    scheduleChecks()
   })
 draftFolder
   .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
@@ -904,7 +937,126 @@ draftFolder
   .onChange(() => {
     saveDraftPrefs()
     updateDraft()
+    scheduleChecks()
   })
+
+// ---- 問題の一覧 (checklist.ts): 薄肉・勾配不足・反対側 in one list, by the
+// conditions of the two folders above; a row goes to its place
+const checkState = { enabled: false, thickness: true, draft: true }
+/** the loaded model's part names (the part tree's), for the list's rows */
+let checkPartNames = new Map<number, string>()
+/** why /properties failed for this model (the list cannot tell open parts from closed ones), or null */
+let propsFailed: string | null = null
+const checkPanel = new CheckPanel(checkPanelEl, {
+  go: (row) => goToCheck(row),
+  only: (partId) => partTree.showOnly([partId]),
+  partName: (partId) => checkPartNames.get(partId) ?? `部品 ${partId}`,
+})
+/** why a part cannot be judged at all (no volume: the 体積・重量 panel's reason), or null */
+function unjudged(partId: number): string | null {
+  const p = modelProps?.parts.find((q) => q.id === partId)
+  return p && p.volume === null && p.reason && p.reason !== 'no_faces' ? REASON_TEXT[p.reason] : null
+}
+function checkConditions(): CheckConditions {
+  return {
+    thin: checkState.thickness ? { threshold: thicknessState.threshold, methodName: METHOD_NAMES[thicknessState.method] } : null,
+    draft: checkState.draft
+      ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
+      : null,
+  }
+}
+/** the list's place the marker is on, if it is (a change of the list takes it away) */
+let checkSpot: CheckRow['spot'] | null = null
+function dropCheckSpot(): void {
+  if (checkSpot && viewer.shownSpot === checkSpot) viewer.clearSpot()
+  checkSpot = null
+}
+let checkGen = 0
+/** make the list again for what is on screen now (or take it away) */
+async function updateChecks(): Promise<void> {
+  const gen = ++checkGen
+  dropCheckSpot()
+  const conditions = checkConditions()
+  if (!checkState.enabled || !currentModelId || is2D || !viewer.hasFaces() || (!conditions.thin && !conditions.draft)) {
+    checkPanel.hide()
+    layoutCorner()
+    return
+  }
+  // which parts can be judged comes with /properties (and without it, nothing can be)
+  if (!modelProps) {
+    checkPanel.showBusy(
+      propsFailed === null ? '部品を調べている…' : `部品が閉じているかを調べられなかった（${propsFailed}）。一覧は作れない`,
+    )
+    layoutCorner()
+    return // propsRequest's answer runs it again
+  }
+  let values: Map<number, Float32Array> | null = null
+  if (conditions.thin) {
+    const method = thicknessState.method
+    values = thicknessCache.get(method) ?? null
+    if (!values) {
+      checkPanel.showBusy(method === 'ball' ? '肉厚を計算中（ボール法、少し待て）…' : '肉厚を計算中…')
+      layoutCorner()
+      const model = currentModelId
+      try {
+        values = await thicknessFor(method)
+      } catch (e) {
+        if (gen === checkGen && model === currentModelId) checkPanel.showBusy(`肉厚を計算できなかった（${e instanceof Error ? e.message : e}）`)
+        return
+      }
+      // a newer list is on its way, or another model is open (its load took the list away)
+      if (gen !== checkGen || model !== currentModelId) return
+      thicknessCache.set(method, values)
+    }
+  }
+  checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values), conditions)
+  layoutCorner()
+}
+let checkTimer = 0
+/** updateChecks a moment after the last of a run of changes (a slider dragged) */
+function scheduleChecks(): void {
+  if (!checkState.enabled && !checkPanel.shown) return
+  clearTimeout(checkTimer)
+  checkTimer = window.setTimeout(() => void updateChecks(), 150)
+}
+/** a row's press: the colours of its kind (the heatmap or the draft), then to its place */
+function goToCheck(row: CheckRow): void {
+  if (row.kind === 'thin') {
+    if (!(thicknessState.enabled && colorOwner === 'thickness')) {
+      if (draftState.enabled) {
+        draftState.enabled = false
+        updateDraft()
+      }
+      thicknessState.enabled = true
+      void updateThickness() // the list's thickness is cached: painted at once
+    }
+  } else if (!(draftState.enabled && colorOwner === 'draft')) {
+    if (thicknessState.enabled) {
+      thicknessState.enabled = false
+      clearThickness()
+    }
+    draftState.enabled = true
+    updateDraft()
+  }
+  viewer.goToSpot(row.spot, spotText(row.kind, row.spot))
+  checkSpot = row.spot
+  checkPanel.setCurrent(row)
+}
+const checkFolder = gui.addFolder('問題の一覧')
+checkFolder.close()
+checkFolder
+  .add(checkState, 'enabled')
+  .name('一覧を出す')
+  .listen() // reset on a model switch
+  .onChange(() => void updateChecks())
+checkFolder
+  .add(checkState, 'thickness')
+  .name('肉厚を調べる')
+  .onChange(() => void updateChecks())
+checkFolder
+  .add(checkState, 'draft')
+  .name('抜き勾配を調べる')
+  .onChange(() => void updateChecks())
 
 // ---- what is under the cursor (#cursor-tip, the preselection highlight, the part tree's row)
 // One look per frame at most (HoverProbe). In 計測 / 注記 (3D), what a click
@@ -1130,6 +1282,20 @@ function measureMinPx(): number {
   for (const li of Array.from(measureList.children).slice(0, 2)) rows += (li as HTMLElement).offsetHeight
   return Math.ceil(frame + titleH + rows)
 }
+/**
+ * The problem list's least height: its head, its conditions and its first two
+ * rows whole (or the line it shows instead). Measured, as measureMinPx.
+ */
+function checkMinPx(): number {
+  const cs = getComputedStyle(checkPanelEl)
+  let h = parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
+  for (const el of Array.from(checkPanelEl.children) as HTMLElement[]) {
+    if (el.classList.contains('check-list')) {
+      for (const li of Array.from(el.children).slice(0, 2)) h += (li as HTMLElement).offsetHeight
+    } else h += el.offsetHeight + parseFloat(getComputedStyle(el).marginBottom)
+  }
+  return Math.ceil(h)
+}
 // below this the GUI stops giving way: its title and about five rows (the
 // toolbar above it took 44 px of the column, and the column's least height
 // stays about what it was)
@@ -1141,9 +1307,16 @@ function layoutCorner(): void {
   // natural height: content and padding (scrollHeight) plus the border
   const measureNatural = measurePanel.scrollHeight + measurePanel.offsetHeight - measurePanel.clientHeight
   const measureMin = measureShown ? Math.min(measureNatural, measureMinPx()) : 0
+  // the problem list above the measure list: the same, with a smaller share
+  const checkShown = !checkPanelEl.classList.contains('hidden')
+  const checkNatural = checkPanelEl.scrollHeight + checkPanelEl.offsetHeight - checkPanelEl.clientHeight
+  const checkMin = checkShown ? Math.min(checkNatural, checkMinPx()) : 0
   // the GUI sits COLUMN_MARGIN below the window's top, as the stack sits above its bottom
   const guiTop = gui.domElement.getBoundingClientRect().top
-  const stackOf = (propsMin: number): number => measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
+  const stackOf = (propsMin: number): number => {
+    const shown = [checkMin, measureMin, propsMin].filter((x) => x > 0)
+    return shown.reduce((a, b) => a + b, 0) + Math.max(shown.length - 1, 0) * COLUMN_GAP
+  }
   // The projected-area row gives way first: on a window too short for the GUI's
   // minimum above the whole stack, it folds and the clamping force's row stays.
   const fullProps = propsPanel.minHeight() + propsPanel.foldedPx()
@@ -1155,9 +1328,12 @@ function layoutCorner(): void {
   gui.domElement.style.maxHeight = stackMin ? `${Math.min(guiMax, h - guiTop)}px` : ''
   const room = h - COLUMN_MARGIN - (gui.domElement.getBoundingClientRect().bottom + COLUMN_GAP)
   const propsShare = propsMin ? propsMin + COLUMN_GAP : 0
-  measurePanel.style.maxHeight = `${Math.max(Math.min(0.4 * h, room - propsShare), measureMin)}px`
+  const checkShare = checkMin ? checkMin + COLUMN_GAP : 0
+  measurePanel.style.maxHeight = `${Math.max(Math.min(0.4 * h, room - propsShare - checkShare), measureMin)}px`
   const measureUsed = measureShown ? measurePanel.getBoundingClientRect().height + COLUMN_GAP : 0
-  propsPanel.fitHeight(room - measureUsed)
+  checkPanelEl.style.maxHeight = `${Math.max(Math.min(0.3 * h, room - propsShare - measureUsed), checkMin)}px`
+  const checkUsed = checkShown ? checkPanelEl.getBoundingClientRect().height + COLUMN_GAP : 0
+  propsPanel.fitHeight(room - measureUsed - checkUsed)
   // the HUD (bottom left) wraps its lines rather than run under the right-hand
   // column on a narrow window (half a screen)
   const hudLeft = hud.getBoundingClientRect().left
@@ -1208,6 +1384,7 @@ new ResizeObserver(queueLayoutCorner).observe(gui.domElement)
 // the panel's left edge sets where the centre cards go (also when it hides)
 new ResizeObserver(() => placeCentreCards()).observe(gui.domElement)
 new ResizeObserver(queueLayoutCorner).observe(measurePanel)
+new ResizeObserver(queueLayoutCorner).observe(checkPanelEl)
 new ResizeObserver(queueLayoutCorner).observe(measureList)
 // the status line grows and shrinks with its text (and the legends above it)
 new ResizeObserver(() => placeHelp()).observe(hud)
@@ -1293,7 +1470,7 @@ gui.onOpenClose((changed) => {
  * A new overlay panel goes here and in e2e/nav_common.py PANELS.
  */
 const panelsShow = document.querySelector<HTMLButtonElement>('#panels-show')!
-const FIT_PANELS: HTMLElement[] = [toolbarEl, gui.domElement, treePanel, hud, measurePanel, propsEl, triadEl, panelsShow]
+const FIT_PANELS: HTMLElement[] = [toolbarEl, gui.domElement, treePanel, hud, checkPanelEl, measurePanel, propsEl, triadEl, panelsShow]
 viewer.fitArea = (modelW, modelH) => {
   // The right-hand column sizes its panels from ResizeObservers, a frame
   // after a change (a folder opened, a load filled the lists); a fit reads
@@ -1346,7 +1523,7 @@ panelsShow.addEventListener('click', () => setPanelsHidden(false))
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder]
+const folders3D = [viewFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
 const resinCtl = propsFolder
   .add(propsPrefs, 'resin', [...RESIN_NAMES, OTHER_RESIN])
   .name('樹脂')
@@ -1574,8 +1751,12 @@ function showProperties(
       propsPanel.setData(r.value)
       modelProps = r.value
       if (draftState.enabled) renderLegend() // the note on open parts may be due now
+      propsFailed = null
+      if (checkState.enabled) void updateChecks() // it waited for which parts can be judged
     } else {
       propsPanel.showError(r.error instanceof Error ? r.error.message : String(r.error))
+      propsFailed = r.error instanceof Error ? r.error.message : String(r.error)
+      if (checkState.enabled) void updateChecks() // it waited: say why there is no list
     }
   }
   if (done) {
@@ -2164,8 +2345,13 @@ async function loadFile(file: File): Promise<void> {
       currentModelId = meta.id
       measureTool.clearAll()
       thicknessCache.clear()
+      thicknessInFlight.clear()
       thicknessState.enabled = false
       draftState.enabled = false // direction and angle stay
+      checkState.enabled = false
+      checkGen++ // a list on its way is for the old model
+      checkPanel.hide()
+      checkSpot = null
       viewer.clearVertexColors()
       colorOwner = 'none'
       shownThickness = null
@@ -2178,6 +2364,7 @@ async function loadFile(file: File): Promise<void> {
       modeHud = ''
       modelSummary = ''
       modelProps = null
+      propsFailed = null
       propsPanel.hide()
       cancelProjection()
       // Clear the stale 3D scene for BOTH branches: while the new model's
@@ -2245,6 +2432,7 @@ async function loadFile(file: File): Promise<void> {
         // a mesh model has no B-rep to ask for a size
         infoCache.setModel(meta.format === 'brep' ? meta.id : null)
         measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
+        checkPartNames = new Map(model.parts.map((p) => [p.id, p.name]))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
         sectionRange()
         // restore persisted measurements / annotations
@@ -2339,6 +2527,13 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
 /** the place a legend's button went to last (spotnav.ts), or null */
 testHooks.__cadSpot = () => spotNav.current()
+/** the problem list on screen: its rows (kind, part, value, place), what could not be judged, the row gone to */
+testHooks.__cadCheck = () => {
+  const { result, conditions, current } = checkPanel.state
+  if (!result) return null
+  const row = (r: CheckRow) => ({ kind: r.kind, partId: r.spot.partId, faceId: r.spot.faceId, value: r.spot.value, at: r.spot.at, normal: r.spot.normal, area: r.spot.area })
+  return { rows: result.rows.map(row), undecided: result.undecided, conditions, current: current ? row(current) : null }
+}
 testHooks.__cadView = () => {
   viewer.prepareCamera() // the pose the next frame draws (parallel: the camera's depth)
   return {

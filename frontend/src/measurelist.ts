@@ -169,7 +169,7 @@ export function drawingRow(m: Measurement2D): RowView {
 }
 
 /** a cell of the copied text: a tab or a line break inside it would split the cells */
-function cell(s: string): string {
+export function cell(s: string): string {
   return s.replace(/[\t\r\n]+/g, ' ')
 }
 

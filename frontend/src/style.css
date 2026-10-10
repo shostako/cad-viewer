@@ -88,6 +88,7 @@ body,
 
 /* thin scrollbars in the panels: a full-width one ate a column of numbers */
 #tree-panel,
+#check-panel,
 #measure-panel,
 #props-parts-wrap,
 .lil-gui.lil-root > .lil-children {
@@ -195,6 +196,7 @@ body,
 /* one heading style for every panel: small, bold, grey; no spacing, no capitals */
 #tree-title,
 #measure-title,
+.check-title,
 #props-head {
   font-weight: 600;
   font-size: var(--cv-fs-sm);
@@ -1913,4 +1915,217 @@ body.panels-hidden #corner-br {
   color: var(--cv-text);
   background: var(--cv-hover);
   border-color: var(--cv-border-strong);
+}
+
+/* ---- 問題の一覧 (checklist.ts): the top of the bottom-right stack, as the measure list */
+#check-panel {
+  width: var(--cv-col);
+  max-height: 30vh;
+  overflow-y: auto;
+  color: var(--cv-text);
+  background: var(--cv-surface);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  padding: var(--cv-pad) 12px;
+  font-size: var(--cv-fs-md);
+  user-select: none;
+}
+
+#check-panel.hidden {
+  display: none;
+}
+
+/* 問題の一覧 · the counts · すべてコピー */
+.check-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+
+.check-counts {
+  color: var(--cv-text-2);
+  font-size: var(--cv-fs-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.check-copy-all {
+  margin-left: auto;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  color: var(--cv-text-2);
+  background: var(--cv-raised);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-xs);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.check-copy-all:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+
+.check-copy-all.done {
+  color: var(--cv-ok);
+}
+
+/* the counts and the conditions wrap between their items, never inside one */
+.check-item {
+  white-space: nowrap;
+}
+
+/* the conditions the list was made by */
+.check-conditions {
+  margin-bottom: 6px;
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.35;
+}
+
+.check-busy,
+.check-none,
+.check-more {
+  padding: 4px 2px;
+  color: var(--cv-text-2);
+  font-size: var(--cv-fs-sm);
+}
+
+.check-more {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
+.check-list {
+  list-style: none;
+}
+
+/* a row: the kind's colour, the value over the kind, part and place; the part alone */
+.check-list li {
+  display: flex;
+  align-items: flex-start;
+  gap: 2px;
+  border-top: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-sm);
+}
+
+.check-list li:first-child {
+  border-top: none;
+}
+
+/* the row gone to last */
+.check-list li.current {
+  background: var(--cv-pick-weak);
+  box-shadow: inset 2px 0 0 var(--cv-pick);
+}
+
+.check-go {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 5px 2px 5px 4px;
+  color: inherit;
+  background: none;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.check-go:hover {
+  background: var(--cv-hover);
+}
+
+/* the list scrolls (clips): the ring sits on the control */
+.check-go:focus-visible,
+.check-only:focus-visible {
+  outline: 2px solid var(--cv-accent);
+  outline-offset: -2px;
+}
+
+.check-static,
+.check-static:hover {
+  background: none;
+  cursor: default;
+}
+
+.check-mark {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  margin-top: 5px;
+  border-radius: 2px;
+}
+
+.check-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.check-value {
+  color: var(--cv-text);
+  font-size: var(--cv-fs-lg);
+  font-weight: 600;
+  line-height: 20px;
+  font-variant-numeric: tabular-nums;
+}
+
+.check-list li[data-kind='undecided'] .check-value {
+  font-size: var(--cv-fs-md);
+}
+
+.check-area {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  font-weight: 400;
+}
+
+.check-what {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.35;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.check-list li[data-kind='undecided'] .check-what {
+  white-space: normal;
+}
+
+.check-where {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  line-height: 1.35;
+  font-variant-numeric: tabular-nums;
+}
+
+.check-only {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 20px;
+  margin-top: 5px;
+  color: var(--cv-text-3);
+  background: none;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  cursor: pointer;
+}
+
+.check-only:hover {
+  color: var(--cv-text);
+  background: var(--cv-hover);
 }
