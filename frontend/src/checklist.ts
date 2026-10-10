@@ -24,6 +24,7 @@
  */
 import { DRAFT_CLASS_NAMES, DRAFT_COLORS } from './draft'
 import { ICON, icon } from './icons'
+import { fmtThin } from './materials'
 import { fmtNum } from './properties'
 import { draftSpots, spotText, thinSpots, type Spot, type SpotPart } from './spots'
 import { cell, copyText } from './measurelist'
@@ -42,7 +43,7 @@ export const CHECK_KIND_NAMES: Record<CheckKind, string> = {
 export interface CheckConditions {
   thin: { threshold: number; methodName: string } | null
   draft: { dirLabel: string; dir: readonly [number, number, number]; required: number } | null
-  /** the 判定の基準 the values come from (presets.ts basisText: 「PC（根拠: 社内の目安）」); absent: set by hand */
+  /** the 判定の基準 the values come from (materials.ts basisText: 「PC（根拠: 社内の目安）」); absent: set by hand */
   basis?: string | null
 }
 
@@ -112,7 +113,7 @@ export function runChecks(
 /** 「肉厚 1.5 mm 未満（レイ法）」「型開き +Z」「勾配 1.0° 未満」 */
 function conditionItems(c: CheckConditions): string[] {
   const parts: string[] = []
-  if (c.thin) parts.push(`肉厚 ${c.thin.threshold.toFixed(1)} mm 未満（${c.thin.methodName}）`)
+  if (c.thin) parts.push(`肉厚 ${fmtThin(c.thin.threshold)} mm 未満（${c.thin.methodName}）`)
   if (c.draft) parts.push(`型開き ${c.draft.dirLabel}`, `勾配 ${c.draft.required.toFixed(1)}° 未満`)
   if (c.basis) parts.push(`基準 ${c.basis}`)
   return parts

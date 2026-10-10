@@ -2285,12 +2285,12 @@ body.panels-hidden #corner-br {
   user-select: none;
 }
 
-/* 判定の基準 (presets.ts): a card left of the column, at the height of its button (main.ts places it) */
+/* 材料の基準 (materialpop.ts): a card left of the column, at the height of its button (main.ts places it) */
 #basis-pop {
   position: absolute;
   z-index: 1003; /* over the panels (lil-gui 1001) */
   box-sizing: border-box;
-  width: min(380px, calc(100vw - 32px));
+  width: min(520px, calc(100vw - 32px));
   max-height: calc(100vh - 2 * var(--cv-edge));
   overflow-y: auto;
   display: flex;
@@ -2336,6 +2336,44 @@ body.panels-hidden #corner-br {
 .basis-table td:first-child {
   white-space: nowrap;
 }
+/* a row edited away from the general standard: marked, its ↺ live */
+.basis-table tr.edited td:first-child {
+  color: var(--cv-accent);
+  box-shadow: inset 2px 0 0 var(--cv-accent);
+}
+.basis-table tr.basis-group th {
+  padding-top: 6px;
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+.basis-table td.basis-none {
+  color: var(--cv-text-3);
+  text-align: center;
+}
+.basis-table .basis-reset {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  color: var(--cv-text-2);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  cursor: pointer;
+}
+.basis-table .basis-reset:hover:not(:disabled) {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+}
+.basis-table .basis-reset:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+/* 書き出す・読み込む: the file's, smaller than 既定に戻す・保存 */
+.basis-files button {
+  padding: 3px 8px;
+  font-size: var(--cv-fs-xs);
+}
 .basis-table input {
   box-sizing: border-box;
   width: 100%;
@@ -2354,6 +2392,25 @@ body.panels-hidden #corner-br {
 .basis-table input:focus-visible {
   outline: none;
   border-color: var(--cv-accent);
+}
+/* 材料 (the operation panel's first rows): its ✎ opens 材料の基準 */
+.lil-controller.cv-material .cv-material-edit {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: var(--widget-height);
+  margin-left: 4px;
+  padding: 0;
+  color: var(--cv-text-2);
+  background: var(--widget-color);
+  border: none;
+  border-radius: var(--widget-border-radius);
+  cursor: pointer;
+}
+.lil-controller.cv-material .cv-material-edit:hover {
+  color: var(--cv-text);
+  background: var(--hover-color);
 }
 #basis-save {
   color: var(--cv-on-accent);

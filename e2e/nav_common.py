@@ -553,6 +553,17 @@ def put_sidecar(page, path, entries):
     assert r.ok, ("put sidecar", r.status, r.text())
 
 
+def classic_basis(page):
+    """判定の基準 手で決める, at the app's own 1.5 mm and 1.0°: the conditions a
+    script was written for, before the materials' general standards (PMMA
+    0.64 mm, 0.5°) became the default. Kept in the page's storage (the page
+    reloads here); a choice the script makes later is kept as the app keeps it.
+    """
+    page.evaluate("localStorage.setItem('cad-viewer:materials', JSON.stringify({ follow: false }))")
+    page.reload()
+    page.wait_for_selector("#file-input", state="attached")
+
+
 def empty_sidecar(page, path):
     """an empty sidecar for this file: its next load restores no measurement list"""
     put_sidecar(page, path, [])

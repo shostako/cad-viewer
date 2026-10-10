@@ -131,6 +131,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
   - 配色のライト（`theme.ts`）は、`:root[data-theme='light']` で同じトークンを定義し直す（文字は面の上で 4.5:1 以上、線と印は 3D の背景の上で 3:1 以上）。3D と 2D の描画の色（背景・グリッド・計測の線と点・先選び・断面の枠・2D の頁）は CSS ではなく `theme.ts` の `PALETTES` にあり、材質に色を持つ所は `onTheme` で塗り直す。新しく 3D や 2D に色を足すときは、この表から取って `onTheme` で塗り直す。既定はダーク（E2E はダークで走る）
 - `viewer.ts` — 描画、カメラ操作（ターンテーブル＝OrbitControls、自由回転＝TrackballControls）、視点の切り替え、自動回転、グリッド
 - `picking.ts` / `measure.ts` / `section.ts` / `drawing2d.ts` — ピッキング、計測と注記、断面、2D 図面
+- `materials.ts` / `materialpop.ts` — 材料と用途（射出成形／一般）。材料ごとの一般的な基準（比重・肉厚の下限・勾配と根拠。出典は `docs/material-basis.md`）、直した値の保存、材料の基準のカード。判定の基準の初めは材料に合わせる（PMMA 0.64 mm・0.5°）。1.5 mm・1.0° を前提に書いた E2E は `nav_common.classic_basis` で「手で決める」を明示してから始める
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
 
 ## 既知の罠（変更時に壊しやすい）

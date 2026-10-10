@@ -2,7 +2,7 @@
  *
  * The server sends exact per-part values (GET /properties); this panel sums
  * the parts that are visible in the tree, and turns volume into a weight with
- * the chosen resin's specific gravity. A part without a volume (open, curves
+ * the specific gravity of the material in use (materials.ts), or one typed by hand. A part without a volume (open, curves
  * only, ...) is listed but never counted: a partial total would understate
  * the weight without saying so.
  *
@@ -14,19 +14,6 @@
 import type { Axis, ModelProperties, PartProperties, PropsReason } from './api'
 import { SOURCE, type Cell, type ReportTable } from './report'
 import { fmtNum } from './sizes'
-
-/** specific gravity (g/cm³) of common moulding resins */
-export const RESIN_DENSITY: Record<string, number> = {
-  PMMA: 1.19,
-  PC: 1.2,
-  ABS: 1.05,
-  PP: 0.9,
-  PA66: 1.14,
-  POM: 1.41,
-  PS: 1.05,
-}
-export const RESIN_NAMES = Object.keys(RESIN_DENSITY)
-export const OTHER_RESIN = 'その他'
 
 export const REASON_TEXT: Record<PropsReason, string> = {
   open: '閉じていない',
@@ -151,8 +138,12 @@ export class PropertiesPanel {
   private isVisible: (id: number) => boolean
   private onLayout: () => void
   private data: ModelProperties | null = null
-  private density = RESIN_DENSITY.PMMA
-  private resin = 'PMMA'
+  private density = 1.19
+  private material = 'PMMA'
+  /** the gravity was typed by hand (the material's own is another) */
+  private densityByHand = false
+  /** the material's values are its general standard (not edited) */
+  private densityStandard = true
   private queued = false
 
   private densityEl = el('span', 'props-density')
@@ -235,11 +226,17 @@ export class PropertiesPanel {
     this.onLayout()
   }
 
-  setDensity(density: number, resin: string): void {
+  /**
+   * The specific gravity the weight is from, and the material it is of:
+   * byHand, typed for it in the 比重 field; standard, the material's general
+   * standard (not edited in 材料の基準).
+   */
+  setDensity(density: number, material: string, byHand: boolean, standard: boolean): void {
     this.density = density
-    this.resin = resin
-    this.densityEl.textContent =
-      resin === OTHER_RESIN ? `比重 ${fmtDensity(density)} g/cm³` : `${resin} ${fmtDensity(density)} g/cm³`
+    this.material = material
+    this.densityByHand = byHand
+    this.densityStandard = standard
+    this.densityEl.textContent = `${material} ${fmtDensity(density)} g/cm³${byHand ? '（手入力）' : ''}`
     if (this.data) this.refresh()
   }
 
@@ -257,11 +254,13 @@ export class PropertiesPanel {
     const num = (x: number | null, digits: number): Cell => (x === null ? '—' : { n: x, d: digits })
     const t = v.total
     const volume: Cell = t.volume !== null ? { n: t.volume / 1000, d: 3 } : t.reason ? noVolume(t.reason) : '—'
-    const resin = this.resin === OTHER_RESIN ? '比重' : this.resin
+    const densityFrom = this.densityByHand
+      ? `${SOURCE.input}（${this.material} に手で）`
+      : `材料 ${this.material} の値（${this.densityStandard ? '一般的な基準' : '直した値'}）`
     const rows: Cell[][] = [
       ['体積', volume, 'cm³', src],
       ['表面積', num(t.area === null ? null : t.area / 100, 2), 'cm²', src],
-      ['比重', fmtDensity(this.density), 'g/cm³', `${SOURCE.input}（${resin}）`],
+      ['比重', fmtDensity(this.density), 'g/cm³', densityFrom],
       ['重量', num(t.volume === null ? null : massGrams(t.volume, this.density), 2), 'g', `${src} × 比重`],
     ]
     const p = this.projection

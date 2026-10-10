@@ -38,7 +38,7 @@ import tempfile
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, empty_sidecar, nav_session
+from nav_common import TESTDATA, classic_basis, empty_sidecar, nav_session
 
 ROOT = Path(__file__).resolve().parent.parent
 VERSION = json.loads((ROOT / "frontend" / "package.json").read_text())["version"]
@@ -81,6 +81,8 @@ def table(block, head0):
 
 with nav_session() as n:
     page = n.page
+    # the checks at the app's own 1.5 mm and 1.0° (判定の基準 手で決める), as written: the default is the material's
+    classic_basis(page)
     report_ctl = lambda: gui_common.ctl(page, "確認の記録…")
 
     def open_card():
@@ -160,6 +162,7 @@ with nav_session() as n:
     rec = dict(b["確認の記録"][1:])
     assert rec["ファイル"] == "mini_mold.step" and rec["識別（SHA-256 の先頭 32 桁）"] == MOLD_HASH, rec
     assert rec["アプリ"] == f"cad-viewer {VERSION}" and rec["単位"] == "mm" and rec["形式"] == "B-rep（STEP・IGES）", rec
+    assert rec["用途"] == "射出成形" and rec["材料"].startswith("PMMA（一般的な基準: 比重 1.19・肉厚の下限 0.64 mm・勾配 0.5°。根拠: "), rec
     assert rec["判定"] == "要確認" and rec["確認者"] == "テスト 太郎" and rec["コメント"] == comment, rec
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", rec["確認日時"]), rec
 
@@ -188,7 +191,7 @@ with nav_session() as n:
     vol, mass = props["体積"][0], props["重量"][0]
     assert vol["値"] == f"{TOTAL_VOL / 1000:.3f}" and vol["単位"] == "cm³" and vol["出どころ"] == "B-rep の真値", vol
     assert mass["値"] == f"{TOTAL_VOL / 1000 * PMMA:.2f}" and mass["単位"] == "g", mass
-    assert props["比重"][0]["値"] == "1.19" and props["比重"][0]["出どころ"] == "入力した値（PMMA）", props["比重"]
+    assert props["比重"][0]["値"] == "1.19" and props["比重"][0]["出どころ"] == "材料 PMMA の値（一般的な基準）", props["比重"]
     # the screen's values, the same numbers (the panel groups the digits)
     assert panel["volume"].startswith(f"{float(vol['値']):,.3f} cm³"), (panel, vol)
     assert panel["mass"] == f"{float(mass['値']):,.2f} g", (panel, mass)
