@@ -50,6 +50,7 @@ A face or an edge (face_info, edge_info) says its size by its kind:
 """
 from __future__ import annotations
 
+import logging
 import math
 from typing import Any
 
@@ -299,7 +300,9 @@ def max_distance(sa: TopoDS_Shape, sb: TopoDS_Shape) -> dict[str, Any]:
     pairs around it is a start (up to MAX_STARTS, the farthest): from there, each
     end in turn moves to the exactly farthest point of the other edge until the
     pair grows no more (lines end at their ends, circles at their far points).
-    The farthest pair reached is the answer."""
+    The farthest pair reached is the answer. A search, not a proof: a lobe
+    shorter than the spacing of the points could be missed (exact for a vertex
+    and an edge, and for lines and circles)."""
     kinds = []
     for shape, which in ((sa, "1 点目"), (sb, "2 点目")):
         kind = shape.ShapeType()
@@ -337,8 +340,8 @@ def _along(c: BRepAdaptor_Curve) -> list[gp_Pnt]:
         ua = GCPnts_UniformAbscissa(c, MAX_SAMPLES)
         if ua.IsDone() and ua.NbPoints() >= 2:
             return [c.Value(ua.Parameter(i)) for i in range(1, ua.NbPoints() + 1)]
-    except Exception:  # an adaptor the length cannot be taken of: by parameter
-        pass
+    except Exception as e:  # an adaptor the length cannot be taken of: by parameter
+        logging.getLogger(__name__).debug("points by parameter (no length along the curve): %s", e)
     u0, u1 = c.FirstParameter(), c.LastParameter()
     return [c.Value(u0 + (u1 - u0) * i / (MAX_SAMPLES - 1)) for i in range(MAX_SAMPLES)]
 
