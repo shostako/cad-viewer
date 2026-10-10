@@ -118,8 +118,9 @@ export class Toolbar {
       const b = this.button(a)
       b.title = title
       b.disabled = !enabled
+      // a button that cannot be pressed does not look pressed (回転 on the empty screen)
       if (pressed === undefined) b.removeAttribute('aria-pressed')
-      else b.setAttribute('aria-pressed', String(pressed))
+      else b.setAttribute('aria-pressed', String(pressed && enabled))
     }
     set('open', 'ファイルを開く')
     set('fit', '全体表示（F・Home）', s.content)

@@ -68,7 +68,7 @@ app.innerHTML = `
     <div id="draft-legend" class="hidden"></div>
     <div id="thickness-legend" class="hidden"></div>
     <div id="hud-line">
-      <div id="hud-info">ファイルをドロップ、または「ファイルを開く」から選ぶ</div>
+      <div id="hud-info">ファイルをドロップするか、「ファイルを選ぶ」で開く</div>
       <button id="help-open" type="button" title="キー操作の一覧（?）" aria-label="キー操作の一覧">?</button>
     </div>
   </div>

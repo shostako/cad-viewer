@@ -1104,6 +1104,16 @@ body,
   text-align: right;
 }
 
+/* the volume's mm³ beside its cm³, smaller and quieter */
+#props-total-volume {
+  white-space: nowrap;
+}
+
+#props-total-volume .sub {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+}
+
 #props-note {
   font-size: var(--cv-fs-xs);
   color: var(--cv-text-3);

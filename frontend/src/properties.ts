@@ -272,12 +272,14 @@ export class PropertiesPanel {
     this.totalTitle.textContent = v.title
     this.totalTitle.classList.toggle('hidden', !v.title)
     const t = v.total
-    this.totalVolume.textContent =
-      t.volume !== null
-        ? `${fmtNum(t.volume / 1000, 3)} cm³（${fmtNum(t.volume, t.volume < 100 ? 2 : 0)} mm³）`
-        : t.reason
-          ? noVolume(t.reason)
-          : '—'
+    if (t.volume !== null) {
+      // the cm³ first; the mm³ beside it, smaller (one line in the 264 px column)
+      const mm3 = el('span', undefined, `（${fmtNum(t.volume, t.volume < 100 ? 2 : 0)} mm³）`)
+      mm3.className = 'sub'
+      this.totalVolume.replaceChildren(`${fmtNum(t.volume / 1000, 3)} cm³`, mm3)
+    } else {
+      this.totalVolume.textContent = t.reason ? noVolume(t.reason) : '—'
+    }
     this.totalArea.textContent = t.area !== null ? `${fmtNum(t.area / 100, 2)} cm²` : '—'
     this.totalMass.textContent = t.volume !== null ? `${fmtNum(massGrams(t.volume, this.density), 2)} g` : '—'
 
