@@ -82,6 +82,8 @@ export interface DistanceResult {
   value: number
   pointA: [number, number, number]
   pointB: [number, number, number]
+  /** degrees (0..90) between two flat things (planar faces, straight edges) that are not parallel */
+  angle?: number
 }
 
 export interface EdgeInfoResult {
