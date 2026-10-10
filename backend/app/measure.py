@@ -400,7 +400,13 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
 
 
 def vertex_info(ref: dict, meshes: list[PartMesh]) -> dict[str, Any]:
-    """A vertex's point, from the B-rep (the display mesh's copy is float32)."""
+    """A vertex's point, from the B-rep (the display mesh's copy is float32).
+
+    Only a vertex of the model: a point ref ({"kind": "point", "xyz": …}) would
+    resolve to a vertex made from the caller's own numbers, handed back as if
+    the B-rep had said them."""
+    if ref.get("kind") != "vertex":
+        raise MeasureError(f"vertex_info takes a vertex of the model, not: {ref}")
     shape = _resolve(ref, meshes)
     if shape.ShapeType() != TopAbs_VERTEX:
         raise MeasureError(f"not a vertex: {ref}")

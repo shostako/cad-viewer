@@ -79,6 +79,12 @@ def test_vertex_point(model):
     assert res == {"type": "vertex", "point": pytest.approx([70, 15, 35], abs=1e-12)}
 
 
+def test_vertex_info_of_a_point_is_refused(model):
+    """a point ref is the caller's numbers, not the model's: no vertex to tell"""
+    r = _post(model, {"type": "vertex_info", "ref": {"kind": "point", "xyz": [1, 2, 3]}})
+    assert r.status_code == 422, r.text
+
+
 def test_vertex_info_of_a_face_is_refused(model):
     ref = _on(model, "plate", "face", (90, 10, 15))
     assert _post(model, {"type": "vertex_info", "ref": ref}).status_code == 422
