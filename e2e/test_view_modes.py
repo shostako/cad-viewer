@@ -25,6 +25,8 @@ FOLDERS_3D = ["表示", "断面", "肉厚", "抜き勾配", "体積・重量"]
 with sync_playwright() as p:
     browser = p.chromium.launch(headless=True)
     page = browser.new_page(viewport={"width": 1280, "height": 800})
+    # the plain <input> here: the file picker is taken away, as in a browser without it (its path: test_recent.py)
+    page.add_init_script("window.showOpenFilePicker = undefined")
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)

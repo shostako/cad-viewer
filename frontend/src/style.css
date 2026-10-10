@@ -1574,7 +1574,7 @@ body,
   flex: none;
   display: grid;
   place-items: center;
-  width: 25px;
+  width: 24px;
   height: 26px;
   padding: 0;
   color: var(--cv-text-2);
@@ -1603,6 +1603,24 @@ body,
   opacity: 0.4;
 }
 
+/* 開く▾: the ▾ half (the recent files) sits against 開く, narrower */
+#toolbar .tb-split {
+  display: flex;
+}
+#toolbar .tb-split button[data-action='open'] {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+#toolbar button.tb-more {
+  width: 12px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+#toolbar button.tb-more svg {
+  width: 12px;
+  height: 12px;
+}
+
 /* 回転 · 計測 · 注記: one segment */
 #toolbar .tb-group {
   display: flex;
@@ -1616,7 +1634,7 @@ body,
   flex: none;
   width: 1px;
   height: 18px;
-  margin: 0 3px;
+  margin: 0 2px;
   background: var(--cv-border);
 }
 
@@ -1791,4 +1809,108 @@ body.panels-hidden #corner-br {
 }
 .go-state:empty {
   display: none;
+}
+
+/* 最近開いたファイル (recent.ts): in the empty card, and under the toolbar's button */
+#recent-box {
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+  min-width: 260px;
+  text-align: left;
+}
+#recent-box.hidden {
+  display: none;
+}
+#recent-title,
+#recent-pop-title {
+  font-weight: 600;
+  font-size: var(--cv-fs-sm);
+  color: var(--cv-text-2);
+  margin-bottom: 2px;
+}
+#recent-pop {
+  position: absolute;
+  z-index: 1003; /* over the toolbar and the operation panel */
+  box-sizing: border-box;
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(360px, calc(100vh - 80px));
+  overflow-y: auto;
+  padding: 8px 8px 6px;
+  color: var(--cv-text);
+  background: var(--cv-surface-solid);
+  border: 1px solid var(--cv-border);
+  border-radius: var(--cv-r-lg);
+  box-shadow: var(--cv-shadow);
+  font-size: var(--cv-fs-sm);
+}
+#recent-pop.hidden,
+#recent-pop-empty.hidden {
+  display: none;
+}
+#recent-pop-empty {
+  color: var(--cv-text-3);
+  padding: 2px 4px 4px;
+}
+.recent-row {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+.recent-open {
+  pointer-events: auto; /* the empty card lets the pointer through elsewhere */
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  color: var(--cv-text);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.recent-open:hover,
+.recent-open:focus-visible {
+  background: var(--cv-hover);
+  border-color: var(--cv-border-strong);
+}
+.recent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-meta {
+  flex: none;
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
+  font-variant-numeric: tabular-nums;
+}
+.recent-forget {
+  pointer-events: auto;
+  flex: none;
+  width: 24px;
+  padding: 0;
+  color: var(--cv-text-3);
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  font-size: var(--cv-fs-md);
+  line-height: 1;
+  cursor: pointer;
+}
+.recent-forget:hover,
+.recent-forget:focus-visible {
+  color: var(--cv-text);
+  background: var(--cv-hover);
+  border-color: var(--cv-border-strong);
 }

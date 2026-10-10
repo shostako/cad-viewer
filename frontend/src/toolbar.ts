@@ -2,7 +2,9 @@
  * The toolbar at the top of the right-hand column (issue #23 item 10): the
  * operations used most, one click each, their keys in the titles.
  *
- *   開く · 全体表示 | 回転 · 計測 · 注記 | 断面 · 表示スタイル · 画像を保存 · ?
+ *   開く▾ · 全体表示 | 回転 · 計測 · 注記 | 断面 · 表示スタイル · 画像を保存 · ?
+ *
+ * 開く is a split button: its ▾ half opens the list of recent files.
  *
  * The mode in use is pressed (aria-pressed), and so is 断面 while it cuts.
  * The operation panel keeps all of these as well (the E2E presses them
@@ -13,7 +15,17 @@ import { ICON, icon } from './icons'
 
 export type Mode = 'なし' | '計測' | '注記'
 
-export type ToolbarAction = 'open' | 'fit' | 'mode-none' | 'mode-measure' | 'mode-note' | 'section' | 'style' | 'png' | 'help'
+export type ToolbarAction =
+  | 'open'
+  | 'recent'
+  | 'fit'
+  | 'mode-none'
+  | 'mode-measure'
+  | 'mode-note'
+  | 'section'
+  | 'style'
+  | 'png'
+  | 'help'
 
 export interface ToolbarState {
   /** a model or a drawing is on screen */
@@ -25,10 +37,13 @@ export interface ToolbarState {
   section: boolean
   /** the display style's name, for the title */
   style: string
+  /** the recent files' list is open (the button is pressed) */
+  recentOpen: boolean
 }
 
 const LAYOUT: (ToolbarAction | '|')[] = [
   'open',
+  'recent',
   'fit',
   '|',
   'mode-none',
@@ -43,6 +58,7 @@ const LAYOUT: (ToolbarAction | '|')[] = [
 
 const ICONS: Record<ToolbarAction, IconNode> = {
   open: ICON.open,
+  recent: ICON.recent,
   fit: ICON.fit,
   'mode-none': ICON.rotate,
   'mode-measure': ICON.measure,
@@ -56,6 +72,7 @@ const ICONS: Record<ToolbarAction, IconNode> = {
 /** the short name (aria-label) of each button */
 const NAMES: Record<ToolbarAction, string> = {
   open: 'ファイルを開く',
+  recent: '最近開いたファイル',
   fit: '全体表示',
   'mode-none': '回転',
   'mode-measure': '計測',
@@ -91,6 +108,15 @@ export class Toolbar {
         if (!b.disabled) run(item)
       })
       this.buttons.set(item, b)
+      if (item === 'recent') {
+        // the ▾ half of 開く: one split button with it
+        b.classList.add('tb-more')
+        const split = document.createElement('span')
+        split.className = 'tb-split'
+        this.button('open').replaceWith(split)
+        split.append(this.button('open'), b)
+        continue
+      }
       // the three modes sit in one segment
       if (item.startsWith('mode-')) {
         if (!group) {
@@ -123,6 +149,8 @@ export class Toolbar {
       else b.setAttribute('aria-pressed', String(pressed && enabled))
     }
     set('open', 'ファイルを開く')
+    set('recent', '最近開いたファイル', true, s.recentOpen)
+    this.button('recent').setAttribute('aria-haspopup', 'dialog')
     set('fit', '全体表示（F・Home）', s.content)
     set('mode-none', '回転（計測・注記をやめる。Esc）', s.content, s.mode === 'なし')
     // a mesh model: pressable (the status line then says why), but looks off

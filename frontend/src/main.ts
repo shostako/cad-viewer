@@ -36,6 +36,7 @@ import { SpotNav } from './spotnav'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, type ExportBackground } from './snapshot'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
+import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
 import { Toolbar, type Mode } from './toolbar'
 import { AxisTriad } from './triad'
@@ -50,6 +51,10 @@ app.innerHTML = `
     <div id="empty-title">CAD ファイルを開く</div>
     <button id="empty-open" type="button">ファイルを選ぶ</button>
     <div id="empty-drop">または、この画面にファイルをドロップ</div>
+    <div id="recent-box" class="hidden">
+      <div id="recent-title">最近開いたファイル</div>
+      <div id="recent-list"></div>
+    </div>
     <div id="empty-formats" aria-label="開ける形式">${['STEP', 'IGES', 'STL', '3MF', 'OBJ', 'PLY', 'DXF', 'DWG']
       .map((f) => `<span>${f}</span>`)
       .join('')}</div>
@@ -57,6 +62,11 @@ app.innerHTML = `
   <div id="load-card" class="hidden"></div>
   <div id="tree-panel" class="hidden"></div>
   <div id="toolbar"></div>
+  <div id="recent-pop" class="hidden" role="dialog" aria-label="最近開いたファイル">
+    <div id="recent-pop-title">最近開いたファイル</div>
+    <div id="recent-pop-list"></div>
+    <div id="recent-pop-empty">まだ無い（「ファイルを開く」で選んだファイルとドロップしたファイルを、新しい順に 8 件まで覚える）</div>
+  </div>
   <div id="corner-br">
     <div id="measure-panel" class="hidden">
       <div id="measure-head">
@@ -102,12 +112,18 @@ const measureList = document.querySelector<HTMLUListElement>('#measure-list')!
 
 const viewport2d = document.querySelector<HTMLDivElement>('#viewport2d')!
 const emptyHint = document.querySelector<HTMLDivElement>('#empty-hint')!
-document.querySelector('#empty-open')!.addEventListener('click', () => fileInput.click())
+// 最近開いたファイル: in the empty card, and the toolbar's list under its button
+const recentBox = document.querySelector<HTMLDivElement>('#recent-box')!
+const recentList = document.querySelector<HTMLDivElement>('#recent-list')!
+const recentPop = document.querySelector<HTMLDivElement>('#recent-pop')!
+const recentPopList = document.querySelector<HTMLDivElement>('#recent-pop-list')!
+const recentPopEmpty = document.querySelector<HTMLDivElement>('#recent-pop-empty')!
+document.querySelector('#empty-open')!.addEventListener('click', () => void openFile())
 // a failed load's card stands in for the open card until it is closed
 const loadCardEl = document.querySelector<HTMLDivElement>('#load-card')!
 const loadCard = new LoadCard(
   loadCardEl,
-  () => fileInput.click(),
+  () => void openFile(),
   () => {
     if (!contentShown) showEmpty(true)
   },
@@ -263,7 +279,7 @@ const gui = new GUI({ title: '操作' })
 let toolbar: Toolbar | null = null
 const state = { mode: 'なし' as 'なし' | '計測' | '注記' }
 const actions = {
-  open: () => fileInput.click(),
+  open: () => void openFile(),
   // 3D keeps the view direction and fits the visible parts; 2D fits the whole drawing
   fit: () => (is2D ? drawing2d.fit() : viewer.fitToView()),
   // both can be undone: the 3D list, or a drawing's measurements
@@ -500,6 +516,12 @@ function onNavigationKey(e: KeyboardEvent): void {
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
+    // the recent files' list first: it is over everything (and only it goes)
+    if (!recentPop.classList.contains('hidden')) {
+      showRecentPop(false)
+      e.preventDefault()
+      return
+    }
     // a card first (the key list, a failed load's): it is what the eye is on
     if (keyHelp.shown) {
       keyHelp.show(false)
@@ -1439,8 +1461,12 @@ toolbar = new Toolbar(toolbarEl, (action) => {
       return actions.savePng()
     case 'help':
       return keyHelp.show(!keyHelp.shown)
+    case 'recent':
+      return showRecentPop(recentPop.classList.contains('hidden'))
   }
 })
+// the browser keeps no handles without the file picker: nothing to list
+toolbar.button('recent').hidden = !filePicker()
 /** M and N switch a mode on, or back to 回転 when it is on; S cuts; W the next style */
 function toolbarKey(letter: 'm' | 'n' | 's' | 'w'): void {
   if (letter === 's') return toggleSection()
@@ -1461,6 +1487,7 @@ function refreshToolbar(): void {
     canMeasure: is2D || measureTool.available,
     section: sectionTool.enabled,
     style: STYLE_NAMES[viewPrefs.style],
+    recentOpen: !recentPop.classList.contains('hidden'),
   })
 }
 measureTool.onChange(refreshToolbar) // a model's B-rep (or none) comes with setModel
@@ -1955,6 +1982,125 @@ function showTree(model: ModelData): void {
 // generation token: a newer loadFile call supersedes older in-flight ones
 let loadGen = 0
 
+// ---- opening a file: the picker, and the recent files (recent.ts)
+const recent = new RecentFiles((entries) => {
+  renderRecentRows(recentList, entries, (e) => void openRecent(e), (e) => void recent.forget(e))
+  renderRecentRows(recentPopList, entries, (e) => void openRecent(e), (e) => void recent.forget(e))
+  recentBox.classList.toggle('hidden', entries.length === 0)
+  recentPopEmpty.classList.toggle('hidden', entries.length > 0)
+})
+void recent.load()
+/** the file types the picker offers (the same as the <input>) */
+const PICK_TYPES = [
+  {
+    description: 'CAD ファイル（STEP・IGES・STL・3MF・OBJ・PLY・DXF・DWG）',
+    accept: { 'application/octet-stream': ['.step', '.stp', '.iges', '.igs', '.stl', '.3mf', '.obj', '.ply', '.dxf', '.dwg'] },
+  },
+]
+
+/**
+ * The picker refused (a policy, a frame, a passing failure): the next press
+ * opens the plain file dialog once, and then the picker is tried again. Two
+ * refusals with no picker opened between them: the plain dialog from then on.
+ */
+let plainNext = false
+let pickerRefusals = 0
+/**
+ * ファイルを開く: the File System Access picker where there is one (its
+ * handle goes on the recent list; it opens in the folder of the file opened
+ * last), else the plain <input>.
+ */
+async function openFile(): Promise<void> {
+  showRecentPop(false)
+  const pick = plainNext || pickerRefusals >= 2 ? null : filePicker()
+  plainNext = false
+  if (!pick) {
+    fileInput.click()
+    return
+  }
+  let handle: FileSystemFileHandle
+  try {
+    const last = recent.entries[0]?.handle
+    ;[handle] = await pick({ id: 'cad-viewer-open', types: PICK_TYPES, ...(last ? { startIn: last } : {}) })
+  } catch (e) {
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      pickerRefusals = 0 // the picker opened, and the user closed it
+      return
+    }
+    // refused: the press that could open the plain dialog is used up by now
+    // (a browser opens a file dialog only straight from a press), so say it and
+    // let the next press open the plain one
+    pickerRefusals++
+    plainNext = true
+    const why = e instanceof Error ? e.message : e
+    hudInfo.textContent =
+      pickerRefusals >= 2
+        ? `ファイルを選ぶ画面を開けなかった（${why}）。これからは、ふつうのファイル選択で開く（最近開いたファイルには入らない）`
+        : `ファイルを選ぶ画面を開けなかった（${why}）。もう一度押すと、ふつうのファイル選択で開く（最近開いたファイルには入らない）`
+    return
+  }
+  pickerRefusals = 0
+  let file: File
+  try {
+    file = await handle.getFile()
+  } catch (e) {
+    // gone or unreadable between the pick and the read (a cloud file not yet
+    // fetched, say): said, not left as nothing happening
+    hudInfo.textContent = `${handle.name} を読めなかった（${e instanceof Error ? e.message : e}）`
+    return
+  }
+  void recent.remember(handle, file)
+  void loadFile(file)
+}
+
+/** open a file from the recent list (asking again for leave to read it) */
+async function openRecent(entry: RecentEntry): Promise<void> {
+  showRecentPop(false)
+  let r
+  try {
+    r = await reopen(entry)
+  } catch (e) {
+    hudInfo.textContent = `${entry.name} を開けなかった（${e instanceof Error ? e.message : e}）`
+    return
+  }
+  if ('problem' in r) {
+    if (r.problem === 'missing') {
+      hudInfo.textContent = `${entry.name} が見つからない（動かしたか消した）。一覧から消した`
+      void recent.forget(entry)
+    } else {
+      hudInfo.textContent = `${entry.name} を読む許可が無い（もう一度押すと、また許可を聞く）`
+    }
+    return
+  }
+  void recent.remember(entry.handle, r.file)
+  void loadFile(r.file)
+}
+
+/** the toolbar's list of recent files, under its button */
+function showRecentPop(on: boolean): void {
+  if (on === !recentPop.classList.contains('hidden')) return
+  recentPop.classList.toggle('hidden', !on)
+  if (on) {
+    const b = toolbar?.button('recent').getBoundingClientRect()
+    if (b) {
+      recentPop.style.top = `${Math.round(b.bottom + 6)}px`
+      recentPop.style.right = `${Math.round(window.innerWidth - b.right)}px`
+    }
+  }
+  refreshToolbar()
+}
+// a click anywhere else closes it (Esc: onNavigationKey)
+window.addEventListener(
+  'pointerdown',
+  (e) => {
+    if (recentPop.classList.contains('hidden')) return
+    const t = e.target as Node
+    if (recentPop.contains(t) || toolbar?.button('recent').contains(t)) return
+    showRecentPop(false)
+  },
+  { capture: true },
+)
+
 async function loadFile(file: File): Promise<void> {
   openNote?.commit() // the old model is still current: the flush below saves it
   const gen = ++loadGen
@@ -2144,7 +2290,17 @@ window.addEventListener('drop', (e) => {
   dragDepth = 0
   dropzone.classList.add('hidden')
   const file = e.dataTransfer?.files[0]
-  if (file) void loadFile(file)
+  if (!file) return
+  // the handle has to be asked for while the drop event runs (Chrome): later
+  // the item is gone. A dropped folder or a browser without it gives none
+  const item = e.dataTransfer?.items?.[0] as (DataTransferItem & { getAsFileSystemHandle?(): Promise<FileSystemHandle | null> }) | undefined
+  const handle = item?.getAsFileSystemHandle?.()
+  void handle
+    ?.then((h) => {
+      if (h && h.kind === 'file') void recent.remember(h as FileSystemFileHandle, file)
+    })
+    .catch(() => undefined)
+  void loadFile(file)
 })
 
 // E2E test hooks

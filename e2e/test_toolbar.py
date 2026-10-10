@@ -3,9 +3,9 @@
 The toolbar sits at the top of the right-hand column (264 px, 12 px from the
 window's top and right edges), the operation panel 8 px under it:
 
-  開く · 全体表示 | 回転 · 計測 · 注記 | 断面 · 表示スタイル · 画像を保存 · ?
+  開く · 最近 · 全体表示 | 回転 · 計測 · 注記 | 断面 · 表示スタイル · 画像を保存 · ?
 
-- On the empty screen only 開く, 表示スタイル and ? can be pressed.
+- On the empty screen only 開く, 最近 (the recent files: test_recent.py), 表示スタイル and ? can be pressed.
 - 開く opens the file dialog; 全体表示 frames the model (nav_common's free
   area, which counts the toolbar as a panel); 画像を保存 downloads a PNG; ?
   opens and closes the key list.
@@ -30,7 +30,7 @@ from nav_common import DXF, MOLD, TESTDATA, nav_session
 import gui_common
 
 STL = str(TESTDATA / "ribbed_plate.stl")
-ACTIONS = ["open", "fit", "mode-none", "mode-measure", "mode-note", "section", "style", "png", "help"]
+ACTIONS = ["open", "recent", "fit", "mode-none", "mode-measure", "mode-note", "section", "style", "png", "help"]
 EDGE, GAP, COLUMN, BAR_H = 12, 8, 264, 36
 CUT = (90, 10, 15)  # on the plate's top, on the side the default section cuts away
 STYLES = ["shaded-edges", "shaded", "wireframe", "xray"]
@@ -82,7 +82,7 @@ with nav_session() as n:
         " return r.left < t.left + 1 || r.right > t.right - 1 || r.top < t.top || r.bottom > t.bottom }).map(b => b.dataset.action) })()"
     )
     assert out == [], ("1 buttons outside the toolbar", out)
-    assert enabled() == ["open", "style", "help"], enabled()
+    assert enabled() == ["open", "recent", "style", "help"], enabled()
     titles = {a: btn(a).get_attribute("title") for a in ACTIONS}
     for a, key in (("fit", "F"), ("mode-none", "Esc"), ("mode-measure", "（M）"), ("mode-note", "（N）"),
                    ("section", "（S）"), ("style", "W"), ("help", "?")):
@@ -91,6 +91,8 @@ with nav_session() as n:
     print("1 empty", [round(x) for x in t], enabled())
 
     # ---- 2. 開く: the file dialog; then the model, 回転 pressed, 表示 folded
+    # the plain <input> here: the file picker is taken away, as in a browser without it (its path: test_recent.py)
+    page.evaluate("window.showOpenFilePicker = undefined")
     with page.expect_file_chooser() as fc:
         btn("open").click()
     fc.value.set_files(n.paths["step"])
@@ -199,7 +201,7 @@ with nav_session() as n:
     # ---- 10. a drawing: no 注記, 断面 or 表示スタイル; N S W do nothing, M measures
     n.load(DXF, wait_text="2D 図面")
     assert page.title() == "plate_drawing.dxf — cad-viewer", page.title()
-    assert enabled() == ["open", "fit", "mode-none", "mode-measure", "png", "help"], enabled()
+    assert enabled() == ["open", "recent", "fit", "mode-none", "mode-measure", "png", "help"], enabled()
     before = select.input_value()
     for k in ("n", "s", "w"):
         page.keyboard.press(k)

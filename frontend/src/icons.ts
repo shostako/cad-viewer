@@ -7,6 +7,7 @@ import {
   Angle,
   Box,
   Check,
+  ChevronDown,
   CircleHelp,
   Cone,
   Copy,
@@ -25,6 +26,7 @@ import {
 
 export const ICON = {
   open: FolderOpen,
+  recent: ChevronDown,
   fit: Scan,
   rotate: Rotate3d,
   measure: Ruler,
