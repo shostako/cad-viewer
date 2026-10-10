@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -31,7 +32,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(500)
 
     # annotation on the mesh surface (center of the plate — no vertex nearby)
-    page.locator(".lil-gui select").first.select_option("注記")
+    gui_common.ctl(page, "モード").locator("select").select_option("注記")
     pt = page.evaluate("window.__cadProject(0, 0, 12)")  # top face center
     page.mouse.click(pt["x"], pt["y"])
     page.wait_for_selector(".note-input", timeout=5000)
@@ -44,7 +45,7 @@ with sync_playwright() as p:
     assert any("メッシュ注記テスト" in i for i in items), items
 
     # measure mode on a mesh must show the STEP/IGES-only hint, not silence
-    page.locator(".lil-gui select").first.select_option("計測")
+    gui_common.ctl(page, "モード").locator("select").select_option("計測")
     page.mouse.click(pt["x"], pt["y"])
     page.wait_for_timeout(500)
     hud = page.text_content("#hud-info")

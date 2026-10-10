@@ -10,10 +10,11 @@ the STL boxes and walls written here), picks (__cadPick), the camera
 of loose curves) and canvas pixels read with toDataURL inside rAF.
 
 The STEP is a private copy with eleven trailing newlines: its own hash, so its
-own model id and sidecar on a shared backend. test_section_annotation leaves
-annotations in mini_mold.step's sidecar, and restoring them would put marker
-spheres on the canvas and labels into the PNG export. Every load checks that
-nothing was restored. No step here writes a sidecar.
+own model id and sidecar on a shared backend. The shared mini_mold.step's
+sidecar may hold measurements and notes (the user's own views, a script that
+stopped half way), and restoring them would put marker spheres on the canvas
+and labels into the PNG export. Every load checks that nothing was restored.
+No step here writes a sidecar.
 
 The checks use the B-rep edges of mini_mold, projected, to keep sample points
 away from lines: a sample point is at least 10 px from every edge (also the
@@ -40,6 +41,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from nav_common import BASE_URL, BG, TESTDATA, box_stl, cross, dot, sub  # noqa: F401 (BG, box_stl: re-exported)
+import gui_common
 
 MOLD_SRC = TESTDATA / "mini_mold.step"
 PLATE = ((0, 0, 0), (100, 60, 15))
@@ -220,8 +222,7 @@ class Disp:
         return self.page.evaluate("window.__cadRenderInfo()")
 
     def ctl(self, name):
-        label = self.page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-        return self.page.locator(".lil-gui .lil-controller").filter(has=label).first
+        return gui_common.ctl(self.page, name)
 
     def style_select(self):
         return self.ctl("表示スタイル").locator("select")
@@ -252,10 +253,7 @@ class Disp:
         self.settle()
 
     def open_folder(self, name):
-        title = self.page.locator(".lil-gui .lil-title", has_text=re.compile("^" + re.escape(name) + "$")).first
-        folder = title.locator("xpath=..")
-        if "lil-closed" in (folder.get_attribute("class") or ""):
-            title.click()
+        gui_common.open_folder(self.page, name)
 
     def check(self, name, on):
         box = self.ctl(name).locator("input")

@@ -24,6 +24,7 @@ import re
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -157,7 +158,7 @@ with sync_playwright() as p:
                            " && document.querySelector('#props-total') !== null", timeout=60000)
     settle(800)
 
-    page.locator(".lil-gui select").first.select_option("計測")
+    gui_common.ctl(page, "モード").locator("select").select_option("計測")
     page.evaluate("document.activeElement && document.activeElement.blur()")
 
     def click_world(xyz):

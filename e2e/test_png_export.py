@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
+import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
@@ -121,8 +122,7 @@ try:
             page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
 
         def ctl(name):
-            label = page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-            return page.locator(".lil-gui .lil-controller").filter(has=label).first
+            return gui_common.ctl(page, name)
 
         save_btn = ctl("画像を保存").locator("button")
         bg_select = ctl("画像の背景").locator("select")
