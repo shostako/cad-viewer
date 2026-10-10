@@ -84,6 +84,39 @@ with nav_session() as n:
     c0 = centre(ls[0])
     assert abs(c0[0] - a[0]) <= 2 and abs(c0[1] - a[1]) <= 2, ("3 the next on the anchor", c0, a)
 
+    # ---- 3b. the stack near the view's bottom: the later labels go above, all
+    #      inside the view (Codex on #43: they were pushed off it)
+    canvas = page.evaluate("(() => { const r = document.querySelector('#viewport canvas').getBoundingClientRect(); return [r.top, r.bottom] })()")
+    page.locator("#measure-list li").nth(0).locator("button").click()  # back to one... then two more
+    for _ in range(2):
+        for q in (BLOCK_TOP, PLATE_TOP):
+            page.mouse.click(*n.project(q))
+            page.wait_for_timeout(300)
+    page.wait_for_function("document.querySelectorAll('#measure-list li').length === 3", timeout=15000)
+    page.mouse.move(5, 795)
+    n.settle()
+    # slide the view (Shift + an arrow) until the anchor is 30 px above the view's bottom
+    first = lambda: labels()[0]
+    key = "Shift+ArrowUp"
+    b0 = first()["b"]
+    page.keyboard.press(key)
+    n.settle()
+    if first()["b"] < b0:
+        key = "Shift+ArrowDown"
+    for _ in range(60):
+        if first()["b"] >= canvas[1] - 30:
+            break
+        page.keyboard.press(key)
+        n.settle()
+    ls = check_spread("3b")
+    print("3b near the bottom", [round(x["t"]) for x in ls], "view bottom", round(canvas[1]))
+    assert ls[0]["b"] >= canvas[1] - 45, ("3b the anchor must be near the bottom", ls[0], canvas)
+    assert all(x["t"] >= canvas[0] - 0.5 and x["b"] <= canvas[1] + 0.5 for x in ls), ("3b labels off the view", ls, canvas)
+    assert ls[1]["b"] <= ls[0]["t"] and ls[2]["b"] <= ls[1]["t"], ("3b the later ones above, in order", ls)
+    n.click_button("等角")
+    page.keyboard.press("f")
+    n.settle()
+
     # ---- 4. a label on its own stays on its own anchor (the pin's ⌀, on its rim)
     rim = (75, 26, 40)
     page.mouse.click(*n.project(rim))
