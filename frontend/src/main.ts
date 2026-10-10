@@ -451,9 +451,18 @@ function showReportPop(on: boolean): void {
   if (!on) return reportPop.hide()
   if (!contentShown) return
   reportPop.show(review)
-  const b = reportCtl.domElement.getBoundingClientRect()
-  const el = reportPop.el
-  el.style.right = `${Math.round(window.innerWidth - columnLeft() + COLUMN_GAP)}px`
+  placeBesideColumn(reportPop.el, reportCtl.domElement)
+}
+/**
+ * A card of the operation panel's (確認の記録, 判定の基準): left of the column,
+ * at the height of its button, kept in the window. A window too narrow for it
+ * beside the column puts it over the column (its left edge stays in view).
+ */
+function placeBesideColumn(el: HTMLElement, button: HTMLElement): void {
+  const b = button.getBoundingClientRect()
+  const beside = window.innerWidth - columnLeft() + COLUMN_GAP
+  const most = Math.max(COLUMN_MARGIN, window.innerWidth - el.offsetWidth - COLUMN_MARGIN)
+  el.style.right = `${Math.round(Math.min(beside, most))}px`
   el.style.top = `${Math.round(Math.max(COLUMN_MARGIN, Math.min(b.top, window.innerHeight - el.offsetHeight - COLUMN_MARGIN)))}px`
 }
 // a click anywhere else closes it (Esc: its own keys, and onNavigationKey)
@@ -1460,10 +1469,7 @@ const basisPop = new BasisPop(document.querySelector<HTMLDivElement>('#basis-pop
 function showBasisPop(on: boolean): void {
   if (!on) return basisPop.hide()
   basisPop.show(basisStore.bases)
-  const b = basisEditCtl.domElement.getBoundingClientRect()
-  const el = basisPop.el
-  el.style.right = `${Math.round(window.innerWidth - columnLeft() + COLUMN_GAP)}px`
-  el.style.top = `${Math.round(Math.max(COLUMN_MARGIN, Math.min(b.top, window.innerHeight - el.offsetHeight - COLUMN_MARGIN)))}px`
+  placeBesideColumn(basisPop.el, basisEditCtl.domElement)
 }
 // a click anywhere else closes it (Esc: its own keys)
 window.addEventListener(

@@ -8,7 +8,8 @@
   勾配; the list follows them, and its conditions (and the 記録's) name the
   basis. A material not edited says 未設定. The 体積・重量 resin stays as it was.
 - A value changed by hand: back to 手で決める. The choice and the values
-  survive a reload. Esc and a click elsewhere close the card.
+  survive a reload. Esc and a click elsewhere close the card. On a window too
+  narrow for it beside the column, the card (and 確認の記録's) stays in it.
 
 Oracles (none from the code under test): ribbed_plate.stl's make
 (testdata/make_testdata.py): its three ribs are 1.2 mm thick (薄肉 under 1.5 mm,
@@ -158,4 +159,16 @@ with nav_session() as n:
     assert row("PC").locator(".basis-source").input_value() == SOURCE
     page.keyboard.press("Escape")
     print("4 after a reload", conditions())
+
+    # ---- a narrow window: the cards stay in it (over the column when there is no room beside it)
+    page.set_viewport_size({"width": 560, "height": 800})
+    n.settle()
+    for name, sel in (("基準を編集…", "#basis-pop"), ("確認の記録…", "#report-pop")):
+        gui_common.ctl(page, name).locator("button").click()
+        page.wait_for_selector(f"{sel}:not(.hidden)")
+        r = page.evaluate(f"(() => {{ const r = document.querySelector('{sel}').getBoundingClientRect(); return [r.left, r.top, r.right, r.bottom] }})()")
+        assert r[0] >= 0 and r[2] <= 560 and r[1] >= 0 and r[3] <= 800, (name, r)
+        page.keyboard.press("Escape")
+        n.settle()
+    print("5 narrow", r)
 print("CHECK BASIS E2E OK")
