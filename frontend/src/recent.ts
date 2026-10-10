@@ -9,6 +9,10 @@
  * A file opened through the plain <input> (a browser without the picker)
  * gives no handle, so it is not listed. The measurements and notes come back
  * from the sidecar, as for any file with the same content.
+ *
+ * Several tabs share the one list: a change is made to the list as stored
+ * (read again just before), and the other tabs are told to read it again
+ * (BroadcastChannel), so one tab's stale copy does not write over another's.
  */
 
 export const RECENT_MAX = 8
@@ -98,9 +102,13 @@ export class RecentFiles {
   private readonly onChange: (entries: readonly RecentEntry[]) => void
   /** the changes in the order they were asked for (each reads what the one before wrote) */
   private queue: Promise<unknown> = Promise.resolve()
+  /** the other tabs of this app: told after a change, they read the list again */
+  private readonly channel: BroadcastChannel | null
 
   constructor(onChange: (entries: readonly RecentEntry[]) => void) {
     this.onChange = onChange
+    this.channel = typeof BroadcastChannel === 'function' ? new BroadcastChannel('cad-viewer-recent') : null
+    if (this.channel) this.channel.onmessage = () => void this.load()
   }
 
   /** read the list kept in this browser */
@@ -118,18 +126,29 @@ export class RecentFiles {
   remember(handle: FileSystemFileHandle, file: File): Promise<void> {
     return this.change(async () => {
       const kept: RecentEntry[] = []
-      for (const e of this.entries) if (!(await sameEntry(e.handle, handle))) kept.push(e)
+      for (const e of await this.latest()) if (!(await sameEntry(e.handle, handle))) kept.push(e)
       this.entries = [{ handle, name: file.name, size: file.size, openedAt: Date.now() }, ...kept].slice(0, RECENT_MAX)
       await this.save()
     })
   }
 
-  /** take an entry off the list */
+  /** take an entry off the list (the same file: another tab may have read the list again since) */
   forget(entry: RecentEntry): Promise<void> {
     return this.change(async () => {
-      this.entries = this.entries.filter((e) => e !== entry)
+      const kept: RecentEntry[] = []
+      for (const e of await this.latest()) if (!(e === entry || (await sameEntry(e.handle, entry.handle)))) kept.push(e)
+      this.entries = kept
       await this.save()
     })
+  }
+
+  /** the list as stored now (another tab may have changed it); this tab's when storage fails */
+  private async latest(): Promise<RecentEntry[]> {
+    try {
+      return await readList()
+    } catch {
+      return this.entries
+    }
   }
 
   private change(f: () => Promise<void>): Promise<void> {
@@ -141,6 +160,7 @@ export class RecentFiles {
   private async save(): Promise<void> {
     try {
       await writeList(this.entries)
+      this.channel?.postMessage('changed')
     } catch {
       /* not kept for the next visit; the list on screen is still right */
     }

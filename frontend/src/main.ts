@@ -516,6 +516,12 @@ function onNavigationKey(e: KeyboardEvent): void {
   }
   if (e.ctrlKey || e.metaKey || e.altKey) return
   if (e.key === 'Escape') {
+    // the recent files' list first: it is over everything (and only it goes)
+    if (!recentPop.classList.contains('hidden')) {
+      showRecentPop(false)
+      e.preventDefault()
+      return
+    }
     // a card first (the key list, a failed load's): it is what the eye is on
     if (keyHelp.shown) {
       keyHelp.show(false)
@@ -2013,7 +2019,15 @@ async function openFile(): Promise<void> {
     fileInput.click() // the picker refused (an old handle to start in, a policy): the plain one
     return
   }
-  const file = await handle.getFile()
+  let file: File
+  try {
+    file = await handle.getFile()
+  } catch (e) {
+    // gone or unreadable between the pick and the read (a cloud file not yet
+    // fetched, say): said, not left as nothing happening
+    hudInfo.textContent = `${handle.name} を読めなかった（${e instanceof Error ? e.message : e}）`
+    return
+  }
   void recent.remember(handle, file)
   void loadFile(file)
 }
@@ -2054,7 +2068,7 @@ function showRecentPop(on: boolean): void {
   }
   refreshToolbar()
 }
-// a click anywhere else or Esc closes it
+// a click anywhere else closes it (Esc: onNavigationKey)
 window.addEventListener(
   'pointerdown',
   (e) => {
@@ -2062,16 +2076,6 @@ window.addEventListener(
     const t = e.target as Node
     if (recentPop.contains(t) || toolbar?.button('recent').contains(t)) return
     showRecentPop(false)
-  },
-  { capture: true },
-)
-window.addEventListener(
-  'keydown',
-  (e) => {
-    if (e.key === 'Escape' && !recentPop.classList.contains('hidden')) {
-      showRecentPop(false)
-      e.stopPropagation()
-    }
   },
   { capture: true },
 )

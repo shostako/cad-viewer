@@ -14,7 +14,12 @@ back from the sidecar; × takes a row off.
 - × takes a row off, also for the next visit.
 - A file that is gone: the status line says so and the row goes. Leave to read
   refused: the status line says so and the row stays.
-- Esc and a click elsewhere close the ▾'s list.
+- Esc and a click elsewhere close the ▾'s list; with the key list open as
+  well, Esc closes only the ▾'s list (one press, one thing).
+- Two tabs share the list: a file opened in one is listed in the other, and a
+  row taken off in one does not come back by the other's next change.
+- A picked file that cannot be read (gone between the pick and the read): the
+  status line says so.
 - Without the picker (another browser): 開く falls back to the plain file
   dialog, and nothing is added (no handle).
 
@@ -47,8 +52,8 @@ with nav_session() as n:
     page.reload()
     page.wait_for_load_state("networkidle")
 
-    def put_file(name, data):
-        page.evaluate(
+    def put_file(name, data, pg=None):
+        (pg or page).evaluate(
             """async ([name, b64]) => {
                  const root = await navigator.storage.getDirectory()
                  const h = await root.getFileHandle(name, { create: true })
@@ -58,22 +63,24 @@ with nav_session() as n:
             [name, base64.b64encode(data).decode()],
         )
 
-    def pick(name):
+    def pick(name, pg=None):
         """開く with the picker giving this file; waits for its status line"""
-        page.evaluate("n => { window.__nextPick = n }", name)
-        page.locator("#toolbar button[data-action='open']").click()
-        page.wait_for_function("n => document.querySelector('#hud-info').textContent.includes(n)", arg=name, timeout=60000)
-        page.wait_for_timeout(150)  # the list is written after the open
+        pg = pg or page
+        pg.evaluate("n => { window.__nextPick = n }", name)
+        pg.locator("#toolbar button[data-action='open']").click()
+        pg.wait_for_function("n => document.querySelector('#hud-info').textContent.includes(n)", arg=name, timeout=60000)
+        pg.wait_for_timeout(150)  # the list is written after the open
 
-    def pop_rows():
-        return page.locator("#recent-pop-list .recent-name").all_text_contents()
+    def pop_rows(pg=None):
+        return (pg or page).locator("#recent-pop-list .recent-name").all_text_contents()
 
-    def card_rows():
-        return page.locator("#recent-list .recent-name").all_text_contents()
+    def card_rows(pg=None):
+        return (pg or page).locator("#recent-list .recent-name").all_text_contents()
 
-    def open_pop():
-        page.locator("#toolbar button[data-action='recent']").click()
-        page.wait_for_selector("#recent-pop:not(.hidden)")
+    def open_pop(pg=None):
+        pg = pg or page
+        pg.locator("#toolbar button[data-action='recent']").click()
+        pg.wait_for_selector("#recent-pop:not(.hidden)")
 
     def hidden(sel):
         return "hidden" in (page.locator(sel).get_attribute("class") or "")
@@ -179,6 +186,64 @@ with nav_session() as n:
     page.wait_for_selector("#recent-box:not(.hidden)", timeout=10000)
     assert card_rows() == want, ("a refused row stays, also for the next visit", card_rows())
     print("6-7 gone and refused ok")
+
+    # ---- 7b. Esc with the key list open too: only the ▾'s list goes
+    page.keyboard.press("?")
+    page.wait_for_selector("#help-card:not(.hidden)", timeout=5000)
+    open_pop()
+    page.keyboard.press("Escape")
+    assert hidden("#recent-pop"), "Esc closes the ▾'s list"
+    assert not hidden("#help-card"), "the key list stays (one press, one thing)"
+    page.keyboard.press("Escape")
+    assert hidden("#help-card")
+
+    # ---- 7c. a picked file that cannot be read: said
+    put_file("gone.stl", open(path, "rb").read())
+    page.evaluate(
+        "async () => { const root = await navigator.storage.getDirectory();"
+        " const h = await root.getFileHandle('gone.stl'); await root.removeEntry('gone.stl');"
+        " window.showOpenFilePicker = async () => [h] }"
+    )
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('gone.stl を読めなかった')", timeout=10000)
+    page.reload()  # the stand-in picker comes back with the page
+    page.wait_for_load_state("networkidle")
+
+    # ---- 7d. two tabs share the list (one browser context: its storage is theirs)
+    ctx = page.context.browser.new_context(viewport={"width": 1280, "height": 800})
+    ctx.add_init_script(STUB)
+    tab_a, tab_b = ctx.new_page(), ctx.new_page()
+    for t in (tab_a, tab_b):
+        t.goto(page.url)
+        t.wait_for_load_state("networkidle")
+    box = open(path, "rb").read()
+    for name in ("two_0.stl", "two_1.stl", "two_2.stl"):
+        put_file(name, box, tab_a)
+    for name in ("two_0.stl", "two_1.stl"):
+        pick(name, tab_a)
+    # a file opened in one tab is listed in the other
+    tab_b.wait_for_function("() => document.querySelector('#recent-list .recent-name')?.textContent === 'two_1.stl'", timeout=10000)
+    assert card_rows(tab_b) == ["two_1.stl", "two_0.stl"], card_rows(tab_b)
+    # the other tab takes a row off; this tab's next change must not bring it back
+    tab_b.locator("#recent-list .recent-row").nth(1).locator(".recent-forget").click()
+    tab_a.wait_for_function("() => ![...document.querySelectorAll('#recent-list .recent-name, #recent-pop-list .recent-name')].some(e => e.textContent === 'two_0.stl')", timeout=10000)
+    pick("two_2.stl", tab_a)
+    open_pop(tab_a)
+    assert pop_rows(tab_a) == ["two_2.stl", "two_1.stl"], ("the other tab's change kept", pop_rows(tab_a))
+    tab_a.keyboard.press("Escape")
+    # a change whose word never came (another tab writing without telling): the
+    # next change is made to the list as stored, not to this tab's copy
+    tab_a.evaluate(
+        "() => new Promise((ok, no) => { const r = indexedDB.open('cad-viewer', 1);"
+        " r.onsuccess = () => { const tx = r.result.transaction('recent', 'readwrite'); const st = tx.objectStore('recent');"
+        " const g = st.get('list'); g.onsuccess = () => { st.put(g.result.filter(e => e.name !== 'two_1.stl'), 'list') };"
+        " tx.oncomplete = () => { r.result.close(); ok() }; tx.onerror = () => no(tx.error) }; r.onerror = () => no(r.error) })"
+    )
+    pick("two_0.stl", tab_a)
+    open_pop(tab_a)
+    assert pop_rows(tab_a) == ["two_0.stl", "two_2.stl"], ("the stored list, not this tab's copy", pop_rows(tab_a))
+    ctx.close()
+    print("7 Esc, unreadable, two tabs ok")
 
     # ---- 8. without the picker: the plain file dialog, nothing added
     page.evaluate("window.showOpenFilePicker = undefined")
