@@ -31,7 +31,14 @@ export interface RowView {
 const KIND_NAME: Record<RowKind, string> = { distance: '距離', diameter: '直径', note: '注記', other: '' }
 
 /** a 3D entry (as saved) as a row */
-export function entryRow(d: EntryData): RowView {
+export function entryRow(raw: EntryData): RowView {
+  // a sidecar is plain JSON anyone can edit: a missing or broken text reads as
+  // empty (a row that throws here would stop the whole list being drawn)
+  const d = {
+    ...raw,
+    text: typeof raw.text === 'string' ? raw.text : '',
+    labelText: typeof raw.labelText === 'string' ? raw.labelText : '',
+  }
   if (d.annotation) return { kind: 'note', value: d.labelText, unit: '', what: '', a: '', b: '' }
   // "core_pin 円エッジ ⌀8.000 (L=25.133)", "円筒面 ⌀8.000"
   const dia = /^(.*?)\s*⌀([-\d.]+)(.*)$/.exec(d.text)
@@ -189,7 +196,14 @@ export function rowElement(
   const doCopy = async (): Promise<void> => {
     if (await copyText(rowLine(r))) flashDone(cp, label)
   }
-  cp.addEventListener('click', () => void doCopy())
+  // on mousedown, as the × does: a click would first blur a note being typed,
+  // whose commit draws the list again and takes this control away before the
+  // click lands (no focus change: the note stays open)
+  cp.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    void doCopy()
+  })
   cp.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()

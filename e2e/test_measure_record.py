@@ -48,6 +48,9 @@ OLD_ENTRIES = [
     {"text": "円エッジ ⌀4.000 (L=12.566)", "labelText": "⌀4.000", "labelPos": [25, 30, 40]},
     {"text": "📌 古い注記", "labelText": "古い注記", "labelPos": [50, 30, 35], "markers": [[50, 30, 35]], "annotation": True},
     {"text": "手で書いた行", "labelText": "", "labelPos": [0, 0, 0]},
+    # hand-edited: no labelText (Codex on #38: the row must not stop the list)
+    {"text": "面#1 ↔ 面#2 : 1.000", "labelPos": [0, 0, 0]},
+    {"text": "📌 最後の注記", "labelText": "最後の注記", "labelPos": [50, 30, 35], "annotation": True},
 ]
 
 with sync_playwright() as p:
@@ -253,7 +256,7 @@ with sync_playwright() as p:
     # ---- 5. entries saved before the change
     saved["entries"] = OLD_ENTRIES
     load()
-    page.wait_for_function("document.querySelectorAll('#measure-list li').length === 4", timeout=10000)
+    page.wait_for_function("document.querySelectorAll('#measure-list li').length === 6", timeout=10000)
     got = [(r["kind"], r["value"], r["what"]) for r in rows()]
     print("5 old rows", got)
     assert got == [
@@ -261,6 +264,8 @@ with sync_playwright() as p:
         ("diameter", "⌀4.000 mm", "円エッジ (L=12.566)"),
         ("note", "古い注記", None),
         ("other", "手で書いた行", None),
+        ("distance", "1.000 mm", "面#1 ↔ 面#2"),
+        ("note", "最後の注記", None),
     ], got
     page.click("#measure-copy-all")
     page.wait_for_timeout(100)
@@ -269,7 +274,22 @@ with sync_playwright() as p:
         "直径\t4.000\tmm\t円エッジ (L=12.566)\t",
         "注記\t古い注記\t\t\t",
         "\t\t\t手で書いた行\t",
+        "距離\t1.000\tmm\t面#1\t面#2",
+        "注記\t最後の注記\t\t\t",
     ], clipboard()
+
+    # ---- 6. a copy while a note is being typed: the first click copies, the note stays open
+    gui_common.set_mode(page, "注記")
+    page.mouse.click(*project(NOTE_AT))
+    page.wait_for_selector(".note-input", timeout=5000)
+    page.keyboard.type("書きかけ")
+    page.evaluate("navigator.clipboard.writeText('')")
+    page.locator("#measure-list li").nth(0).locator(".m-copy").click()
+    page.wait_for_timeout(100)
+    assert clipboard() == "距離\t12.500\tmm\t面#6\t面#3", ("6 the first click copies", clipboard())
+    assert page.locator(".note-input").count() == 1 and page.input_value(".note-input") == "書きかけ", "6 the note stays open"
+    page.keyboard.press("Escape")
+    gui_common.set_mode(page, "なし")
 
     page.screenshot(path="/tmp/cad_viewer_measure_record.png")
     errors = [e for e in errors if "Failed to load resource" not in e]
