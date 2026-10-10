@@ -31,12 +31,13 @@ const TOOLS: Row[] = [
   { what: '断面を入れる・切る', keys: ['S'] },
   { what: '表示スタイルを順に', keys: ['W'] },
   { what: '計測の 1 点目を取り消す・計測と注記をやめる', keys: ['Esc'] },
+  { what: '計測の 1 点目の面積・周長、稜線の長さを一覧へ', keys: ['Enter'] },
   { what: '消した計測を元に戻す', keys: [['Ctrl', 'Z']] },
   { what: 'パネルを隠す・出す', keys: ['H'] },
   { what: 'この一覧を開く・閉じる', keys: ['?'] },
 ]
 /** a drawing: no notes, no section, one way to draw */
-const TOOLS_2D: Row[] = TOOLS.filter((r) => !['N', 'S', 'W'].includes(r.keys[0] as string)).map((r) =>
+const TOOLS_2D: Row[] = TOOLS.filter((r) => !['N', 'S', 'W', 'Enter'].includes(r.keys[0] as string)).map((r) =>
   r.keys[0] === 'Esc' ? { ...r, what: '計測の 1 点目を取り消す・計測をやめる' } : r,
 )
 

@@ -8,6 +8,7 @@ import {
   Box,
   Check,
   ChevronDown,
+  CircleDashed,
   CircleHelp,
   Cone,
   Copy,
@@ -15,11 +16,13 @@ import {
   FolderOpen,
   ImageDown,
   MapPin,
+  MoveHorizontal,
   Radius,
   Rotate3d,
   Ruler,
   Scan,
   Slice,
+  Square,
   createElement,
   type IconNode,
 } from 'lucide'
@@ -41,6 +44,9 @@ export const ICON = {
   angle: Angle,
   draft: Cone,
   copy: Copy,
+  area: Square,
+  perimeter: CircleDashed,
+  length: MoveHorizontal,
   done: Check,
 } satisfies Record<string, IconNode>
 

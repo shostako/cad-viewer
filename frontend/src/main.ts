@@ -537,6 +537,13 @@ function onNavigationKey(e: KeyboardEvent): void {
     e.preventDefault()
     return
   }
+  // Enter in 計測: what the first point's face or edge measures by itself (面積
+  // and 周長, 長さ) goes on the list, and the next click is a first point again
+  if (e.key === 'Enter' && state.mode === '計測' && !is2D && measureTool.hasPending) {
+    if (!e.repeat && measureTool.recordPending()) showModeHint()
+    e.preventDefault()
+    return
+  }
   // the toolbar's keys (a letter typed into a note never comes here: isTextEntry)
   const letter = e.key.length === 1 ? e.key.toLowerCase() : ''
   if (letter === 'm' || letter === 'n' || letter === 's' || letter === 'w') {
@@ -720,6 +727,11 @@ function setModeHud(text: string, base = ''): void {
   modeBase = base
   hudInfo.textContent = text
 }
+// the first point's area / length came from the backend: its line says it now
+// (while that line is still the one shown)
+measureTool.onPendingExtent(() => {
+  if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
+})
 /** what the mode asks the next click for ('' in なし) */
 function modeHint(): string {
   if (state.mode === '計測') return measureTool.available ? MEASURE_HINT : MEASURE_MESH_HINT

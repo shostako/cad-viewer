@@ -38,6 +38,7 @@ POINTS = {
     "dimple": ("body", "face", (52, 30, 8)),  # its bottom
     "boss_side": ("body", "face", (38 + 6 - 4 * math.tan(2 * DEG), 20, 14)),  # halfway up
     "top": ("body", "face", (30, 35, 10)),
+    "bottom": ("body", "face", (30, 35, 0)),
     "corner_arc": ("body", "edge", (5 - 5 * C45, 5 - 5 * C45, 10)),  # the corner's top edge
     "hole_rim": ("body", "edge", (12, 23, 10)),  # off the seam's end (a vertex)
     # nurbs_pin
@@ -224,3 +225,29 @@ def test_a_bad_click_is_refused(model, near):
         headers={"Content-Type": "application/json"},
     )
     assert r.status_code == 422, r.text
+
+
+# the body's outline (top and bottom): 60 x 40 with its 4 vertical edges rounded R5
+OUTLINE = 2 * (60 - 10) + 2 * (40 - 10) + 2 * math.pi * 5
+
+
+def test_a_face_tells_its_outer_loop_and_its_holes(model):
+    """the top: the rounded outline; inside it the boss's foot (its rounding
+    meets the top at the tube's radius), the dimple (a sphere of radius 4 2 mm
+    above: a circle of radius sqrt(12)) and the through hole (radius 3)"""
+    info = _info(model, "top")
+    assert info["perimeter"] == pytest.approx(OUTLINE, abs=1e-6)
+    want = sorted([2 * math.pi * BOSS_TUBE, 2 * math.pi * math.sqrt(12), 2 * math.pi * 3], reverse=True)
+    assert info["holes"] == pytest.approx(want, abs=1e-6), info["holes"]
+    bottom = _info(model, "bottom")
+    assert bottom["perimeter"] == pytest.approx(OUTLINE, abs=1e-6)
+    assert bottom["holes"] == pytest.approx([2 * math.pi * 3], abs=1e-6), bottom["holes"]
+    # the area: the outline's, less the holes cut in it (the bottom: only the through hole)
+    assert bottom["area"] == pytest.approx(60 * 40 - (4 - math.pi) * 25 - math.pi * 9, abs=1e-6)
+
+
+def test_a_cylinder_face_loop_leaves_out_its_seam(model):
+    """the through hole's wall: its loop is the two circles; the seam it is cut along is not counted"""
+    info = _info(model, "hole")
+    assert info["perimeter"] == pytest.approx(2 * 2 * math.pi * 3, abs=1e-6)
+    assert info["holes"] == []

@@ -33,6 +33,9 @@ export function fmt(v: number): string {
   return v.toFixed(3)
 }
 
+/** the unit of a measured area (lengths are LENGTH_UNIT, mm) */
+export const AREA_UNIT = 'mm²'
+
 /** an angle: degrees, 3 decimals, with its ° */
 export function fmtDeg(v: number): string {
   return `${v.toFixed(3)}°`
