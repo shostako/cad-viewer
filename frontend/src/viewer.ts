@@ -51,6 +51,14 @@ const MAX_ZOOM_FAR = 0.25
 const PIVOT_MS = 250
 /** how long a change of view takes on screen: a preset, an axis of the triad, a fit */
 const VIEW_MS = 300
+/**
+ * The frames stop while nothing changes (a laptop's battery, heat and fan:
+ * a still model used to be drawn 60 times a second). After any change, this
+ * long of frames still go on (damping, a panel settling).
+ */
+const AWAKE_MS = 1000
+/** even with nothing announced, a frame this often: a change no one told about shows within it */
+const IDLE_FRAME_MS = 1000
 
 /** a camera pose a view animation goes between (orientation, distance, zoom and screen shift) */
 interface Pose {
@@ -167,6 +175,10 @@ export class Viewer {
   private _rotateMode: RotateMode = 'turntable'
   /** pointers held down on the canvas — auto-rotate pauses so it doesn't fight the user */
   private heldPointers = new Set<number>()
+  /** frames go on until then (wake) */
+  private awakeUntil = 0
+  private lastDrawn = -Infinity
+  private framesDrawn = 0
   private lineMaterials: LineMaterial[] = []
   private partGroups = new Map<number, THREE.Group>()
   private partMeshes = new Map<number, THREE.Mesh>()
@@ -299,6 +311,36 @@ export class Viewer {
     this.fitToContainer()
     this.watchPixelRatio()
 
+    // ---- frames only while something changes
+    // Anything the user does on the page wakes the frames (a hover lights a
+    // face, a key turns the view); so do the controls' own moves (damping),
+    // whatever is added to or taken from the scene, and the viewer's own
+    // changes (wake() in its methods).
+    for (const type of ['pointerdown', 'pointermove', 'pointerup', 'wheel', 'keydown', 'keyup', 'focus', 'blur']) {
+      window.addEventListener(type, () => this.wake(), { capture: true, passive: true })
+    }
+    for (const c of [this.controls, this.trackball]) c.addEventListener('change', () => this.wake())
+    for (const g of [this.scene, this.modelGroup, this.overlay, this.cues]) {
+      const add = g.add.bind(g)
+      const remove = g.remove.bind(g)
+      g.add = ((...o: THREE.Object3D[]) => {
+        this.wake()
+        return add(...o)
+      }) as typeof g.add
+      g.remove = ((...o: THREE.Object3D[]) => {
+        this.wake()
+        return remove(...o)
+      }) as typeof g.remove
+    }
+    // whoever reads the canvas (the E2E's pixel checks) gets this moment's
+    // frame: between drawn frames the buffer is not kept
+    const drawn = this.renderer.domElement
+    const toDataURL = drawn.toDataURL.bind(drawn)
+    drawn.toDataURL = ((...args: Parameters<HTMLCanvasElement['toDataURL']>) => {
+      this.drawFrame(performance.now())
+      return toDataURL(...args)
+    }) as typeof drawn.toDataURL
+
     let last = performance.now()
     this.renderer.setAnimationLoop((now: number) => {
       // clamp: a background tab resumes with a huge gap, which would jump the spin
@@ -308,12 +350,31 @@ export class Viewer {
       else if (this.autoRotate && this.heldPointers.size === 0 && dt > 0) {
         this.rotateView((this.autoRotateSpeed * Math.PI / 180) * dt, 0)
       }
-      this.activeControls().update()
-      this.prepareCamera()
-      this.renderer.render(this.scene, this.camera)
-      this.labelRenderer.render(this.scene, this.camera)
-      for (const fn of this.frameListeners) fn()
+      // OrbitControls says whether it moved the camera (damping); TrackballControls tells by 'change'
+      const moved = this.activeControls().update() === true
+      const busy = moved || this.viewAnim !== null || this.autoRotate || this.heldPointers.size > 0 || now < this.awakeUntil
+      if (busy || now - this.lastDrawn >= IDLE_FRAME_MS) this.drawFrame(now)
     })
+  }
+
+  /** frames go on for at least ms from now (something changed, or is about to) */
+  wake(ms = AWAKE_MS): void {
+    this.awakeUntil = Math.max(this.awakeUntil, performance.now() + ms)
+  }
+
+  /** draw a frame now (the loop, or a read of the canvas) */
+  private drawFrame(now: number): void {
+    this.prepareCamera()
+    this.renderer.render(this.scene, this.camera)
+    this.labelRenderer.render(this.scene, this.camera)
+    this.lastDrawn = now
+    this.framesDrawn++
+    for (const fn of this.frameListeners) fn()
+  }
+
+  /** frames drawn so far (E2E: they stop while nothing changes) */
+  get frameCount(): number {
+    return this.framesDrawn
   }
 
   /** the camera in use: perspective or parallel (setProjection) */
@@ -409,6 +470,7 @@ export class Viewer {
 
   /** Thickness heatmap (thickness.ts): red to orange below the threshold, grey-blue to blue at and above it. */
   setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
+    this.wake()
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
       if (!mesh) continue
@@ -429,6 +491,7 @@ export class Viewer {
    * Mesh-format parts are coloured on their flat copy (see flatCopy).
    */
   setDraftColors(dir: readonly [number, number, number], requiredDeg: number): void {
+    this.wake()
     for (const [partId, mesh] of this.partMeshes) {
       if (!mesh.geometry.index?.count) continue // loose curves: nothing to colour
       if (mesh.userData.meshFormat) {
@@ -552,6 +615,7 @@ export class Viewer {
 
   /** Back to the part colours (thickness heatmap or draft colouring off). */
   clearVertexColors(): void {
+    this.wake()
     for (const partId of [...this.flatCopies.keys()]) this.removeFlatCopy(partId)
     for (const mesh of this.partMeshes.values()) {
       const mat = mesh.material as THREE.MeshStandardMaterial
@@ -565,6 +629,7 @@ export class Viewer {
 
   /** Apply clipping planes to every model material (mesh + edge lines). */
   setClippingPlanes(planes: THREE.Plane[]): void {
+    this.wake()
     const list = planes.length ? planes : null
     this.modelGroup.traverse((o) => {
       if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
@@ -601,6 +666,7 @@ export class Viewer {
    * clear of them.
    */
   setModel(model: ModelData): void {
+    this.wake()
     this.clearModel()
     for (const part of model.parts) this.addPart(part)
     this.buildGrid(this.modelBBox())
@@ -716,6 +782,7 @@ export class Viewer {
    * visibility change: no geometry is built, and nothing is added per frame.
    */
   setDisplayStyle(style: DisplayStyle): void {
+    this.wake()
     if (style === this._displayStyle) return
     this._displayStyle = style
     for (const id of this.partMeshes.keys()) this.applyStyle(id)
@@ -793,6 +860,7 @@ export class Viewer {
    * image never has it (snapshot).
    */
   setHighlight(partIds: Iterable<number>): void {
+    this.wake()
     const next = new Set(partIds)
     const before = this.highlighted
     this.highlighted = next
@@ -824,11 +892,13 @@ export class Viewer {
   }
 
   setPartVisible(partId: number, visible: boolean): void {
+    this.wake()
     const g = this.partGroups.get(partId)
     if (g) g.visible = visible
   }
 
   clearModel(): void {
+    this.wake()
     for (const child of [...this.modelGroup.children]) {
       this.modelGroup.remove(child)
       child.traverse((o) => {
@@ -859,6 +929,7 @@ export class Viewer {
 
   /** Zoom to fit the visible bodies, keeping the current view direction and roll. */
   fitToView(): void {
+    this.wake()
     const box = this.modelBBox()
     if (box.isEmpty()) return
     const from = this.pose()
@@ -874,6 +945,7 @@ export class Viewer {
    * and moves nothing, when none of them is visible.
    */
   fitToParts(partIds: readonly number[]): boolean {
+    this.wake()
     const box = this.partsBox(partIds)
     if (box.isEmpty()) return false
     const from = this.pose()
@@ -919,6 +991,7 @@ export class Viewer {
 
   /** The load fit: default oblique direction, Z up, framed in fitArea. */
   frameNewModel(): void {
+    this.wake()
     this.viewAnim = null
     this.stopInertia()
     this.camera.up.copy(WORLD_UP)
@@ -1175,6 +1248,7 @@ export class Viewer {
    * is untouched, and every frame re-places the depth.
    */
   orbitAround(point: THREE.Vector3): void {
+    this.wake()
     this.viewAnim = null // a second double-click starts from wherever the first one got to
     this.stopInertia()
     const from = this.pose()
@@ -1311,6 +1385,7 @@ export class Viewer {
    * another scale: the canvas would stay blurry and an export too small.
    */
   private fitToContainer(): void {
+    this.wake()
     const w = this.container.clientWidth
     const h = this.container.clientHeight
     // hidden (2D drawing shown): keep the last size, so the aspect never
@@ -1456,6 +1531,7 @@ export class Viewer {
   }
 
   set gridVisible(v: boolean) {
+    this.wake()
     this._gridVisible = v
     if (this.gridHelper) this.gridHelper.visible = v
   }
@@ -1476,6 +1552,7 @@ export class Viewer {
   }
 
   setRotateMode(mode: RotateMode): void {
+    this.wake()
     if (mode === this._rotateMode) return
     this.finishViewAnim()
     this.stopInertia()
@@ -1501,6 +1578,7 @@ export class Viewer {
    * up, so the face on that side of the model comes into view.
    */
   rotateView(azimuth: number, elevation: number): void {
+    this.wake()
     this.finishViewAnim()
     const target = this.target
     const offset = this.camera.position.clone().sub(target)
@@ -1530,6 +1608,7 @@ export class Viewer {
 
   /** Slide the view across the screen; dx/dy are fractions of the view height. */
   pan(dx: number, dy: number): void {
+    this.wake()
     this.finishViewAnim()
     const { right, up } = this.screenAxes()
     const dist = this.camera.position.distanceTo(this.target)
@@ -1541,6 +1620,7 @@ export class Viewer {
 
   /** factor < 1 moves closer, > 1 moves away (parallel: the visible height scales, the target stays) */
   zoom(factor: number): void {
+    this.wake()
     this.finishViewAnim()
     if (this._projection === 'orthographic') {
       // within the controls' own zoom limits, which OrbitControls re-applies
@@ -1560,6 +1640,7 @@ export class Viewer {
 
   /** Jump to a standard view, keeping the current target and distance. */
   setView(preset: ViewPreset): void {
+    this.wake()
     const from = this.pose() // from where it is now, even half way through another change
     this.finishViewAnim()
     this.stopInertia()
@@ -1605,6 +1686,7 @@ export class Viewer {
    * back again the perspective camera goes to d = h / tan(fov / 2).
    */
   setProjection(p: Projection): void {
+    this.wake()
     if (p === this._projection) return
     // the switch keeps the view: a view still as the last fit left it stays so
     // (atLastFit compares within one projection). A fit still on its way ends
