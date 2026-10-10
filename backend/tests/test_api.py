@@ -159,6 +159,45 @@ def test_upload_dedup_same_content(client):
     assert meta1["id"] == meta2["id"], "identical content must reuse the entry"
 
 
+def _mesh_header(client, model_id):
+    blob = client.get(f"/api/models/{model_id}/mesh.bin").content
+    (hlen,) = struct.unpack_from("<I", blob, 0)
+    return json.loads(blob[4 : 4 + hlen])
+
+
+def test_upload_same_content_another_name(client):
+    """The same bytes under another name are shown by that name.
+
+    The name is what the status line and the browser tab show; a mesh's one
+    part (and its row in the part tree) is named after its file too. Opened
+    again under the same name, the entry is still reused.
+    """
+    stl = trimesh.creation.box(extents=(11, 21, 31)).export(file_type="stl")
+    first = client.post("/api/models", files={"file": ("first.stl", stl, "model/stl")}).json()
+    second = client.post("/api/models", files={"file": ("second.stl", stl, "model/stl")}).json()
+    assert first["name"] == "first.stl"
+    assert second["name"] == "second.stl", second
+    header = _mesh_header(client, second["id"])
+    assert [p["name"] for p in header["parts"]] == ["second.stl"], header["parts"]
+    assert header["tree"]["children"][0]["name"] == "second.stl", header["tree"]
+    # the first one keeps its own name
+    assert _mesh_header(client, first["id"])["parts"][0]["name"] == "first.stl"
+    again = client.post("/api/models", files={"file": ("second.stl", stl, "model/stl")}).json()
+    assert again["id"] == second["id"], "the same bytes under the same name must reuse the entry"
+
+
+@pytest.mark.skipif(not STEP_ASSEMBLY.exists(), reason="run testdata/make_step_assembly.py first")
+def test_upload_same_step_another_name(client):
+    """A STEP under another name: that name, the same shape (from the disk cache)."""
+    data = STEP_ASSEMBLY.read_bytes() + b"\n" * 21  # its own hash: no other test's entry
+    a = client.post("/api/models", files={"file": ("a.step", data, "application/step")}).json()
+    b = client.post("/api/models", files={"file": ("b.step", data, "application/step")}).json()
+    assert (a["name"], b["name"]) == ("a.step", "b.step"), (a, b)
+    assert b["cached"] is True, "the shape comes from the disk cache, not a second parse"
+    assert a["bbox"] == b["bbox"] and a["partCount"] == b["partCount"]
+    assert client.get(f"/api/models/{b['id']}/mesh.bin").content == client.get(f"/api/models/{a['id']}/mesh.bin").content
+
+
 def test_sidecar_concurrent_puts_no_tmp_collision(client):
     """Regression: fixed .json.tmp name raced under concurrent saves for the
     same content hash (one request's replace() removed the other's temp file
