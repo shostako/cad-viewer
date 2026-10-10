@@ -352,9 +352,9 @@ export class MeasureTool {
     if (!p) return ''
     const x = this.pendingExtent
     // the second point measures another distance than the shortest: said so
-    const second = this.distanceMode === 'min' ? '2 点目' : `2 点目（${DISTANCE_MODE_NAMES[this.distanceMode]}）`
-    if (!x) return `${this.describe(p.pick)} を選択 — 相手をクリックで ${second}（Esc で取り消し）`
-    return `${this.describe(p.pick)} を選択（${extentText(x)}）— 相手をクリックで ${second}、Enter で一覧へ（Esc で取り消し）`
+    const second = this.distanceMode === 'min' ? '相手をクリックで 2 点目' : `相手をクリックで${DISTANCE_MODE_NAMES[this.distanceMode]}を測る`
+    if (!x) return `${this.describe(p.pick)} を選択 — ${second}（Esc で取り消し）`
+    return `${this.describe(p.pick)} を選択（${extentText(x)}）— ${second}、Enter で一覧へ（Esc で取り消し）`
   }
 
   /**

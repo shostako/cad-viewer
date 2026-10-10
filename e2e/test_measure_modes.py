@@ -2,7 +2,7 @@
 
 - The operation panel's 距離 (最短 / 中心間 / 最大) is shown in 計測 on a 3D
   model, not in なし nor on a 2D drawing. A first point says what its partner
-  will measure.
+  will measure (相手をクリックで中心間を測る).
 - 中心間: the through hole's top rim (a circle: its centre) and the boss's
   cone (its axis) are 26 apart; the status line, the 3D label and the list's
   row say 中心間. A plane has no centre: said why, nothing listed.
@@ -82,7 +82,7 @@ with nav_session() as n:
     # ---- 中心間: the hole's rim and the boss's cone
     set_distance("中心間")
     click((12, 23, 10), "edge")  # the hole's top rim, off its seam
-    wait_hud("2 点目（中心間）")
+    wait_hud("相手をクリックで中心間を測る")
     boss_side = (38, 20 - (6 - 4 * math.tan(2 * DEG)), 14)  # the cone halfway up, toward the viewer
     click(boss_side, "face")
     wait_hud(f"中心間 {f3(26)}")
@@ -104,7 +104,7 @@ with nav_session() as n:
     set_distance("最大")
     n_before = len(rows())
     click((30, 0, 10), "edge")
-    wait_hud("2 点目（最大）")
+    wait_hud("相手をクリックで最大を測る")
     click((60, 20, 10), "edge")
     wait_hud(f"最大 {f3(FAR)}")
     r = rows()[n_before:]
@@ -122,7 +122,7 @@ with nav_session() as n:
     n_before = len(rows())
     click((30, 0, 10), "edge")
     wait_hud("を選択")
-    assert "（中心間）" not in hud() and "（最大）" not in hud(), hud()
+    assert "を測る" not in hud() and "相手をクリックで 2 点目" in hud(), hud()
     click((60, 20, 10), "edge")
     wait_hud("距離 ")
     r = rows()[n_before:]
