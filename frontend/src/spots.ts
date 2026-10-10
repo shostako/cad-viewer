@@ -1,0 +1,372 @@
+/**
+ * The places a colour map points at, to go to from its legend (issue #47
+ * item 7):
+ *
+ * - thinSpots: where the wall is thinner than the threshold (肉厚), the
+ *   thinnest first. A place is a run of thin vertices joined by triangles and
+ *   by nearness: the two sides of a thin wall are different B-rep faces that
+ *   share no vertex, but they are less than the threshold apart. With none
+ *   thinner than the threshold, the one thinnest point.
+ * - draftSpots: the faces of one draft class (勾配不足, 反対側), the largest
+ *   first. A B-rep face is one place (only its triangles of that class count:
+ *   a curved face can be partly short); a mesh-format part has no faces, so a
+ *   run of triangles of the class joined by their corners is one place.
+ *
+ * Each place has a point on the surface (the marker), the outward normal there
+ * (the view looks at it from outside, along -normal), its extent (framed) and
+ * its value (the thickness in mm, the draft angle in degrees there).
+ *
+ * The draft classes are those of the colouring (draft.ts): a B-rep triangle by
+ * the mean of its vertex normals, a mesh-format triangle by its winding.
+ */
+import { draftClass, draftSine, type DraftClass } from './draft'
+import type { FaceRange } from './model'
+
+type Vec3 = [number, number, number]
+
+/** one visible part with faces, as the viewer draws it (world coordinates) */
+export interface SpotPart {
+  partId: number
+  positions: ArrayLike<number>
+  /** vertex normals; a mesh-format part's are averaged ones (smooth shading) */
+  normals: ArrayLike<number>
+  indices: ArrayLike<number>
+  /** B-rep faces; empty for mesh formats */
+  faceRanges: readonly FaceRange[]
+  /** mesh formats: the winding sign of the part (draft.ts windingSign) */
+  windingSign: 1 | -1
+}
+
+export interface Spot {
+  partId: number
+  /** the B-rep face of a draft place (null: a thin place, or a mesh-format part) */
+  faceId: number | null
+  /** the marker's point, on the surface */
+  at: Vec3
+  /** the outward normal at `at` (unit) */
+  normal: Vec3
+  /** the place's extent */
+  min: Vec3
+  max: Vec3
+  /** thickness (mm) of a thin place; the draft angle (degrees) at `at` of a draft place */
+  value: number
+  /** a draft place's area (its triangles of the class); 0 for a thin place */
+  area: number
+}
+
+/** union-find over n items */
+class Joins {
+  private readonly up: Int32Array
+  constructor(n: number) {
+    this.up = new Int32Array(n)
+    for (let i = 0; i < n; i++) this.up[i] = i
+  }
+  find(i: number): number {
+    let r = i
+    while (this.up[r] !== r) r = this.up[r]
+    while (this.up[i] !== r) {
+      const next = this.up[i]
+      this.up[i] = r
+      i = next
+    }
+    return r
+  }
+  join(a: number, b: number): void {
+    const ra = this.find(a)
+    const rb = this.find(b)
+    if (ra !== rb) this.up[Math.max(ra, rb)] = Math.min(ra, rb)
+  }
+}
+
+/**
+ * For each vertex, the first vertex at exactly the same point. The
+ * tessellation gives the faces on both sides of an edge the same points
+ * along it (one polygon per edge), so equal is the test.
+ */
+function samePoint(positions: ArrayLike<number>): Int32Array {
+  const n = Math.floor(positions.length / 3)
+  const first = new Map<string, number>()
+  const out = new Int32Array(n)
+  for (let i = 0; i < n; i++) {
+    const key = `${positions[i * 3]},${positions[i * 3 + 1]},${positions[i * 3 + 2]}`
+    const f = first.get(key)
+    if (f === undefined) {
+      first.set(key, i)
+      out[i] = i
+    } else out[i] = f
+  }
+  return out
+}
+
+/**
+ * Join the thin vertices that are near each other: on a grid of cells the
+ * threshold across, each thin vertex joins the first thin vertex of its cell
+ * and of the 26 cells around it (so points up to about two cells apart join:
+ * both sides of a thin wall, and thin spots closer than that).
+ */
+function joinNear(P: ArrayLike<number>, n: number, thin: (i: number) => boolean, cell: number, joins: Joins): void {
+  if (!(cell > 0)) return
+  const first = new Map<string, number>()
+  const key = (x: number, y: number, z: number) => `${x},${y},${z}`
+  const cellOf = (i: number): Vec3 => [Math.floor(P[i * 3] / cell), Math.floor(P[i * 3 + 1] / cell), Math.floor(P[i * 3 + 2] / cell)]
+  for (let i = 0; i < n; i++) {
+    if (!thin(i)) continue
+    const [x, y, z] = cellOf(i)
+    const k = key(x, y, z)
+    if (!first.has(k)) first.set(k, i)
+  }
+  for (let i = 0; i < n; i++) {
+    if (!thin(i)) continue
+    const [x, y, z] = cellOf(i)
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          const f = first.get(key(x + dx, y + dy, z + dz))
+          if (f !== undefined) joins.join(i, f)
+        }
+  }
+}
+
+function unit(x: number, y: number, z: number): Vec3 {
+  const l = Math.hypot(x, y, z)
+  return l > 0 ? [x / l, y / l, z / l] : [0, 0, 1]
+}
+
+function point(p: ArrayLike<number>, i: number): Vec3 {
+  return [p[i * 3], p[i * 3 + 1], p[i * 3 + 2]]
+}
+
+/** grow the box [min, max] by the point */
+function grow(min: Vec3, max: Vec3, x: number, y: number, z: number): void {
+  if (x < min[0]) min[0] = x
+  if (y < min[1]) min[1] = y
+  if (z < min[2]) min[2] = z
+  if (x > max[0]) max[0] = x
+  if (y > max[1]) max[1] = y
+  if (z > max[2]) max[2] = z
+}
+
+/**
+ * The places thinner than `threshold`, the thinnest first; with none, the
+ * thinnest point (if any vertex has a value). `values` are the heatmap's
+ * thickness per vertex and part (no value: not > 0).
+ */
+export function thinSpots(parts: readonly SpotPart[], values: ReadonlyMap<number, ArrayLike<number>>, threshold: number): Spot[] {
+  const spots: Spot[] = []
+  let thinnest: Spot | null = null
+  for (const part of parts) {
+    const v = values.get(part.partId)
+    if (!v) continue
+    const P = part.positions
+    const n = Math.min(Math.floor(P.length / 3), v.length)
+    const thin = (i: number): boolean => i < n && v[i] > 0 && v[i] < threshold
+    for (let i = 0; i < n; i++) {
+      if (v[i] > 0 && (!thinnest || v[i] < thinnest.value)) {
+        const at = point(P, i)
+        thinnest = {
+          partId: part.partId,
+          faceId: null,
+          at,
+          normal: unit(part.normals[i * 3], part.normals[i * 3 + 1], part.normals[i * 3 + 2]),
+          min: [...at],
+          max: [...at],
+          value: v[i],
+          area: 0,
+        }
+      }
+    }
+    const joins = new Joins(n)
+    const I = part.indices
+    for (let t = 0; t + 2 < I.length; t += 3) {
+      const a = I[t]
+      const b = I[t + 1]
+      const c = I[t + 2]
+      if (thin(a) && thin(b)) joins.join(a, b)
+      if (thin(b) && thin(c)) joins.join(b, c)
+      if (thin(a) && thin(c)) joins.join(a, c)
+    }
+    joinNear(P, n, thin, threshold, joins)
+    const byRoot = new Map<number, Spot>()
+    for (let i = 0; i < n; i++) {
+      if (!thin(i)) continue
+      const r = joins.find(i)
+      const s = byRoot.get(r)
+      const x = P[i * 3]
+      const y = P[i * 3 + 1]
+      const z = P[i * 3 + 2]
+      if (!s) {
+        byRoot.set(r, {
+          partId: part.partId,
+          faceId: null,
+          at: [x, y, z],
+          normal: unit(part.normals[i * 3], part.normals[i * 3 + 1], part.normals[i * 3 + 2]),
+          min: [x, y, z],
+          max: [x, y, z],
+          value: v[i],
+          area: 0,
+        })
+        continue
+      }
+      grow(s.min, s.max, x, y, z)
+      if (v[i] < s.value) {
+        s.value = v[i]
+        s.at = [x, y, z]
+        s.normal = unit(part.normals[i * 3], part.normals[i * 3 + 1], part.normals[i * 3 + 2])
+      }
+    }
+    spots.push(...byRoot.values())
+  }
+  if (!spots.length) return thinnest ? [thinnest] : []
+  // the thinnest first; equal ones in the order of the parts and vertices
+  return spots.sort((a, b) => a.value - b.value)
+}
+
+/** a triangle's class, area, centre and outward normal */
+interface Tri {
+  cls: DraftClass
+  area: number
+  centre: Vec3
+  normal: Vec3
+  sine: number
+}
+
+function triangle(part: SpotPart, t: number, dir: readonly [number, number, number], sinRequired: number): Tri {
+  const P = part.positions
+  const I = part.indices
+  const a = I[t * 3] * 3
+  const b = I[t * 3 + 1] * 3
+  const c = I[t * 3 + 2] * 3
+  const ux = P[b] - P[a]
+  const uy = P[b + 1] - P[a + 1]
+  const uz = P[b + 2] - P[a + 2]
+  const vx = P[c] - P[a]
+  const vy = P[c + 1] - P[a + 1]
+  const vz = P[c + 2] - P[a + 2]
+  const cx = uy * vz - uz * vy
+  const cy = uz * vx - ux * vz
+  const cz = ux * vy - uy * vx
+  const area = Math.hypot(cx, cy, cz) / 2
+  let normal: Vec3
+  if (part.faceRanges.length) {
+    // a B-rep triangle: by its display normals, as draftColors colours it
+    const N = part.normals
+    normal = unit(N[a] + N[b] + N[c], N[a + 1] + N[b + 1] + N[c + 1], N[a + 2] + N[b + 2] + N[c + 2])
+  } else {
+    // a mesh-format triangle: by its winding (draftColorsFlat)
+    normal = unit(cx * part.windingSign, cy * part.windingSign, cz * part.windingSign)
+  }
+  const sine = draftSine(normal[0], normal[1], normal[2], dir)
+  return {
+    cls: draftClass(sine, sinRequired),
+    area,
+    centre: [(P[a] + P[b] + P[c]) / 3, (P[a + 1] + P[b + 1] + P[c + 1]) / 3, (P[a + 2] + P[b + 2] + P[c + 2]) / 3],
+    normal,
+    sine,
+  }
+}
+
+/** a place being collected: its box, area, and its largest triangle (the marker goes there) */
+interface Gather {
+  partId: number
+  faceId: number | null
+  min: Vec3
+  max: Vec3
+  area: number
+  best: Tri | null
+}
+
+function gather(g: Gather, part: SpotPart, t: number, tri: Tri): void {
+  const P = part.positions
+  const I = part.indices
+  for (let k = 0; k < 3; k++) {
+    const i = I[t * 3 + k] * 3
+    grow(g.min, g.max, P[i], P[i + 1], P[i + 2])
+  }
+  g.area += tri.area
+  if (!g.best || tri.area > g.best.area) g.best = tri
+}
+
+function newGather(partId: number, faceId: number | null): Gather {
+  return { partId, faceId, min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity], area: 0, best: null }
+}
+
+function toSpot(g: Gather): Spot {
+  const b = g.best!
+  return {
+    partId: g.partId,
+    faceId: g.faceId,
+    at: b.centre,
+    normal: b.normal,
+    min: g.min,
+    max: g.max,
+    value: (Math.asin(Math.max(-1, Math.min(1, b.sine))) * 180) / Math.PI,
+    area: g.area,
+  }
+}
+
+/**
+ * The places of draft class `cls` for the pull direction `dir` (unit) and the
+ * required angle, the largest first.
+ */
+export function draftSpots(
+  parts: readonly SpotPart[],
+  dir: readonly [number, number, number],
+  requiredDeg: number,
+  cls: DraftClass,
+): Spot[] {
+  const sinRequired = Math.sin((requiredDeg * Math.PI) / 180)
+  const out: Spot[] = []
+  for (const part of parts) {
+    const nTri = Math.floor(part.indices.length / 3)
+    if (part.faceRanges.length) {
+      for (const f of part.faceRanges) {
+        const g = newGather(part.partId, f.faceId)
+        for (let t = f.triStart; t < Math.min(f.triStart + f.triCount, nTri); t++) {
+          const tri = triangle(part, t, dir, sinRequired)
+          if (tri.cls === cls) gather(g, part, t, tri)
+        }
+        if (g.best) out.push(toSpot(g))
+      }
+      continue
+    }
+    // a mesh-format part: runs of triangles of the class joined by their corners
+    const tris: (Tri | null)[] = []
+    for (let t = 0; t < nTri; t++) {
+      const tri = triangle(part, t, dir, sinRequired)
+      tris.push(tri.cls === cls ? tri : null)
+    }
+    const nVert = Math.floor(part.positions.length / 3)
+    const same = samePoint(part.positions)
+    const joins = new Joins(nVert)
+    const I = part.indices
+    for (let t = 0; t < nTri; t++) {
+      if (!tris[t]) continue
+      const a = same[I[t * 3]]
+      joins.join(a, same[I[t * 3 + 1]])
+      joins.join(a, same[I[t * 3 + 2]])
+    }
+    const byRoot = new Map<number, Gather>()
+    for (let t = 0; t < nTri; t++) {
+      const tri = tris[t]
+      if (!tri) continue
+      const r = joins.find(same[I[t * 3]])
+      let g = byRoot.get(r)
+      if (!g) byRoot.set(r, (g = newGather(part.partId, null)))
+      gather(g, part, t, tri)
+    }
+    for (const g of byRoot.values()) out.push(toSpot(g))
+  }
+  return out.sort((a, b) => b.area - a.area)
+}
+
+/**
+ * What a spot's marker says: the thickness as under the cursor (「0.82 mm」),
+ * the draft angle as under the cursor without its class (「勾配 −2.0°」: a real
+ * minus sign, none on a value that rounds to 0; draft.ts draftTipText).
+ */
+export function spotText(kind: 'thin' | DraftClass, s: Spot): string {
+  if (kind === 'thin') return `${s.value.toFixed(2)} mm`
+  const value = Math.abs(s.value).toFixed(1)
+  const sign = s.value < 0 && value !== '0.0' ? '−' : ''
+  return `勾配 ${sign}${value}°`
+}
