@@ -16,7 +16,7 @@ import type { IconNode } from 'lucide'
 import type { Measurement2D } from './drawing2d'
 import { ICON, icon } from './icons'
 import { DISTANCE_MODE_NAMES, type EntryData } from './measure'
-import { areaUnit, fmt, lenUnit, showArea, showDegNum, showLen, showPoint, unitTag } from './sizes'
+import { areaUnit, fmt, inFrameDir, lenUnit, showArea, showDegNum, showLen, showPoint, unitTag } from './sizes'
 
 export type RowKind =
   | 'distance'
@@ -88,10 +88,12 @@ function xyzOf(v: unknown): [number, number, number] | null {
  * number: a narrow list wraps the line between them, never inside one.
  */
 function axesOf(delta: [number, number, number]): { axes: [string, string, string]; where?: string; delta: [number, number, number] } {
-  const axes = delta.map((c) => showLen(Math.abs(c))) as [string, string, string]
+  // along the axes of the frame shown (the model's own, or one chosen: 座標系)
+  const along3 = inFrameDir(delta)
+  const axes = along3.map((c) => showLen(Math.abs(c))) as [string, string, string]
   // slanted or not by the numbers themselves, not as shown: coarse decimals
   // (inches, 0 decimals) write small sides as 0 and would hide them
-  const along = delta.filter((c) => Math.abs(c) >= SLANT_MM).length
+  const along = along3.filter((c) => Math.abs(c) >= SLANT_MM).length
   return along >= 2 ? { axes, where: `ΔX\u00a0${axes[0]}　ΔY\u00a0${axes[1]}　ΔZ\u00a0${axes[2]}`, delta } : { axes, delta }
 }
 

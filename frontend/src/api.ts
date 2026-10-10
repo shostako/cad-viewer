@@ -123,6 +123,10 @@ export interface EdgeInfoResult {
   /** anything else, given the click: the radius of curvature there, and the curve's point there */
   localRadius?: number
   at?: Xyz
+  /** a straight edge: its ends, and its direction from start to end (as the edge runs) */
+  start?: Xyz
+  end?: Xyz
+  direction?: Xyz
 }
 
 export interface FaceInfoResult {
@@ -139,6 +143,7 @@ export interface FaceInfoResult {
   majorRadius?: number
   center?: Xyz
   axis?: Xyz
+  /** a plane's normal, out of the solid */
   normal?: Xyz
   /** a cylinder: a whole turn (⌀) or a part of one (R) */
   full?: boolean

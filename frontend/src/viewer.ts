@@ -8,6 +8,7 @@ import { CSS2DObject, CSS2DRenderer } from 'three/examples/jsm/renderers/CSS2DRe
 import { draftColors, draftColorsFlat, draftSine, triangleDraftSine, windingSign } from './draft'
 import { MIN_FREE, type ScreenRect } from './freearea'
 import type { FaceRange, ModelData, PartData } from './model'
+import type { Frame } from './sizes'
 import { paintLabels, type ExportBackground } from './snapshot'
 import type { Spot, SpotPart } from './spots'
 import { thicknessColors } from './thickness'
@@ -256,6 +257,9 @@ export class Viewer {
   private pivotMarker: CSS2DObject | null = null
   /** the marker of the place a legend went to (goToSpot), until clearSpot */
   private spotMarker: CSS2DObject | null = null
+  /** the chosen coordinate system's mark (setFrameMarker), and its lines' materials (sized with the canvas) */
+  private frameMarker: THREE.Group | null = null
+  private frameLineMaterials: LineMaterial[] = []
   /** the place the marker is on (goToSpot), while it is up */
   private spotShown: Spot | null = null
   private pivotMarkerTimer: ReturnType<typeof setTimeout> | undefined
@@ -1586,6 +1590,56 @@ export class Viewer {
     this.viewMotion = on
   }
 
+  /**
+   * The chosen coordinate system's mark (座標系, frame.ts): its X (red), Y
+   * (green) and Z (blue) from its origin, a tenth of the visible model's size
+   * long, drawn over the model, with their letters at the ends. null takes it
+   * away. It is part of the view: a saved image keeps it.
+   */
+  setFrameMarker(frame: Frame | null): void {
+    if (this.frameMarker) {
+      const old = this.frameMarker
+      this.scene.remove(old)
+      old.traverse((o) => {
+        if (o instanceof LineSegments2) {
+          o.geometry.dispose()
+          o.material.dispose()
+        }
+        if (o instanceof CSS2DObject) o.element.remove()
+      })
+      this.frameMarker = null
+      this.frameLineMaterials = []
+    }
+    if (!frame) return this.wake()
+    const box = new THREE.Box3().setFromObject(this.modelGroup)
+    const size = box.isEmpty() ? 10 : 0.1 * box.getSize(new THREE.Vector3()).length()
+    const group = new THREE.Group()
+    const o = new THREE.Vector3(...frame.origin)
+    const axes: [string, readonly number[], number][] = [
+      ['X', frame.x, 0xe5534b],
+      ['Y', frame.y, 0x57b85a],
+      ['Z', frame.z, 0x4d86f0],
+    ]
+    for (const [name, dir, color] of axes) {
+      const tip = o.clone().addScaledVector(new THREE.Vector3(dir[0], dir[1], dir[2]), size)
+      const geo = new LineSegmentsGeometry()
+      geo.setPositions([o.x, o.y, o.z, tip.x, tip.y, tip.z])
+      // as thick as a dimension line, over the model (not hidden behind its faces)
+      const mat = new LineMaterial({ color, linewidth: 3, depthTest: false, transparent: true })
+      mat.resolution.copy(this.renderer.getSize(new THREE.Vector2()))
+      this.frameLineMaterials.push(mat)
+      const line = new LineSegments2(geo, mat)
+      line.renderOrder = 1000
+      group.add(line)
+      const label = this.makeLabel(name, tip, 'frame-axis')
+      label.element.style.color = `#${color.toString(16).padStart(6, '0')}`
+      group.add(label)
+    }
+    group.name = 'frame-marker'
+    this.frameMarker = group
+    this.scene.add(group)
+  }
+
   private showPivotMarker(at: THREE.Vector3): void {
     this.removePivotMarker()
     // on the scene, not `overlay`: the overlay belongs to the measure tool
@@ -1631,7 +1685,7 @@ export class Viewer {
     this.applyViewShift()
     this.renderer.setSize(w, h)
     this.labelRenderer.setSize(w, h)
-    for (const m of this.lineMaterials) m.resolution.set(w, h)
+    for (const m of [...this.lineMaterials, ...this.frameLineMaterials]) m.resolution.set(w, h)
     this.trackball.handleResize()
   }
 

@@ -45,8 +45,38 @@ export const DIGITS_MIN = 0
 export const DIGITS_MAX = 6
 export const DIGITS_DEFAULT = 3
 
-/** the unit and the decimals measured numbers are shown in now */
-export const shown = { unit: 'mm' as LengthUnit, digits: DIGITS_DEFAULT }
+/**
+ * A coordinate system to show points and ΔX ΔY ΔZ in (frame.ts): its origin
+ * and its unit axes, in the model's coordinates (mm)
+ */
+export interface Frame {
+  origin: [number, number, number]
+  x: [number, number, number]
+  y: [number, number, number]
+  z: [number, number, number]
+}
+
+/** the unit and the decimals measured numbers are shown in now, and the frame (null: the model's own) */
+export const shown = { unit: 'mm' as LengthUnit, digits: DIGITS_DEFAULT, frame: null as Frame | null }
+
+/** points and directions are shown in this frame from now on (null: the model's own) */
+export function setFrame(frame: Frame | null): void {
+  shown.frame = frame
+}
+
+const dot3 = (a: readonly number[], b: readonly number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+/** a direction (a distance's ΔX ΔY ΔZ, mm) along the frame shown's axes */
+export function inFrameDir(d: readonly [number, number, number]): [number, number, number] {
+  const f = shown.frame
+  return f ? [dot3(d, f.x), dot3(d, f.y), dot3(d, f.z)] : [d[0], d[1], d[2]]
+}
+
+/** a point (mm) in the frame shown */
+export function inFrame(p: readonly [number, number, number]): [number, number, number] {
+  const f = shown.frame
+  return f ? inFrameDir([p[0] - f.origin[0], p[1] - f.origin[1], p[2] - f.origin[2]]) : [p[0], p[1], p[2]]
+}
 
 export function setShown(unit: LengthUnit, digits: number): void {
   shown.unit = LENGTH_UNITS.includes(unit) ? unit : 'mm'
@@ -88,9 +118,9 @@ export const lenUnit = (): string => shown.unit
 /** the unit of an area as shown (mm², in²) */
 export const areaUnit = (): string => `${shown.unit}²`
 
-/** a point as shown: (12.000, 20.000, 10.000) */
+/** a point as shown: (12.000, 20.000, 10.000), in the frame shown */
 export function showPoint(p: readonly [number, number, number]): string {
-  return `(${p.map(showLen).join(', ')})`
+  return `(${inFrame(p).map(showLen).join(', ')})`
 }
 
 /** a size as shown: ⌀8.000, R5.000, SR4.000, 勾配 2.000° (the beside-the-cursor tip) */
