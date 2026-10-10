@@ -249,8 +249,10 @@ with nav_session() as n:
     print("7 Esc, unreadable, two tabs ok")
 
     # ---- 7e. the picker closed (AbortError): nothing opens. Refused (SecurityError):
-    # said, and the next press opens the plain file dialog. A listed file that
-    # cannot be read for now (NotReadableError): said, and its row stays
+    # said, and the next press opens the plain file dialog, once (then the picker
+    # again; refused twice with no picker opened between: the plain one from then
+    # on). A listed file that cannot be read for now (NotReadableError): said, and
+    # its row stays
     page.evaluate(
         "() => { window.__inputClicks = 0; const c = HTMLInputElement.prototype.click;"
         " HTMLInputElement.prototype.click = function () { if (this.id === 'file-input') window.__inputClicks++; return c.call(this) } }"
@@ -268,6 +270,27 @@ with nav_session() as n:
         page.locator("#toolbar button[data-action='open']").click()
     fc.value.set_files(n.paths["step"])
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)
+    # the plain dialog once, then the picker again: a passing refusal does not stay
+    page.evaluate(
+        "() => { window.__pickerCalls = 0; window.__pickerAnswer = 'AbortError';"
+        " window.showOpenFilePicker = async () => { window.__pickerCalls++; throw new DOMException('no', window.__pickerAnswer) } }"
+    )
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_function("window.__pickerCalls === 1", timeout=5000)
+    # two refusals with no picker opened between them: the plain dialog from then on
+    page.evaluate("() => { window.__pickerAnswer = 'SecurityError' }")
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_function("window.__pickerCalls === 2", timeout=5000)
+    with page.expect_file_chooser(timeout=10000):
+        page.locator("#toolbar button[data-action='open']").click()
+    page.locator("#toolbar button[data-action='open']").click()
+    page.wait_for_function(
+        "document.querySelector('#hud-info').textContent.includes('これからは、ふつうのファイル選択で開く')", timeout=5000
+    )
+    for _ in range(2):
+        with page.expect_file_chooser(timeout=10000):
+            page.locator("#toolbar button[data-action='open']").click()
+    assert page.evaluate("window.__pickerCalls") == 3, ("from then on the picker is not asked", page.evaluate("window.__pickerCalls"))
     page.reload()
     page.wait_for_load_state("networkidle")
     page.wait_for_selector("#recent-box:not(.hidden)", timeout=10000)
