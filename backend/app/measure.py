@@ -75,7 +75,10 @@ class MeasureError(Exception):
     pass
 
 
-# the two planes count as parallel when |na x nb| of their unit normals is at most this
+# the two planes count as parallel when |na x nb| of their unit normals is at most this.
+# Only a first cut: the line through a click must also be as long as the value
+# (LINE_TOL), and that check is the one that holds (planes 1e-9 rad apart drift
+# by 1e-6 mm over a metre, past LINE_TOL), so tightening this changes nothing
 PARALLEL_SIN = 1e-9
 # mm: a dimension line put through a click must be as long as the value, this closely
 LINE_TOL = 1e-7
@@ -190,7 +193,9 @@ def _nearest_solution(ext: BRepExtrema_DistShapeShape, near_a, near_b) -> int:
     qb = gp_Pnt(*near_b) if near_b is not None else None
     best, best_d = 1, float("inf")
     for i in range(1, ext.NbSolution() + 1):
-        d = (ext.PointOnShape1(i).Distance(qa) if qa else 0.0) + (ext.PointOnShape2(i).Distance(qb) if qb else 0.0)
+        d = (ext.PointOnShape1(i).Distance(qa) if qa is not None else 0.0) + (
+            ext.PointOnShape2(i).Distance(qb) if qb is not None else 0.0
+        )
         if d < best_d:
             best, best_d = i, d
     return best
@@ -413,7 +418,7 @@ def vertex_info(ref: dict, meshes: list[PartMesh]) -> dict[str, Any]:
     return {"type": "vertex", "point": _xyz(BRep_Tool.Pnt_s(TopoDS.Vertex_s(shape)))}
 
 
-def _near(value: Any) -> tuple[float, float, float] | None:
+def _near(value: Any, name: str = "near") -> tuple[float, float, float] | None:
     """a clicked point as given, [x, y, z]; None when there is none"""
     if value is None:
         return None
@@ -422,14 +427,14 @@ def _near(value: Any) -> tuple[float, float, float] | None:
         or len(value) != 3
         or not all(isinstance(c, (int, float)) and math.isfinite(c) for c in value)
     ):
-        raise MeasureError("near must be [x, y, z]")
+        raise MeasureError(f"{name} must be [x, y, z]")
     return float(value[0]), float(value[1]), float(value[2])
 
 
 def run(request: dict[str, Any], meshes: list[PartMesh]) -> dict[str, Any]:
     mtype = request.get("type")
     if mtype == "distance":
-        return distance(request["a"], request["b"], meshes, request.get("nearA"), request.get("nearB"))
+        return distance(request["a"], request["b"], meshes, _near(request.get("nearA"), "nearA"), _near(request.get("nearB"), "nearB"))
     if mtype == "edge_info":
         return edge_info(request["ref"], meshes, _near(request.get("near")))
     if mtype == "face_info":
