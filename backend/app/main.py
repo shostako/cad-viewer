@@ -58,8 +58,11 @@ async def upload_model(file: UploadFile) -> dict:
 
     content_hash = hashlib.sha256(data).hexdigest()[:32]
 
-    # identical content already in memory — reuse instead of duplicating
-    existing = store.get_by_hash(content_hash)
+    # identical content already in memory under the same name — reuse instead
+    # of duplicating. Under another name it is read again (a B-rep from the
+    # disk cache): the name is what the status line and the browser tab show,
+    # and a mesh's one part is named after its file
+    existing = store.get_by_hash(content_hash, name)
     if existing is not None and existing.fmt == route:
         return {
             "id": existing.model_id,

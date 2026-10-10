@@ -149,14 +149,72 @@ def test_store_lru_eviction_and_dedup(client):
         s.add(ModelEntry(model_id=f"m{i}", name=f"n{i}", fmt="mesh", meta={}, extra={"hash": f"h{i}"}))
     assert s.get("m0") is None and s.get("m1") is None  # evicted
     assert s.get("m4") is not None
-    assert s.get_by_hash("h0") is None  # hash index cleaned up
-    assert s.get_by_hash("h3").model_id == "m3"
+    assert s.get_by_hash("h0", "n0") is None  # hash index cleaned up
+    assert s.get_by_hash("h3", "n3").model_id == "m3"
+    assert s.get_by_hash("h3", "n4") is None  # the same content under another name is another entry
 
 
 def test_upload_dedup_same_content(client):
     meta1 = _upload_box(client)
     meta2 = _upload_box(client)  # identical bytes
     assert meta1["id"] == meta2["id"], "identical content must reuse the entry"
+
+
+def _mesh_header(client, model_id):
+    blob = client.get(f"/api/models/{model_id}/mesh.bin").content
+    (hlen,) = struct.unpack_from("<I", blob, 0)
+    return json.loads(blob[4 : 4 + hlen])
+
+
+def test_upload_same_content_another_name(client):
+    """The same bytes under another name are shown by that name.
+
+    The name is what the status line and the browser tab show; a mesh's one
+    part (and its row in the part tree) is named after its file too. Opened
+    again under the same name, the entry is still reused.
+    """
+    stl = trimesh.creation.box(extents=(11, 21, 31)).export(file_type="stl")
+    first = client.post("/api/models", files={"file": ("first.stl", stl, "model/stl")}).json()
+    second = client.post("/api/models", files={"file": ("second.stl", stl, "model/stl")}).json()
+    assert first["name"] == "first.stl"
+    assert second["name"] == "second.stl", second
+    header = _mesh_header(client, second["id"])
+    assert [p["name"] for p in header["parts"]] == ["second.stl"], header["parts"]
+    assert header["tree"]["children"][0]["name"] == "second.stl", header["tree"]
+    # the first one keeps its own name
+    assert _mesh_header(client, first["id"])["parts"][0]["name"] == "first.stl"
+    again = client.post("/api/models", files={"file": ("second.stl", stl, "model/stl")}).json()
+    assert again["id"] == second["id"], "the same bytes under the same name must reuse the entry"
+    # back to the first name: its entry is still there and is reused (no third copy)
+    back = client.post("/api/models", files={"file": ("first.stl", stl, "model/stl")}).json()
+    assert back["id"] == first["id"], (back, first)
+
+
+def test_upload_same_content_one_name_removed(client):
+    """Two names of the same bytes are two entries: removing one leaves the other reused."""
+    from app.store import store
+
+    stl = trimesh.creation.box(extents=(12, 22, 32)).export(file_type="stl")
+    a = client.post("/api/models", files={"file": ("a.stl", stl, "model/stl")}).json()
+    b = client.post("/api/models", files={"file": ("b.stl", stl, "model/stl")}).json()
+    assert a["id"] != b["id"]
+    store.remove(a["id"])
+    again = client.post("/api/models", files={"file": ("b.stl", stl, "model/stl")}).json()
+    assert again["id"] == b["id"], "removing a.stl must not drop b.stl from the index"
+    back = client.post("/api/models", files={"file": ("a.stl", stl, "model/stl")}).json()
+    assert back["id"] not in (a["id"], b["id"]) and back["name"] == "a.stl", "a.stl is read again, as a new entry"
+
+
+@pytest.mark.skipif(not STEP_ASSEMBLY.exists(), reason="run testdata/make_step_assembly.py first")
+def test_upload_same_step_another_name(client):
+    """A STEP under another name: that name, the same shape (from the disk cache)."""
+    data = STEP_ASSEMBLY.read_bytes() + b"\n" * 21  # its own hash: no other test's entry
+    a = client.post("/api/models", files={"file": ("a.step", data, "application/step")}).json()
+    b = client.post("/api/models", files={"file": ("b.step", data, "application/step")}).json()
+    assert (a["name"], b["name"]) == ("a.step", "b.step"), (a, b)
+    assert b["cached"] is True, "the shape comes from the disk cache, not a second parse"
+    assert a["bbox"] == b["bbox"] and a["partCount"] == b["partCount"]
+    assert client.get(f"/api/models/{b['id']}/mesh.bin").content == client.get(f"/api/models/{a['id']}/mesh.bin").content
 
 
 def test_sidecar_concurrent_puts_no_tmp_collision(client):
