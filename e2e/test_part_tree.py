@@ -266,15 +266,26 @@ with nav_session() as n:
             behind = xy
             break
     assert behind, "5b no point of the plate's back edge behind the block"
+    # shaded, the cursor there: the block in front
+    page.mouse.move(*behind)
+    n.settle()
+    assert marked() == [ROWS["block"]], ("5b shaded: the block in front", marked())
+    # the style changes under the still cursor: the mark follows at once
     n.ctl("表示スタイル").locator("select").select_option("ワイヤーフレーム")
     page.evaluate("document.activeElement && document.activeElement.blur()")
     n.settle()
+    n.settle()
     h = n.pick(behind)
     assert h and h["kind"] == "edge" and h["partId"] == plate_id, ("5b a click there takes the plate's edge", h)
-    page.mouse.move(*behind)
+    assert marked() == [ROWS["plate"]], ("5b the drawn edge's part, not the block in front (no move)", marked())
+    # no line near the cursor: the face under it, undrawn in ワイヤーフレーム,
+    # as a click takes it (Picker.pick falls back to the face too)
+    page.mouse.move(*pts["block"])
     n.settle()
     n.settle()
-    assert marked() == [ROWS["plate"]], ("5b the drawn edge's part, not the block in front", marked())
+    h = n.pick(pts["block"])
+    assert h and h["kind"] == "face" and h["partId"] == block_id, ("5b a click on the block's top takes its face", h)
+    assert marked() == [ROWS["block"]], ("5b the face under the cursor, as a click", marked())
     page.mouse.move(*away)
     n.ctl("表示スタイル").locator("select").select_option("陰影＋稜線")
     page.evaluate("document.activeElement && document.activeElement.blur()")
@@ -295,7 +306,13 @@ with nav_session() as n:
         else:
             assert hit is None or part_of(hit["point"]) == "pin2", ("6 a hidden part is picked", k, hit)
     assert not show_all.is_disabled()
-    show_all.click()
+    # from the keyboard: the button turns itself off, the focus moves on to the
+    # fold button beside it (not left on a disabled button)
+    show_all.focus()
+    page.keyboard.press("Enter")
+    page.wait_for_function("document.querySelector('#tree-show-all').disabled", timeout=5000)
+    focused = page.evaluate("document.activeElement.id")
+    assert focused == "tree-fold", ("6 the focus after 全部表示", focused)
     st = box_states()
     assert all(v == (True, False) for v in st.values()), ("6 boxes after 全部表示", st)
     for k, xy in pts.items():

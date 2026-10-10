@@ -376,6 +376,11 @@ const styleCtl = viewFolder
     saveViewPrefs()
     refreshHeatmapHud()
     refreshToolbar()
+    // what is under a still cursor depends on the style (半透明 / ワイヤーフレーム
+    // take drawn lines through the parts in front): its highlight, label and
+    // the tree's row mark follow at once, as on a change of the mode
+    forgetHoverPick()
+    probe.refresh()
   })
 viewFolder
   .add(viewPrefs, 'grid')

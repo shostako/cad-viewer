@@ -316,7 +316,11 @@ export class PartTree {
       row.zoom.title = on === 0 ? ZOOM_TITLE.hidden : row.isGroup ? ZOOM_TITLE.group : ZOOM_TITLE.part
       row.el.classList.toggle('off', on === 0)
     }
-    this.showAllBtn.disabled = [...this.visible.values()].every((v) => v)
+    const allShown = [...this.visible.values()].every((v) => v)
+    // pressed from the keyboard, 全部表示 turns itself off: the focus moves on to
+    // the fold button beside it instead of staying on a disabled button
+    if (allShown && document.activeElement === this.showAllBtn) this.foldBtn.focus()
+    this.showAllBtn.disabled = allShown
   }
 }
 
