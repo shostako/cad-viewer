@@ -13,10 +13,13 @@ view left of the GUI):
   stays in the largest rectangle
 - the same in the parallel projection
 
-The test pins the tree panel's size (180 x 170 px): the gains then do not
-depend on the fonts (the tree's text sets its size), and 上 stays well inside
-1 to 1.1. The fit reads whatever rects are on screen, so the oracle stays
-independent.
+The test pins the tree panel's size (180 x 170 px) and the status card's
+height (90 px, bottom left): the gains then do not depend on the fonts (the
+tree's text and the status line's wrapping set their sizes), and 上 stays well
+inside 1 to 1.1. (The status card was 2 to 4 lines taller before #23 item 7
+took its title and key help out; at its height now the band under the tree
+reaches lower right of the axis triad, and 上 crossed 1.1.) The fit reads
+whatever rects are on screen, so the oracle stays independent.
 
 Each case also proves it can tell the rules apart: the fit that the other
 rule would make (always the largest rectangle; always the one that shows the
@@ -28,7 +31,10 @@ from nav_common import MOLD, free_rect, model_size, nav_session, would_fail
 with nav_session() as n:
     page = n.page
     page.set_viewport_size({"width": 1280, "height": 800})
-    page.add_style_tag(content="#tree-panel{width:180px!important;height:170px!important}")
+    page.add_style_tag(
+        content="#tree-panel{width:180px!important;height:170px!important}"
+        "#hud{height:90px!important;box-sizing:border-box}"
+    )
     n.load(n.paths["step"])
 
     def candidates():
