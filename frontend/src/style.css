@@ -1115,8 +1115,14 @@ body,
   font-size: var(--cv-fs-xs);
 }
 
+#props-total-proj,
 #props-total-clamp {
   white-space: nowrap;
+}
+
+#props-total-proj .sub {
+  color: var(--cv-text-3);
+  font-size: var(--cv-fs-xs);
 }
 
 #props-note {

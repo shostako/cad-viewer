@@ -1049,10 +1049,15 @@ function layoutCorner(): void {
   // natural height: content and padding (scrollHeight) plus the border
   const measureNatural = measurePanel.scrollHeight + measurePanel.offsetHeight - measurePanel.clientHeight
   const measureMin = measureShown ? Math.min(measureNatural, measureMinPx()) : 0
-  const propsMin = propsPanel.minHeight()
-  const stackMin = measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
   // the GUI sits COLUMN_MARGIN below the window's top, as the stack sits above its bottom
   const guiTop = gui.domElement.getBoundingClientRect().top
+  const stackOf = (propsMin: number): number => measureMin + propsMin + (measureMin && propsMin ? COLUMN_GAP : 0)
+  // The projected-area row gives way first: on a window too short for the GUI's
+  // minimum above the whole stack, it folds and the clamping force's row stays.
+  const fullProps = propsPanel.minHeight() + propsPanel.foldedPx()
+  propsPanel.setCompact(fullProps > 0 && h - guiTop - COLUMN_MARGIN - COLUMN_GAP - stackOf(fullProps) < GUI_MIN_PX)
+  const propsMin = propsPanel.minHeight()
+  const stackMin = stackOf(propsMin)
   const guiMax = Math.max(h - guiTop - COLUMN_MARGIN - COLUMN_GAP - stackMin, GUI_MIN_PX)
   // never taller than the window (GUI_MIN_PX can exceed a tiny one)
   gui.domElement.style.maxHeight = stackMin ? `${Math.min(guiMax, h - guiTop)}px` : ''
