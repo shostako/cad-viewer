@@ -12,6 +12,7 @@ counts 3 to 13). Its sidecar is emptied before and after:
 the note this script writes no longer stays on the shared mini_mold.step,
 where other scripts and the user's own views saw it.
 """
+import math
 import os
 import shutil
 import tempfile
@@ -29,6 +30,7 @@ tmp = tempfile.mkdtemp(prefix="cad_section_note_")
 STEP = os.path.join(tmp, "mini_mold.step")
 Path(STEP).write_bytes((TESTDATA / "mini_mold.step").read_bytes() + b"\n" * 15)
 CUT = (90, 10, 15)  # on the plate's top, on the side the section cuts away
+KEEP = (20, 10, 15)  # on the plate's top, on the side it keeps (the block is behind, y 15..45)
 
 
 def load_model(page):
@@ -61,6 +63,8 @@ try:
         # --- 1) section: 有効 cuts the plate's far half away
         hit = pick_at(page, CUT)
         assert hit and abs(hit["point"][0] - CUT[0]) < 0.5, ("the plate's top before the section", hit)
+        hit = pick_at(page, KEEP)
+        assert hit and math.dist(hit["point"], KEEP) < 0.5, ("the plate's top, the kept side, before the section", hit)
         gui_common.open_folder(page, "断面")
         enabled = gui_common.ctl(page, "有効").locator("input")
         enabled.click()
@@ -69,6 +73,9 @@ try:
         hit = pick_at(page, CUT)
         print("section on, pick at x 90:", hit)
         assert hit is None or hit["point"][0] <= 50.5, ("the section did not cut", hit)
+        # not a model gone altogether: the kept side is still there
+        hit = pick_at(page, KEEP)
+        assert hit and math.dist(hit["point"], KEEP) < 0.5, ("the kept side must stay", hit)
         page.screenshot(path="/tmp/cad_viewer_section.png")
 
         # disable section again

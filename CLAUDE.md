@@ -93,7 +93,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
   - 前のタグから後にマージされた PR（`git log vPREV..origin/master --oneline`）を元に、CHANGELOG の先頭に `## [X.Y.Z] — yyyy-MM-dd`（出した日、東京時間）の節を書き、末尾に比較のリンクを足す。新しい機能があればマイナー、直しだけならパッチを上げる。
   - 版の番号を上げる。frontend の 2 つは `(cd frontend && npm version X.Y.Z --no-git-tag-version)` でそろう。
   - マージの直前に master が進んでいたら、載せ直して、増えた PR を節に足す（タグに入る変更と節をそろえる）。
-  - マージしたら、その squash のコミットに注釈付きタグを打って push する（`git tag -a vX.Y.Z <sha> -m "vX.Y.Z" && git push origin vX.Y.Z`）。
+  - マージしたら、ほかの PR をマージする前に、その squash のコミットに注釈付きタグを打って push する（`git tag -a vX.Y.Z <sha> -m "vX.Y.Z" && git push origin vX.Y.Z`）。先にほかの PR が入ると master の先頭が版のコミットでなくなり、先頭にタグを打つ取り違えが起きやすい（タグは必ず版の squash のコミットに打つ）。
 
 ## アーキテクチャ
 

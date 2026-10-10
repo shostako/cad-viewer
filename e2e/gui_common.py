@@ -45,9 +45,16 @@ def open_folder(page, name):
 
 
 def ctl(page, name):
-    """the control whose name starts with `name`, shown (its closed folders opened)"""
+    """the control whose name starts with `name`, shown (its closed folders opened)
+
+    Exactly one: a second control of a name that begins the same would be taken
+    by its place in the panel, which is what finding by name is for avoiding.
+    """
     label = page.locator(".lil-name", has_text=re.compile("^" + re.escape(name)))
-    control = page.locator(".lil-gui .lil-controller").filter(has=label).first
+    controls = page.locator(".lil-gui .lil-controller").filter(has=label)
+    n = controls.count()
+    assert n == 1, (f"{n} controls named {name!r}: name one exactly", name)
+    control = controls.first
     if _open_around(control):
         wait_gui_idle(page)
     return control
@@ -64,6 +71,12 @@ def _open_around(locator):
     """
     return locator.evaluate(
         """el => {
+             // hidden (show(false): an inline display none on the folder or the
+             // control, a 3D folder in 2D or on the empty screen): opened, it would
+             // still not show, and its folder would come up open later
+             for (let e = el; e; e = e.parentElement) {
+               if ((e.classList.contains('lil-gui') || e.classList.contains('lil-controller')) && e.style.display === 'none') return 0
+             }
              const closed = []
              for (let g = el.closest('.lil-gui'); g; g = g.parentElement && g.parentElement.closest('.lil-gui')) {
                if (g.querySelector(':scope > .lil-title')?.getAttribute('aria-expanded') === 'false') closed.unshift(g)

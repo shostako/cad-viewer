@@ -396,3 +396,14 @@ def test_angle_tilted_planes_and_lines(monkeypatch):
     want = math.degrees(math.acos(abs(math.cos(r(20)) * math.cos(r(50)))))
     assert angle(3, 4) == pytest.approx(want, abs=1e-9), "two lines"
     assert angle(1, 5) == pytest.approx(math.degrees(1e-4), rel=1e-9), "a small angle stays exact"
+
+
+@pytest.mark.parametrize("key", ["nearA", "nearB"])
+@pytest.mark.parametrize("bad", [[1, 2], [1, "x", 3], "abc", {"x": 1}])
+def test_a_bad_clicked_point_is_refused(model, key, bad):
+    """a clicked point the UI never sends (a hand-made request): 422 that names it, not a 500"""
+    r = model[0].post(
+        f"/api/models/{model[1]}/measure",
+        json={"type": "distance", "a": {"kind": "point", "xyz": [0, 0, 0]}, "b": {"kind": "point", "xyz": [3, 4, 0]}, key: bad},
+    )
+    assert r.status_code == 422 and key in r.text, (r.status_code, r.text)
