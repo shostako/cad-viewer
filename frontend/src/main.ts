@@ -529,21 +529,38 @@ sectionFolder
   .add(sectionTool, 'enabled')
   .name('有効')
   .listen() // state can change programmatically (2D switch) — keep UI in sync
-  .onChange(() => {
+  .onChange((on: boolean) => {
+    // put in: the side the camera is on goes, the cut faces the camera
+    if (on) sectionTool.faceCamera(viewer.camera.position)
     sectionTool.update()
     refreshToolbar()
   })
 sectionFolder
   .add(sectionTool, 'axis', ['X', 'Y', 'Z'] as Axis[])
   .name('軸')
+  .onChange(() => {
+    // from the middle of the model along the new axis (a fraction carried over
+    // reads as an odd number of mm), the cut toward the camera
+    sectionTool.position = 0.5
+    sectionTool.faceCamera(viewer.camera.position)
+    sectionRange()
+    sectionTool.update()
+  })
+// in the model's units (mm) along the axis, over the model's extent
+const sectionPosCtl = sectionFolder
+  .add(sectionTool, 'mm', 0, 1, 0.01)
+  .name('位置 (mm)')
   .onChange(() => sectionTool.update())
-sectionFolder
-  .add(sectionTool, 'position', 0, 1, 0.01)
-  .name('位置')
-  .onChange(() => sectionTool.update())
+/** the position's slider spans the model along the section's axis */
+function sectionRange(): void {
+  const [lo, hi] = sectionTool.range()
+  sectionPosCtl.min(lo).max(hi > lo ? hi : lo + 1)
+  sectionPosCtl.updateDisplay()
+}
 sectionFolder
   .add(sectionTool, 'flip')
   .name('反転')
+  .listen() // 有効 and 軸 set it toward the camera
   .onChange(() => sectionTool.update())
 sectionFolder
   .add(sectionTool, 'caps')
@@ -1233,6 +1250,7 @@ function setMode(mode: Mode): void {
 function toggleSection(): void {
   if (!contentShown || is2D) return
   sectionTool.enabled = !sectionTool.enabled
+  if (sectionTool.enabled) sectionTool.faceCamera(viewer.camera.position)
   sectionTool.update()
   refreshToolbar()
 }
@@ -1908,6 +1926,7 @@ async function loadFile(file: File): Promise<void> {
         diameters.setModel(meta.format === 'brep' ? meta.id : null)
         measureTool.setModel(meta.id, meta.format === 'brep', new Map(model.parts.map((p) => [p.id, p.name])))
         sectionTool.setModelBBox(meta.bbox.min, meta.bbox.max)
+        sectionRange()
         // restore persisted measurements / annotations
         const entries = Array.isArray(sidecar.entries) ? (sidecar.entries as EntryData[]) : []
         const skipped = entries.length ? measureTool.restore(entries) : 0
