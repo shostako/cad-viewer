@@ -2308,3 +2308,43 @@ body.panels-hidden #corner-br {
   background: var(--cv-accent);
   border-color: var(--cv-accent);
 }
+
+/* a card of the bottom-right stack folds to its head (cardfold.ts): its title
+   is the button, the chevron down open and to the side folded, as the
+   operation panel's folders */
+.card-fold {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: -3px;
+  padding: 0 2px 0 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: var(--cv-r-sm);
+  font: inherit;
+  cursor: pointer;
+}
+.card-fold svg {
+  flex: none;
+  color: var(--cv-text-3);
+  transition: transform 0.12s;
+}
+.card-fold[aria-expanded='false'] svg {
+  transform: rotate(-90deg);
+}
+.card-fold:hover .check-title,
+.card-fold:hover #measure-title,
+.card-fold:hover svg {
+  color: var(--cv-text);
+}
+/* folded: 問題の一覧 keeps its head and its counts, 計測 its head (the count, すべてコピー) */
+#check-panel.folded > :not(.check-head):not(.check-counts) {
+  display: none;
+}
+#measure-panel.folded #measure-list {
+  display: none;
+}
+#measure-panel.folded #measure-head {
+  margin-bottom: 0;
+}

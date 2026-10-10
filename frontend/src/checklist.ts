@@ -27,6 +27,7 @@ import { ICON, icon } from './icons'
 import { fmtNum } from './properties'
 import { draftSpots, spotText, thinSpots, type Spot, type SpotPart } from './spots'
 import { cell, copyText } from './measurelist'
+import { foldButton } from './cardfold'
 import { ONLY_ICON } from './tree'
 
 export type CheckKind = 'thin' | 'short' | 'opposite'
@@ -61,6 +62,9 @@ export interface CheckResult {
   rows: CheckRow[]
   undecided: Undecided[]
 }
+
+/** the card folded to its head and counts (cardfold.ts), kept in this browser */
+const FOLDED_KEY = 'cad-viewer:check-folded'
 
 /** the rows of one kind shown at most (the rest are counted: 「ほか 12 所」) */
 export const CHECK_ROWS_MAX = 50
@@ -263,7 +267,8 @@ export class CheckPanel {
     const title = document.createElement('span')
     title.className = 'check-title'
     title.textContent = '問題の一覧'
-    head.appendChild(title)
+    // the title folds the card to its head and the counts (cardfold.ts)
+    head.appendChild(foldButton(this.el, title, FOLDED_KEY))
     if (!result) return head
     const copy = document.createElement('button')
     copy.type = 'button'
