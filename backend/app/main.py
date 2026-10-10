@@ -347,11 +347,14 @@ def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None,
     meshes = [p for p in unpack_parts(entry.mesh_blob)[1] if wanted is None or p["id"] in wanted]
     ids = sorted(p["id"] for p in meshes)
     key = f"projection:{axis}:{','.join(map(str, ids))}"
+    # The ticket first, even for an answer already known: the page's asking
+    # again must count, or a request of its still waiting would compute an
+    # answer the page has moved on from (hide a part, then show it again).
+    gate = _projection_gate(entry)
+    ticket = gate.ticket(client)
     cached = entry.extra.get(key)
     if cached is not None:
         return cached
-    gate = _projection_gate(entry)
-    ticket = gate.ticket(client)
     # not entry.lock: a measure request must not wait behind a projection
     with gate.lock:
         cached = entry.extra.get(key)  # computed while this one waited

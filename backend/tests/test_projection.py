@@ -186,14 +186,24 @@ def test_one_at_a_time_and_stale_requests_give_up(client):
     # the page asks for X again: computed now (the given-up one left nothing behind)
     assert _area(client, mid, "X")["area"] == pytest.approx(1540.0, rel=REL)
 
-    # an answer that is already there is given even to a superseded request
+    # an answer already there comes at once, without waiting for the gate, and
+    # it still counts as the page asking again: the page's request waiting
+    # behind the gate (the plate hidden) gives up once the page has gone back
+    # to the known answer (the plate shown again)
+    plate = _ids(meta, "plate")[0]
+    rest = ",".join(str(p["id"]) for p in meta["parts"] if p["id"] != plate)
     gate.lock.acquire()
     try:
         n = gate.count
-        t1 = threading.Thread(target=ask, args=("cached", "axis=Z&client=C"))
+        t1 = threading.Thread(target=ask, args=("hidden", f"axis=Z&parts={rest}&client=D"))
         t1.start()
-        # Z (all parts) is known: no waiting, no ticket
-        t1.join(timeout=60)
-        assert out["cached"].status_code == 200 and gate.count == n
+        _wait(lambda: gate.count > n, "the request without the plate never asked")
+        n = gate.count
+        ask("known", "axis=Z&client=D")  # all parts along Z: known, so no waiting here
+        assert out["known"].status_code == 200 and out["known"].json()["area"] == pytest.approx(6000.0, rel=REL)
+        assert gate.count > n, "a known answer must still take the page's ticket"
+        assert "hidden" not in out, "the waiting request must still wait"
     finally:
         gate.lock.release()
+    t1.join(timeout=60)
+    assert out["hidden"].status_code == 409, out["hidden"].text
