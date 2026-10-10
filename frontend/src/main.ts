@@ -504,6 +504,14 @@ function isTextEntry(el: EventTarget | null): boolean {
   // checkboxes / buttons keep focus after a click — arrows must still navigate
   return el instanceof HTMLInputElement && !['checkbox', 'radio', 'button'].includes(el.type)
 }
+/**
+ * The keyboard is on this control: moved there by Tab (it shows its focus
+ * ring, :focus-visible). A button clicked with the mouse keeps the focus
+ * without the ring.
+ */
+function keyboardOnControl(el: EventTarget | null): boolean {
+  return el instanceof HTMLElement && el !== document.body && el.matches(':focus-visible')
+}
 // capture phase: lil-gui stops keydown propagation inside its panel, so after
 // clicking a view button the arrows would never reach a bubbling listener
 window.addEventListener('keydown', onNavigationKey, { capture: true })
@@ -538,8 +546,10 @@ function onNavigationKey(e: KeyboardEvent): void {
     return
   }
   // Enter in 計測: what the first point's face or edge measures by itself (面積
-  // and 周長, 長さ) goes on the list, and the next click is a first point again
-  if (e.key === 'Enter' && state.mode === '計測' && !is2D && measureTool.hasPending) {
+  // and 周長, 長さ) goes on the list, and the next click is a first point again.
+  // A control the keyboard moved to (Tab: a part tree row's button) keeps its
+  // Enter; one that only kept the focus after a mouse click (a row's copy) does not
+  if (e.key === 'Enter' && state.mode === '計測' && !is2D && measureTool.hasPending && !keyboardOnControl(e.target)) {
     if (!e.repeat && measureTool.recordPending()) showModeHint()
     e.preventDefault()
     return

@@ -118,6 +118,42 @@ with nav_session() as n:
     assert len(rows()) == before + 1, ("Esc cancelled: Enter adds nothing", rows())
     print("3 distance and Esc as before")
 
+    # Enter and the focus. After the toolbar's 計測 (a mouse click) and a click
+    # on the model, Enter lists (the model's click takes the focus to the page).
+    # A control the keyboard moved to (Tab) keeps its Enter: plate's これだけ表示
+    # in the part tree does its work, nothing is listed, the first point still
+    # waits
+    before = len(rows())
+    page.locator("#toolbar button[data-action='mode-measure']").click()
+    click((8, 8, 15), "face")
+    wait_hud("面積")
+    focus = page.evaluate("() => [document.activeElement?.dataset?.action ?? document.activeElement?.tagName, document.activeElement?.matches(':focus-visible')]")
+    page.keyboard.press("Enter")
+    n.settle()
+    assert len(rows()) == before + 2, ("Enter lists after the clicks", focus, rows()[before:])
+    click((8, 8, 15), "face")
+    wait_hud("面積")
+    for _ in range(150):
+        page.keyboard.press("Tab")
+        if page.evaluate(
+            "() => { const a = document.activeElement; return !!a && a.classList.contains('tree-only') && !!a.closest('.tree-row')?.textContent.includes('plate') }"
+        ):
+            break
+    else:
+        raise AssertionError("Tab never reached plate's これだけ表示")
+    page.keyboard.press("Enter")
+    n.settle()
+    assert len(rows()) == before + 2, ("the tree's button had the Enter: nothing listed", rows()[before:])
+    shown = page.evaluate(
+        "() => Object.fromEntries([...document.querySelectorAll('#tree-panel .tree-row')].map(r => [r.textContent.trim(), r.querySelector('input')?.checked]))"
+    )
+    assert shown["plate"] and not any(shown[k] for k in ("core_pin1", "core_pin2", "cavity_block")), ("plate alone is shown", shown)
+    assert "を選択（面積" in hud(), ("the first point still waits", hud())
+    page.locator("#tree-show-all").click()
+    page.keyboard.press("Escape")
+    n.settle()
+    print("3b Enter and the focus", focus)
+
     # the copy: one value a row
     page.locator("#measure-copy-all").click()
     copied = page.evaluate("navigator.clipboard.readText()").split("\n")
