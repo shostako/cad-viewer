@@ -5,7 +5,8 @@ operation panel (issue #47 item 3).
   (make_step_assembly.py: 4 parts, plate 100 x 60 x 15 with the block and pins
   up to z 40) reads "mini_mold.step — 4 部品・304 三角形・100.0 × 60.0 × 40.0 mm";
   the same file saying its unit is the metre (SI_UNIT($,.METRE.) in place of
-  the millimetre) reads 1000 times as large, still in mm
+  the millimetre) reads 1000 times as large, still in mm, and says the unit it
+  was written in: "（元の単位: m）" (a file in mm says nothing more)
 - a mesh (ribbed_plate.stl, make_testdata.py: 80 x 50 plate, bosses up to z 12)
   claims no unit: "（単位はファイルのまま）"
 - a drawing (plate_drawing.dxf, make_dxf.py: 200 x 100): "2D 図面・200.0 × 100.0"
@@ -101,7 +102,7 @@ with nav_session() as n:
         metres.write_text(text.replace("SI_UNIT(.MILLI.,.METRE.)", "SI_UNIT($,.METRE.)"))
         n.load(metres)
         # (the triangles may differ: the pins are 1000 times as large for the tessellation)
-        assert hud().startswith("mold_in_metres.step — 4 部品・") and hud().endswith("三角形・100000.0 × 60000.0 × 40000.0 mm"), hud()
+        assert hud().startswith("mold_in_metres.step — 4 部品・") and hud().endswith("三角形・100000.0 × 60000.0 × 40000.0 mm（元の単位: m）"), hud()
 
         # ---- a mesh: no unit claimed
         n.load(STL)

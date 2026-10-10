@@ -6,6 +6,9 @@ assembled with locations — exercises XCAF colors, assembly tree, curved faces.
 Creates curved_part.step: the curved faces whose radius (R) is measured, each
 of a known size (see make_curved_part).
 
+Creates inch_block.step: a block of 1 x 2 x 0.5 in (25.4 x 50.8 x 12.7 mm)
+written in inches (the 計測の単位's file unit; see make_inch_block).
+
 Usage: backend/.venv/bin/python testdata/make_step_assembly.py
 """
 import math
@@ -85,6 +88,7 @@ def main() -> None:
     write(doc, "mini_mold.step")
 
     make_curved_part()
+    make_inch_block()
 
 
 # curved_part.step: the sizes the tests check
@@ -162,6 +166,22 @@ def make_curved_part() -> None:
     st.AddComponent(asm, l_pin, loc(0, 0, 0))
     st.UpdateAssemblies()
     write(doc, "curved_part.step")
+
+
+def make_inch_block() -> None:
+    """A block of 25.4 x 50.8 x 12.7 mm from the origin, written in inches:
+    the file says 1 x 2 x 0.5 (its unit INCH); OCCT reads it back into mm."""
+    from OCP.Interface import Interface_Static
+    from OCP.STEPControl import STEPControl_Writer
+
+    writer = STEPControl_Writer()  # first: it sets the write.step.* defaults
+    old = Interface_Static.CVal_s("write.step.unit")
+    Interface_Static.SetCVal_s("write.step.unit", "INCH")
+    try:
+        writer.Transfer(BRepPrimAPI_MakeBox(25.4, 50.8, 12.7).Shape(), STEPControl_AsIs)
+        assert writer.Write(str(OUT / "inch_block.step")) == IFSelect_RetDone
+    finally:
+        Interface_Static.SetCVal_s("write.step.unit", old)
 
 
 if __name__ == "__main__":

@@ -45,10 +45,14 @@ export interface Review {
   comment: string
 }
 
-/** a number with its decimals: the page writes it grouped (fmtNum), the CSV plain */
+/**
+ * a number with its decimals: the page writes it grouped (fmtNum), the CSV
+ * plain; full: the CSV writes every digit it has (a measured number, mm)
+ */
 export interface Num {
   n: number
   d: number
+  full?: boolean
 }
 export type Cell = string | Num
 
@@ -80,6 +84,7 @@ const shown = (c: Cell): string => (typeof c === 'string' ? c : fmtNum(c.n, c.d)
 /** a Num as the CSV writes it: plain digits, no sign on a zero */
 function plain(c: Cell): string {
   if (typeof c === 'string') return c
+  if (c.full) return String(c.n)
   const t = c.n.toFixed(c.d)
   return /^-0\.?0*$/.test(t) ? t.slice(1) : t
 }

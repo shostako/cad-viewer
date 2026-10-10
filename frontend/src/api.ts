@@ -6,6 +6,8 @@ export interface ModelMeta {
   format: string
   /** the first 32 hex digits of the SHA-256 of the file's bytes (the sidecar's name; the 記録 says it) */
   hash?: string
+  /** a B-rep's length unit as the file is written (mm, in, …; OCCT reads it into mm); null: not said */
+  fileUnit?: string | null
   vertexCount: number
   triangleCount: number
   partCount: number

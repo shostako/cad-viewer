@@ -17,7 +17,7 @@ import { LineSegmentsGeometry } from 'three/examples/jsm/lines/LineSegmentsGeome
 import { measureEdgeInfo, measureFaceInfo, measureVertexInfo } from './api'
 import type { PartData } from './model'
 import type { PickResult } from './picking'
-import { edgeSize, faceSize, pointText, sizeText, type Size } from './sizes'
+import { edgeSize, faceSize, showPoint, showSize, unitTag, type Size } from './sizes'
 import type { Viewer } from './viewer'
 
 /** 水色; #cursor-tip[data-kind='pick'] (style.css) frames the label in the same colour */
@@ -282,10 +282,17 @@ export const INFO_REST_MS = 150
  * failed) is kept until another model is opened. `learned` is called when an
  * answer comes for the entity under the cursor.
  */
+/** what the backend told of a face, an edge (a size) or a vertex (its point) */
+type Known = { size: Size } | { point: [number, number, number] }
+
 export class InfoCache {
   private modelId: string | null = null
-  /** per model (a new map on setModel: a late answer for the old model goes to the old map) */
-  private known = new Map<string, string | null>()
+  /**
+   * per model (a new map on setModel: a late answer for the old model goes to
+   * the old map). The answers as numbers: get() writes them in the display's
+   * unit and decimals of the moment.
+   */
+  private known = new Map<string, Known | null>()
   private asked = new Set<string>()
   /** the face / edge / vertex the cursor is on; null: none */
   private restKey: string | null = null
@@ -304,9 +311,14 @@ export class InfoCache {
     this.asked = new Set()
   }
 
-  /** the text for the face / edge / vertex (⌀8.000, (70.000, 15.000, 35.000)); null: none, or not known yet */
+  /**
+   * the text for the face / edge / vertex (⌀8.000, (70.000, 15.000, 35.000)),
+   * as shown (in inches: ⌀0.315 in); null: none, or not known yet
+   */
   get(pick: PickResult): string | null {
-    return this.known.get(keyOf(pick)) ?? null
+    const k = this.known.get(keyOf(pick))
+    if (!k) return null
+    return 'size' in k ? `${showSize(k.size)}${k.size.mark === '勾配' ? '' : unitTag()}` : `${showPoint(k.point)}${unitTag()}`
   }
 
   /** The cursor is on `pick` now (null: on nothing). Another face, edge or vertex starts the wait. */
@@ -325,13 +337,13 @@ export class InfoCache {
       const known = this.known
       this.asked.add(key)
       // no click point: no radius of curvature at a point is asked for
-      const text = (s: Size | null) => (s ? sizeText(s) : null)
-      const answer =
+      const sized = (s: Size | null): Known | null => (s ? { size: s } : null)
+      const answer: Promise<Known | null> =
         ref.kind === 'vertex'
-          ? measureVertexInfo(modelId, ref).then((i) => pointText(i.point))
+          ? measureVertexInfo(modelId, ref).then((i) => ({ point: i.point }))
           : ref.kind === 'edge'
-            ? measureEdgeInfo(modelId, ref).then((i) => text(edgeSize(i)))
-            : measureFaceInfo(modelId, ref).then((i) => text(faceSize(i)))
+            ? measureEdgeInfo(modelId, ref).then((i) => sized(edgeSize(i)))
+            : measureFaceInfo(modelId, ref).then((i) => sized(faceSize(i)))
       void answer.then(
         (s) => {
           known.set(key, s)

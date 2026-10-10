@@ -107,11 +107,15 @@ async def upload_model(file: UploadFile) -> dict:
             store.add(entry)
             return {"id": entry.model_id, "name": name, "format": route, "hash": content_hash, "cached": True, **meta}
 
+        info: dict = {}
         try:
-            meshes, tree, defl = load_brep(data, name)
+            meshes, tree, defl = load_brep(data, name, info)
         except BrepLoadError as e:
             raise HTTPException(422, str(e)) from e
         blob, meta = pack_parts(meshes, tree, defl)
+        # the unit the file is written in (OCCT read it into mm): said beside the
+        # display's unit; in the cached meta too
+        meta["fileUnit"] = info.get("fileUnit")
         cache.put(key, blob, meta)
         entry = ModelEntry(
             model_id=new_model_id(),

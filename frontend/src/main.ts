@@ -28,7 +28,8 @@ import { KeyHelp } from './help'
 import { ICON, icon } from './icons'
 import { LoadCard, failureReason, type LoadStep } from './loadcard'
 import { LENGTH_UNIT, MeasureTool, type EntryData } from './measure'
-import { LIST_HEAD, copyText, drawingRow, entryRow, listText, rowCells, rowElement, type RowView } from './measurelist'
+import { LIST_HEAD, copyText, drawingRow, entryRow, labelText, listText, recordCells, rowElement, type RowView } from './measurelist'
+import { DIGITS_DEFAULT, DIGITS_MAX, DIGITS_MIN, LENGTH_UNITS, setShown, type LengthUnit } from './sizes'
 import { toModelData, type ModelData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
@@ -39,7 +40,7 @@ import { SpotNav } from './spotnav'
 import { spotText } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
-import { ReportPop, SOURCE, reportCsv, reportHtml, reportTime, type Report, type ReportTable, type Review } from './report'
+import { ReportPop, SOURCE, reportCsv, reportHtml, reportTime, type Cell, type Report, type ReportTable, type Review } from './report'
 import { version as appVersion } from '../package.json'
 import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
@@ -147,6 +148,8 @@ const triad = new AxisTriad(triadEl, (v) => viewer.setView(v))
 viewer.onFrame(() => triad.update(viewer.camera.quaternion))
 const picker = new Picker(viewer)
 const measureTool = new MeasureTool(viewer)
+// the labels say the numbers in the display's unit and decimals (計測の単位・桁)
+measureTool.labelFor = labelText
 const sectionTool = new SectionTool(viewer)
 const drawing2d = new Drawing2D(viewport2d, (msg) => {
   hudInfo.textContent = msg
@@ -204,6 +207,7 @@ function setContentShown(on: boolean, fileName = '', meta: ModelMeta | null = nu
   contentShown = on
   shownFileName = on ? fileName : ''
   shownMeta = on ? meta : null
+  showFileUnit(shownMeta)
   // the review was of the file that was on screen
   if (!on) review = { ...review, status: 'none', comment: '' }
   // a model or a drawing on screen brings the model's controls (showEmpty
@@ -493,6 +497,8 @@ function buildReport(at: Date, image: string | null): Report {
     ['アプリ', `cad-viewer ${appVersion}`],
     ['単位', RECORD_UNITS[shownMeta?.format ?? ''] ?? 'ファイルの数のまま'],
   ]
+  // what a B-rep was written in before OCCT read it into mm
+  if (shownMeta?.format === 'brep') meta.push(['元のファイルの単位', shownMeta.fileUnit ?? '不明'])
   const tables: ReportTable[] = []
   const parts = is2D ? [] : [...viewer.getPartMeshes().keys()].sort((a, b) => a - b)
   if (parts.length > 1) {
@@ -502,12 +508,17 @@ function buildReport(at: Date, image: string | null): Report {
       rows: parts.map((id) => [checkPartNames.get(id) ?? `部品 ${id}`, viewer.isPartVisible(id) ? '表示' : '隠している']),
     })
   }
-  // the measure list's rows, as on screen (a note has no value to come from anywhere)
+  // the measure list's rows, their numbers as they are: mm (the display's unit
+  // and decimals are the screen's only). The page writes 3 decimals, the CSV
+  // every digit. A note has no value to come from anywhere
   const measureSource = is2D ? SOURCE.drawing : SOURCE.brep
   tables.push({
     title: `計測（${listRows.length} 件）`,
     head: [...LIST_HEAD, '出どころ'],
-    rows: listRows.map((r) => [...rowCells(r), r.kind === 'note' ? '' : measureSource]),
+    rows: listRows.map((r) => [
+      ...recordCells(r).map((c): Cell => (typeof c === 'number' ? { n: c, d: 3, full: true } : c)),
+      r.kind === 'note' ? '' : measureSource,
+    ]),
     empty: 'なし',
   })
   if (!is2D) {
@@ -595,9 +606,14 @@ const viewPrefs = {
   rotateMode: 'turntable' as RotateMode,
   style: 'shaded-edges' as DisplayStyle,
   projection: 'perspective' as Projection,
+  /** how measured numbers are shown (sizes.ts shown): the saved entries and the 記録 keep mm */
+  unit: 'mm' as LengthUnit,
+  digits: DIGITS_DEFAULT,
 }
 try {
   const saved = JSON.parse(localStorage.getItem(VIEW_PREFS_KEY) ?? '{}')
+  if ((LENGTH_UNITS as readonly string[]).includes(saved.unit)) viewPrefs.unit = saved.unit
+  if (Number.isInteger(saved.digits) && saved.digits >= DIGITS_MIN && saved.digits <= DIGITS_MAX) viewPrefs.digits = saved.digits
   if (typeof saved.grid === 'boolean') viewPrefs.grid = saved.grid
   if (typeof saved.speed === 'number') viewPrefs.speed = saved.speed
   if (saved.rotateMode === 'turntable' || saved.rotateMode === 'free') viewPrefs.rotateMode = saved.rotateMode
@@ -610,8 +626,8 @@ function saveViewPrefs(): void {
   try {
     // auto-rotate is deliberately not remembered: a model that starts spinning
     // on open is a surprise, not a preference
-    const { grid, speed, rotateMode, style, projection } = viewPrefs
-    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode, style, projection }))
+    const { grid, speed, rotateMode, style, projection, unit, digits } = viewPrefs
+    localStorage.setItem(VIEW_PREFS_KEY, JSON.stringify({ grid, speed, rotateMode, style, projection, unit, digits }))
   } catch {
     /* best-effort */
   }
@@ -622,6 +638,7 @@ viewer.setRotateMode(viewPrefs.rotateMode)
 // before any model loads: addPart applies the current style to every new part
 viewer.setDisplayStyle(viewPrefs.style)
 viewer.setProjection(viewPrefs.projection)
+setShown(viewPrefs.unit, viewPrefs.digits)
 
 const viewFolder = gui.addFolder('表示')
 // folded at first: the toolbar switches the style (W), and the column is
@@ -691,6 +708,33 @@ viewFolder
     viewer.setProjection(v)
     saveViewPrefs()
   })
+// 計測の単位・桁 (#59 P1 6): how the measured numbers are shown (the list,
+// the labels, the status line, the name beside the cursor). The saved entries
+// and the 記録 keep mm; a file's own unit is said on its title
+const unitCtl = viewFolder
+  .add(viewPrefs, 'unit', { mm: 'mm', インチ: 'in' })
+  .name('計測の単位')
+  .onChange(applyShown)
+viewFolder
+  .add(viewPrefs, 'digits', Object.fromEntries(Array.from({ length: DIGITS_MAX - DIGITS_MIN + 1 }, (_, i) => [`小数 ${i + DIGITS_MIN} 桁`, i + DIGITS_MIN])))
+  .name('計測の桁')
+  .onChange(applyShown)
+/** show the measured numbers again in the unit and decimals chosen */
+function applyShown(): void {
+  setShown(viewPrefs.unit, viewPrefs.digits)
+  saveViewPrefs()
+  renderMeasureList()
+  measureTool.relabel()
+  // a first point waiting says its face's area again; the label beside the cursor too
+  if (measureTool.hasPending && modeHud && hudInfo.textContent === modeHud) setModeHud(measureTool.pendingStatus(), modeBase)
+  forgetHoverPick()
+  probe.refresh()
+}
+/** the 計測の単位's title: what the file on screen was written in (OCCT reads it into mm) */
+function showFileUnit(meta: ModelMeta | null): void {
+  const u = meta?.format === 'brep' ? meta.fileUnit : null
+  unitCtl.domElement.title = u ? `元のファイルの単位: ${u}（読み込みで mm に直してある）` : ''
+}
 const presetFolder = viewFolder.addFolder('視点')
 // the seven buttons in rows of four (style.css): a row each took seven rows of
 // the column on half a screen. Their names stay (the E2E finds them by name).

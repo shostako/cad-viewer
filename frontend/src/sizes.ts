@@ -28,9 +28,74 @@ export interface Size {
   at?: [number, number, number]
 }
 
-/** a length: mm, 3 decimals */
+/** a length: mm, 3 decimals (the saved text of an entry; the screen shows showLen) */
 export function fmt(v: number): string {
   return v.toFixed(3)
+}
+
+// ---- how measured numbers are shown (#59 P1 6)
+// The operation panel's 単位 and 桁: they change the screen only. The saved
+// entries (sidecars) keep their mm text and their numbers, the 記録 its mm.
+
+export type LengthUnit = 'mm' | 'in'
+export const LENGTH_UNITS: readonly LengthUnit[] = ['mm', 'in']
+export const MM_PER_INCH = 25.4
+/** the decimals one can choose */
+export const DIGITS_MIN = 0
+export const DIGITS_MAX = 6
+export const DIGITS_DEFAULT = 3
+
+/** the unit and the decimals measured numbers are shown in now */
+export const shown = { unit: 'mm' as LengthUnit, digits: DIGITS_DEFAULT }
+
+export function setShown(unit: LengthUnit, digits: number): void {
+  shown.unit = LENGTH_UNITS.includes(unit) ? unit : 'mm'
+  shown.digits = Number.isInteger(digits) ? Math.min(DIGITS_MAX, Math.max(DIGITS_MIN, digits)) : DIGITS_DEFAULT
+}
+
+/** v with d decimals; one that rounds to 0 has no sign */
+function fixed(v: number, d: number): string {
+  const t = v.toFixed(d)
+  return /^-0\.?0*$/.test(t) ? t.slice(1) : t
+}
+
+/** a length (mm) as shown: the number in the unit shown, its decimals */
+export function showLen(mm: number): string {
+  return fixed(shown.unit === 'in' ? mm / MM_PER_INCH : mm, shown.digits)
+}
+
+/** an area (mm²) as shown */
+export function showArea(mm2: number): string {
+  return fixed(shown.unit === 'in' ? mm2 / (MM_PER_INCH * MM_PER_INCH) : mm2, shown.digits)
+}
+
+/** an angle (degrees) as shown, the number alone: the decimals of the lengths */
+export function showDegNum(deg: number): string {
+  return fixed(deg, shown.digits)
+}
+
+/** an angle as shown, with its ° */
+export function showDeg(deg: number): string {
+  return `${showDegNum(deg)}°`
+}
+
+/** what a length on the status line and beside the cursor adds when it is not in mm (those say no unit for mm) */
+export const unitTag = (): string => (shown.unit === 'mm' ? '' : ` ${shown.unit}`)
+
+/** the unit of a length as shown (mm, in) */
+export const lenUnit = (): string => shown.unit
+
+/** the unit of an area as shown (mm², in²) */
+export const areaUnit = (): string => `${shown.unit}²`
+
+/** a point as shown: (12.000, 20.000, 10.000) */
+export function showPoint(p: readonly [number, number, number]): string {
+  return `(${p.map(showLen).join(', ')})`
+}
+
+/** a size as shown: ⌀8.000, R5.000, SR4.000, 勾配 2.000° (the beside-the-cursor tip) */
+export function showSize(s: Size): string {
+  return s.mark === '勾配' ? `勾配 ${showDeg(s.value)}` : `${s.mark}${showLen(s.value)}`
 }
 
 const formatters = new Map<number, Intl.NumberFormat>()
