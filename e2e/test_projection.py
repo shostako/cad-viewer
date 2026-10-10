@@ -111,6 +111,20 @@ def main():
             # the estimate is said on the row: no extra note line for it
             assert "目安" not in page.inner_text("#props-note")
 
+        def resize(height, area_row):
+            """a new window height; wait (no fixed time) until the area's row is
+            shown or folded as expected, and two frames more for the layout"""
+            page.set_viewport_size({"width": 1280, "height": height})
+            try:
+                page.wait_for_function(
+                    "(want) => (document.querySelector('#props-total-proj').offsetParent !== null) === want",
+                    arg=area_row,
+                    timeout=5000,
+                )
+            except Exception as e:
+                raise AssertionError(("the area's row", "shown" if area_row else "folded", "expected at", height)) from e
+            page.evaluate("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))")
+
         def tree_box(name):
             label = page.locator("#tree-panel label", has_text=name).first
             return label.locator("xpath=..").locator("input").first
@@ -156,8 +170,7 @@ def main():
         assert 15 <= row <= 30 and 0 < margin <= 20, (row, margin)
         full = g["y"] + GUI_MIN + COLUMN_GAP + pr["height"] + margin
         for height, area_row in ((math.ceil(full) + 1, True), (round(full - row / 2), False)):
-            page.set_viewport_size({"width": 1280, "height": height})
-            page.wait_for_timeout(300)
+            resize(height, area_row)
             shown("X", 1540, 75, area_row=area_row)
             gb = page.locator(".lil-gui.lil-root").bounding_box()
             pb = page.locator("#props-panel").bounding_box()
@@ -166,8 +179,7 @@ def main():
             assert gb["y"] + gb["height"] <= pb["y"] + 0.5, ("the GUI over the panel", height, gb, pb)
             assert pb["y"] + pb["height"] <= height + 0.5, ("the panel off the screen", height, pb)
             print("4b", height, "area row" if area_row else "folded", round(gb["height"]), round(pb["height"]))
-        page.set_viewport_size({"width": 1280, "height": H0})
-        page.wait_for_timeout(300)
+        resize(H0, True)
         shown("X", 1540, 75)
 
         # 5. while the answer is on its way: 計算中…, then the value (along Y
