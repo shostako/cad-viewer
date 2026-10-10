@@ -108,6 +108,40 @@ with nav_session() as n:
         assert hud().startswith("ribbed_plate.stl — ") and hud().endswith("三角形・80.0 × 50.0 × 12.0（単位はファイルのまま）"), hud()
         assert " mm" not in hud(), hud()
 
+        # ---- loads that fail after a model
+        broken = Path(tmp) / "broken.stl"
+        broken.write_text("this is not an STL")
+        # a file the backend reads, its own copy (a STEP is text: trailing newlines
+        # keep it whole; a binary STL would not survive them)
+        other = Path(tmp) / "other.step"
+        other.write_bytes(MOLD.read_bytes() + b"\n" * 9)
+
+        def refused_upload_keeps(tag):
+            """refused at the upload: the old content stays on screen, its panel too"""
+            page.set_input_files("#file-input", str(broken))
+            page.wait_for_function("document.querySelector('#load-card')?.textContent.includes('STL として読めない')", timeout=30000)
+            s = shown()
+            assert all(s["ctl"].get(k) for k in ITEMS), (tag, "the old content is still there", s)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+            n.errors[:] = [e for e in n.errors if "status of 422" not in e]
+
+        def fail_and_check(tag):
+            """uploaded, then the mesh never comes: the old content is gone, the panel is the empty one"""
+            page.route("**/mesh.bin", lambda r: r.abort())
+            page.set_input_files("#file-input", str(other))
+            page.wait_for_function("document.querySelector('#hud-info').textContent.startsWith('エラー:')", timeout=30000)
+            page.unroute("**/mesh.bin")
+            page.wait_for_timeout(300)
+            assert_empty_panel(tag)
+            page.keyboard.press("Escape")
+            page.wait_for_timeout(300)
+            assert_empty_panel(tag + ", the card closed")
+            n.errors[:] = [e for e in n.errors if "Failed to load resource" not in e and "net::ERR_FAILED" not in e]
+
+        refused_upload_keeps("a refused upload after a 3D model")
+        fail_and_check("a failed load after a 3D model")
+
         # ---- a drawing
         n.load(DXF, wait_text="2D 図面")
         assert hud() == "plate_drawing.dxf — 2D 図面・200.0 × 100.0（計測で端点・中心に吸い付く）", hud()
@@ -115,6 +149,7 @@ with nav_session() as n:
         assert s["ctl"].get("モード") is True, ("a drawing measures", s)
         for name in ["表示", *MODEL_FOLDERS]:
             assert s["fol"].get(name) is False, ("a drawing has no 3D folders", name, s)
+        fail_and_check("a failed load after a drawing")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

@@ -2099,9 +2099,12 @@ async function loadFile(file: File): Promise<void> {
     const detail = e instanceof Error ? e.message : String(e)
     loadCard.fail(file.name, reason, detail)
     // Nothing on screen (the old model went before the failure, or there was
-    // none): the plain empty screen, as at start-up. The failed card has
-    // 別のファイルを選ぶ; closing it brings back the open card.
-    if (!contentShown) show2D(false)
+    // none): the plain empty screen, as at start-up, its panel too (表示 only).
+    // The failed card has 別のファイルを選ぶ; closing it brings back the open card.
+    if (!contentShown) {
+      applyEmptyPanel(true)
+      show2D(false)
+    }
   }
 }
 
