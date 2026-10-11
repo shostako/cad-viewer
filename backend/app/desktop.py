@@ -111,7 +111,10 @@ def find_port(first: int, tries: int = PORT_TRIES, wait: float = 20.0) -> tuple[
     Every port is looked at before starting: an earlier start may be on a later
     one (8018 was another program's then, and is free now). A port taken but not
     answering yet may be ours starting up (two starts at once): waited for up to
-    `wait` seconds while no port is claimed yet, briefly after."""
+    `wait` seconds while no port is claimed yet, briefly after. The limit of that:
+    two starts at once while the first one's port is a later one and 8018 has
+    just become free make two servers (rare: the first start then had found
+    8018 taken)."""
     free: tuple[int, socket.socket] | None = None
     for port in range(first, first + tries):
         s = claim(port)
