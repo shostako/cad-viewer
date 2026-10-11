@@ -144,6 +144,17 @@ def brep(path: Path) -> dict:
     }
 
 
+def triangles(mesh) -> list:
+    """the triangles by their corners' places, each from its least corner (the
+    turn kept), sorted: the same set, whatever order each engine makes them in
+    (how a face of more than three corners is cut, #87)"""
+    out = []
+    for tri in np.round(np.asarray(mesh.vertices)[np.asarray(mesh.faces)], 4).tolist():
+        k = min(range(3), key=lambda i: tri[i])
+        out.append(tri[k:] + tri[:k])
+    return sorted(out)
+
+
 def answer(path: Path) -> dict:
     data = path.read_bytes()
     if classify(path.name) == "brep":
@@ -163,6 +174,7 @@ def answer(path: Path) -> dict:
         "triangleCount": meta["triangleCount"],
         "bbox": meta["bbox"],
         "vertices": sorted(np.round(pn, 4).tolist()),
+        "triangles": triangles(mesh),
         "properties": properties.mesh_properties(blob),
     }
 

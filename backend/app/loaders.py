@@ -13,6 +13,8 @@ from pathlib import Path
 import trimesh
 import trimesh.graph
 
+from . import polygons
+
 # split vertices at edges sharper than this so flat faces shade flat
 # (also gives sane per-vertex normals for thickness rays)
 SMOOTH_ANGLE = math.radians(30)
@@ -42,10 +44,24 @@ def classify(filename: str) -> str:
 
 def load_mesh(data: bytes, filename: str) -> trimesh.Trimesh:
     ext = Path(filename).suffix.lower().lstrip(".")
-    loaded = trimesh.load(io.BytesIO(data), file_type=ext)
-    if isinstance(loaded, trimesh.Scene):
-        # flatten multi-body scenes (3MF etc.) into a single mesh for Phase 0
-        loaded = loaded.to_mesh()
+    try:
+        loaded = trimesh.load(io.BytesIO(data), file_type=ext)
+    except Exception:
+        # some files of faces of more than three corners trimesh does not read
+        # (polygons.read_mesh): read as the Web version reads them
+        loaded = polygons.read_mesh(data, ext)
+        if loaded is None:
+            raise
+    else:
+        if isinstance(loaded, trimesh.Scene):
+            # flatten multi-body scenes (3MF etc.) into a single mesh for Phase 0
+            loaded = loaded.to_mesh()
+        if isinstance(loaded, trimesh.Trimesh) and len(loaded.faces):
+            # trimesh cuts a face of more than three corners as a fan, which is
+            # wrong for a concave one: those are cut again along their shape (#87)
+            refit = polygons.refit(data, ext, len(loaded.faces))
+            if refit is not None:
+                loaded = refit
     if not isinstance(loaded, trimesh.Trimesh) or len(loaded.faces) == 0:
         raise ValueError("no triangle geometry found in file")
     return trimesh.graph.smooth_shade(loaded, angle=SMOOTH_ANGLE)
