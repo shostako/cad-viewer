@@ -265,7 +265,14 @@ export function renderThicknessLegend(
   swatch.className = 'draft-swatch'
   swatch.style.background = css(NO_DATA)
   const label = document.createElement('span')
-  label.textContent = method === 'face' ? 'データなし（測れない小さな面・判定できない部品）' : 'データなし（光線が抜けた点・角）'
+  label.textContent =
+    method === 'face'
+      ? 'データなし（測れない小さな面・判定できない部品）'
+      : method === 'ball'
+        ? // the vertices no tangent sphere fits at (#63): most of a STEP / IGES model's
+          // flat faces and convex curved ones. The face's own value is 面ごと's
+          'データなし（球の入らない頂点: 角・出っ張った稜線と曲面、平らな面の縁。平らな面の中は「面ごと（形の中から）」で見る）'
+        : 'データなし（光線が抜けた点・角）'
   none.append(swatch, label)
   const rows: HTMLElement[] = [title, bar, ticks]
   if (thick) {

@@ -35,6 +35,9 @@ import { draftSpots, spotText, thinSpots, type Spot, type SpotPart } from './spo
 import { cell, copyText } from './measurelist'
 import { foldButton } from './cardfold'
 import { ONLY_ICON } from './tree'
+import { METHOD_NAMES } from './thickness'
+
+const BALL_NAME = METHOD_NAMES.ball
 
 export type CheckKind = 'thin' | 'thick' | 'short' | 'opposite'
 /** the kinds in the list's order: the wall's two, then the draft's */
@@ -109,7 +112,9 @@ export function runChecks(
       const n = Math.floor(part.positions.length / 3)
       let none = 0
       for (let i = 0; i < n; i++) if (!v || !(v[i] > 0) || !Number.isFinite(v[i])) none++
-      if (none) undecided.push({ partId: part.partId, why: `肉厚の値が出ない頂点 ${none} / ${n} 個` })
+      // the rolling ball has no value at most of a B-rep's vertices (#63): where to look instead
+      const hint = conditions.thin.methodName === BALL_NAME ? '（平らな面の中の肉厚は「面ごと（形の中から）」で見る）' : ''
+      if (none) undecided.push({ partId: part.partId, why: `肉厚の値が出ない頂点 ${none} / ${n} 個${hint}` })
     }
   }
   if (conditions.thick && thick) {
