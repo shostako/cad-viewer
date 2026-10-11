@@ -3,16 +3,18 @@
  * answered in the page's Worker (worker.ts) with the same paths, statuses and
  * bodies, so api.ts reads them the one way (../engine.ts).
  *
- * So far (docs/designs/web-version.md, W2–W5): mesh formats (STL, OBJ, PLY,
+ * So far (docs/designs/web-version.md, W2–W6): mesh formats (STL, OBJ, PLY,
  * OFF, 3MF: the display mesh, volume and area), STEP/IGES (OpenCASCADE in
  * WebAssembly, brep.ts: parts, tree, colours, the display mesh with its B-rep
  * face / edge / vertex IDs; the exact measurements, volume and centre of mass:
  * measure.ts, brepprops.ts), the wall thickness (thickness.ts), 厚肉 (thick.ts),
- * the projected area (projection.ts), the sidecars (kept in IndexedDB, by the file's
+ * the projected area (projection.ts), DXF (the backend's drawing.py in Pyodide,
+ * drawing.ts), the sidecars (kept in IndexedDB, by the file's
  * content hash as the backend names its files). The rest answers 501 with what
  * is not there yet in the Web version.
  */
 import { BrepLoadError, loadBrep, type PartMesh } from './brep.ts'
+import { DrawingLoadError, type DrawingRenderer } from './drawing.ts'
 import { brepPartProperties } from './brepprops.ts'
 import { MeasureError, Measurer } from './measure.ts'
 import { MESH_EXTS, loadMesh, MeshLoadError } from './meshload.ts'
@@ -46,7 +48,9 @@ export function memoryStore(): SidecarStore {
 interface Model {
   id: string
   name: string
-  format: 'mesh' | 'brep'
+  format: 'mesh' | 'brep' | 'drawing'
+  /** a drawing's SVG */
+  svg?: string
   hash: string
   meta: Record<string, unknown>
   blob: ArrayBuffer
@@ -102,12 +106,17 @@ export class LocalBackend {
   private readonly version: string
   private readonly occtProvider: OcctProvider | null
   private occt: Promise<unknown> | null = null
+  private readonly drawing: DrawingRenderer | null
 
-  /** version: the app's (package.json's), for /api/health; occt: OpenCASCADE for STEP/IGES (none: not opened) */
-  constructor(sidecars: SidecarStore, version: string, occt: OcctProvider | null = null) {
+  /**
+   * version: the app's (package.json's), for /api/health; occt: OpenCASCADE for
+   * STEP/IGES; drawing: the DXF renderer (drawing.ts). None: not opened
+   */
+  constructor(sidecars: SidecarStore, version: string, occt: OcctProvider | null = null, drawing: DrawingRenderer | null = null) {
     this.sidecars = sidecars
     this.version = version
     this.occtProvider = occt
+    this.drawing = drawing
   }
 
   /** path: from /api (with a query); body: a PUT's JSON, or an upload's { name, bytes } */
@@ -130,6 +139,7 @@ export class LocalBackend {
     }
     if (!model) return detail(404, 'model not found')
     this.touch(model)
+    if (model.format === 'drawing') return this.drawingRoute(model, method, parts[3] ?? '', body)
     switch (`${method} ${parts[3] ?? ''}`) {
       case 'GET mesh.bin':
         return { status: 200, kind: 'binary', body: model.blob.slice(0) }
@@ -154,7 +164,7 @@ export class LocalBackend {
         }
       }
       case 'GET drawing.svg':
-        return detail(422, 'not a drawing')
+        return detail(404, 'model has no drawing payload')
       case 'GET thickness.bin': {
         const method = url.searchParams.get('method') ?? 'ray'
         if (method !== 'ray' && method !== 'ball') return detail(422, "method must be 'ray' or 'ball'")
@@ -324,10 +334,10 @@ export class LocalBackend {
     if (bytes.byteLength === 0) return detail(400, 'empty file')
     const name = file.name || 'model'
     const ext = name.includes('.') ? name.slice(name.lastIndexOf('.') + 1).toLowerCase() : ''
-    if (DRAWING_EXTS.includes(ext)) return notYet('2D 図面（DXF/DWG）を開く')
+    if (ext === 'dwg') return detail(422, 'Web 版では DWG を開けない（DWG の変換には PC のプログラム ODA File Converter が要る）。DXF に書き出して開く')
     if (LATER_MESH_EXTS.includes(ext)) return notYet('glTF/GLB を開く')
     const brep = BREP_EXTS.includes(ext)
-    if (!brep && !(MESH_EXTS as readonly string[]).includes(ext)) return detail(415, `unsupported file extension: .${ext}`)
+    if (!brep && !DRAWING_EXTS.includes(ext) && !(MESH_EXTS as readonly string[]).includes(ext)) return detail(415, `unsupported file extension: .${ext}`)
     const hash = await sha256Hex32(bytes)
     for (const m of this.models.values()) {
       if (m.hash === hash && m.name === name) {
@@ -336,6 +346,7 @@ export class LocalBackend {
       }
     }
     if (brep) return this.uploadBrep(name, hash, bytes)
+    if (ext === 'dxf') return this.uploadDrawing(name, hash, bytes)
     let mesh: DisplayMesh
     let lo = [0, 0, 0], hi = [0, 0, 0]
     try {
@@ -376,6 +387,48 @@ export class LocalBackend {
     const model: Model = { id: newId(), name, format: 'mesh', hash, meta, blob, mesh }
     this.keep(model)
     return json(200, { id: model.id, name, format: 'mesh', hash, ...meta })
+  }
+
+  private async uploadDrawing(name: string, hash: string, bytes: Uint8Array): Promise<Answer> {
+    if (!this.drawing) return notYet('2D 図面（DXF）を開く')
+    let out
+    try {
+      out = await this.drawing(bytes, name)
+    } catch (e) {
+      if (e instanceof DrawingLoadError) return detail(422, e.message)
+      return detail(503, `図面の部品（Python）を読み込めなかった: ${e instanceof Error ? e.message : String(e)}`)
+    }
+    const model: Model = { id: newId(), name, format: 'drawing', hash, meta: out.meta, blob: new ArrayBuffer(0), svg: out.svg }
+    this.keep(model)
+    return json(200, { id: model.id, name, format: 'drawing', hash, ...out.meta })
+  }
+
+  /** a drawing's routes: its SVG and sidecar; the 3D ones answer as the backend does */
+  private async drawingRoute(model: Model, method: string, what: string, body: unknown): Promise<Answer> {
+    switch (`${method} ${what}`) {
+      case 'GET drawing.svg':
+        return { status: 200, kind: 'text', body: model.svg!, type: 'image/svg+xml' }
+      case 'GET sidecar':
+        return json(200, (await this.sidecars.get(model.hash)) ?? {})
+      case 'PUT sidecar':
+        await this.sidecars.put(model.hash, body)
+        return json(200, { saved: true })
+      case 'GET mesh.bin':
+        return detail(404, 'model has no mesh payload')
+      case 'POST measure':
+        return detail(422, 'measurement requires a B-rep model (STEP/IGES)')
+      case 'GET thickness.bin':
+        return detail(422, 'thickness requires a 3D model (mesh or B-rep)')
+      case 'GET thick':
+      case 'GET thick.bin':
+        return detail(422, '厚肉 requires a 3D model (mesh or B-rep)')
+      case 'GET properties':
+        return detail(422, 'properties require a 3D model (mesh or B-rep)')
+      case 'GET projected_area':
+        return detail(422, 'projected area requires a 3D model (mesh or B-rep)')
+      default:
+        return detail(404, 'Not Found')
+    }
   }
 
   private async uploadBrep(name: string, hash: string, bytes: Uint8Array): Promise<Answer> {

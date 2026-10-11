@@ -55,11 +55,12 @@ WSL も Python も無い Windows の PC で使うためのもの。GitHub の [R
 
 ブラウザだけで動く版。backend が無く、開いたファイルはブラウザのタブの中で読む。どこにも送らない。計画は `docs/designs/web-version.md`。
 
-- 開ける形式は STEP・IGES・STL・OBJ・PLY・OFF・3MF。真値の計測（距離・稜線・面・頂点）と体積・重量、肉厚のヒートマップ・厚肉・投影面積も、手元の版と同じ計算で出す。2D 図面は、計画の段取りに沿って足していく。
+- 開ける形式は STEP・IGES・STL・OBJ・PLY・OFF・3MF。真値の計測（距離・稜線・面・頂点）と体積・重量、肉厚のヒートマップ・厚肉・投影面積も、手元の版と同じ計算で出す。
+- 2D 図面（DXF）は、手元の版と同じ絵で開く（backend の図面の Python をブラウザの中の Python（Pyodide）でそのまま動かす）。初めて図面を開くときに、その一式（20 MB ほど、送るときは gzip で 13 MB）を読み込む。DWG は開けない（DXF に書き出して開く）。日本語の字は、今は四角になる（#90。手元の版も、フォントが無いと同じ）。
 - STEP/IGES は、ブラウザの中の OpenCASCADE（WebAssembly）で開く。初めて STEP/IGES を開くときに、その部品（12 MB ほど）を読み込む。2 回目からはブラウザが覚えている。
 - 計測・注記はブラウザの中（IndexedDB）に、ファイルの中身ごとに保存する。手元の版のサイドカーとは別。
 - ヘルプ（?）の下に「Web 版」と出る。
-- 作り方: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき、静的なファイルとしてどこからでも配れる。手元で開くには `npm run dev:web`。
+- 作り方: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき（図面用の Python 一式を `frontend/web-public/py/` に取ってくる。版と sha256 は `frontend/scripts/web-assets.mjs` で固定）、静的なファイルとしてどこからでも配れる。手元で開くには `npm run dev:web`。
 - master に入ると `.github/workflows/pages.yml` が GitHub Pages に配る。
 - 計算の部分（`frontend/src/local/`）は backend と同じ答えを出すかを `(cd frontend && npm test)` で確かめる。backend の venv が要る（`scripts/engine_golden.py` で backend の答えを出し、突き合わせる）。
 

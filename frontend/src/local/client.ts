@@ -24,6 +24,8 @@ function ask(method: string, path: string, body?: unknown, transfer: Transferabl
       waiting.delete(e.data.id)
       done?.(e.data)
     }
+    // where the Python for drawings is served (web-public/py/, next to the page)
+    worker.postMessage({ init: { pyBase: new URL('py/', document.baseURI).href } })
   }
   const id = next++
   return new Promise((resolve) => {

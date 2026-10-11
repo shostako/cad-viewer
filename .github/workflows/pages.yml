@@ -10,6 +10,10 @@ on:
     branches: [master]
     paths:
       - 'frontend/**'
+      # what the Web version's build takes from the backend (scripts/web-assets.mjs):
+      # the drawings' code and the ezdxf version it is checked against
+      - 'backend/app/drawing.py'
+      - 'backend/requirements.lock'
       - '.github/workflows/pages.yml'
   workflow_dispatch:
 

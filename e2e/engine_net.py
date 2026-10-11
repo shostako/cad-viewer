@@ -13,6 +13,9 @@ request's URL as page.route takes it (the same glob patterns):
     with net.expect_response(lambda r: r.url.endswith("/api/models")):
         ...
 
+A handler may call the page and wait (route.fetch() for the engine's own
+answer, page.evaluate), as page.route's may.
+
 and the API itself, as page.request takes it (a script's own request, not
 the app's: not routed):
 
@@ -32,9 +35,12 @@ import json
 import os
 import re
 import time
+import traceback
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
+import greenlet  # Playwright's own (its sync API runs on greenlets)
 # Playwright's own glob -> regex (not a public API: playwright is pinned to 1.58.0
 # in CLAUDE.md and CI; on an upgrade, check it is still there)
 from playwright._impl._glob import glob_to_regex_pattern
@@ -102,12 +108,14 @@ class Route:
         self._token = token
         self.request = request
         self.decision: dict | None = None
+        # while the handler runs within the page's call: its decision is the call's answer
+        self._inline = False
 
     def _decide(self, d: dict) -> None:
         if self.decision is not None:
             raise RuntimeError("route already handled")
         self.decision = d
-        if not self._net._in_call:
+        if not self._inline:
             self._net.page.evaluate("([t, d]) => { window.__cadEngineNetState.decisions[t] = d }", [self._token, d])
 
     def continue_(self, **_kw) -> None:
@@ -118,10 +126,20 @@ class Route:
     def abort(self, *_a, **_kw) -> None:
         self._decide({"action": "abort"})
 
-    def fulfill(self, status: int = 200, body: str | bytes | None = None, json: object = None,
-                content_type: str | None = None, **_kw) -> None:
+    def fetch(self, **_kw) -> "ApiResponse":
+        """the engine's own answer to this request (page.route's route.fetch), to change and fulfil with"""
+        u = urlsplit(self.request.url)
+        return _local(self._net.page, self.request.method, u.path + (f"?{u.query}" if u.query else ""), self.request.post_data_json)
+
+    def fulfill(self, status: int | None = None, body: str | bytes | None = None, json: object = None,
+                content_type: str | None = None, response: "ApiResponse | None" = None, **_kw) -> None:
+        # as page.route's: what is not given comes from the response fetched (response=)
+        if status is None:
+            status = response.status if response is not None else 200
         if json is not None:
             body, content_type = __import__("json").dumps(json), content_type or "application/json"
+        elif body is None and response is not None:
+            body, content_type = response.text(), content_type or "application/json"
         if isinstance(body, bytes):
             body = body.decode("utf-8", "replace")
         self._decide({"action": "fulfill", "status": status, "body": body or "", "contentType": content_type or "text/plain"})
@@ -145,7 +163,6 @@ class Net:
         self._responses: list = []
         self._ends: list = []  # (event, the requests seen) for expect_event
         self._token = 0
-        self._in_call = False
         if LOCAL:
             page.expose_binding("__cadEngineRouteCall", lambda _src, req: self._route_call(req))
             page.expose_binding("__cadEngineObserveCall", lambda _src, ev: self._observe_call(ev))
@@ -187,11 +204,17 @@ class Net:
                 continue
             self._token += 1
             route = Route(self, self._token, request)
-            self._in_call = True
+            # the handler in a greenlet of its own, as Playwright runs page.route's handlers:
+            # it may call the page (route.fetch, page.evaluate) and so wait. This callback runs
+            # on Playwright's dispatcher, where such a call never returns (it waits for itself).
+            # A handler that waits gives this call back at its first wait: the request is held,
+            # and the handler decides it later
+            g = greenlet.greenlet(lambda h=handler, r=route: _run_handler(h, r))
+            route._inline = True
             try:
-                handler(route)
+                g.switch()
             finally:
-                self._in_call = False
+                route._inline = False
             if route.decision is None:
                 return {"pending": True, "token": route._token}  # held: decided later
             if route.decision["action"] != "continue":
@@ -285,6 +308,18 @@ class Net:
 
 class _Holder:
     value = None
+
+
+def _run_handler(handler, route: Route) -> None:
+    try:
+        handler(route)
+    except Exception:
+        if route._inline:
+            raise  # to the page's call, as before
+        # after a wait: nobody to raise to. Said, and the request cut (else it waits for ever)
+        traceback.print_exc()
+        if route.decision is None:
+            route.abort()
 
 
 # ---- the API, as a script's own request (page.request over HTTP) ----------------------
