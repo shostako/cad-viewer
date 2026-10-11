@@ -2,6 +2,7 @@
 (frontend/src/local/) with them: frontend/tests/*.test.ts run this.
 
     backend/.venv/bin/python scripts/engine_golden.py FILE...
+    backend/.venv/bin/python scripts/engine_golden.py --routes FILE...   (thickness, 厚肉, projected area)
 
 Prints JSON: per file, what POST /api/models says (vertexCount, triangleCount,
 bbox) and GET /properties, or the error. The same code as the routes
@@ -166,13 +167,53 @@ def answer(path: Path) -> dict:
     }
 
 
+def routes(path: Path) -> dict:
+    """the backend's own routes for the file (FastAPI's TestClient): the display
+    mesh, the thickness (ray, ball), 厚肉 (/thick, /thick.bin), the projected area"""
+    import struct
+    import tempfile
+
+    os.environ.setdefault("CAD_VIEWER_DATA_DIR", tempfile.mkdtemp(prefix="cad-golden-"))
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    c = TestClient(app)
+    up = c.post("/api/models", files={"file": (path.name, path.read_bytes(), "x")})
+    if up.status_code != 200:
+        return {"error": up.text}
+    mid = up.json()["id"]
+
+    def unpack(blob: bytes) -> dict:
+        (hl,) = struct.unpack_from("<I", blob, 0)
+        head = json.loads(blob[4 : 4 + hl])
+        out = {"parts": head.get("parts", [])}
+        for name, d in head["buffers"].items():
+            fmt = "f" if d["dtype"] == "float32" else "I"
+            out[name] = list(struct.unpack_from(f"<{d['count']}{fmt}", blob, 4 + hl + d["offset"]))
+        return out
+
+    mesh = unpack(c.get(f"/api/models/{mid}/mesh.bin").content)
+    out = {"mesh": {k: v for k, v in mesh.items() if k == "parts" or k.endswith((":positions", ":normals", ":indices"))}}
+    for method in ("ray", "ball"):
+        out[f"thickness_{method}"] = unpack(c.get(f"/api/models/{mid}/thickness.bin?method={method}").content)
+    out["thick"] = c.get(f"/api/models/{mid}/thick?ratio=1.5").json()
+    out["thick_low"] = c.get(f"/api/models/{mid}/thick?ratio=1.1").json()
+    out["thick_bin"] = unpack(c.get(f"/api/models/{mid}/thick.bin").content)
+    out["projected"] = {ax: c.get(f"/api/models/{mid}/projected_area?axis={ax}").json() for ax in "XYZ"}
+    return out
+
+
 # OCCT's readers write to the C stdout (IGES: "Total number of loaded entities"):
 # that goes to stderr while reading, so stdout carries only the JSON
 sys.stdout.flush()
 saved = os.dup(1)
 os.dup2(2, 1)
 try:
-    answers = {p: answer(Path(p)) for p in sys.argv[1:]}
+    if sys.argv[1:2] == ["--routes"]:
+        answers = {p: routes(Path(p)) for p in sys.argv[2:]}
+    else:
+        answers = {p: answer(Path(p)) for p in sys.argv[1:]}
 finally:
     sys.stdout.flush()
     os.dup2(saved, 1)
