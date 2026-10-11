@@ -44,13 +44,17 @@ const golden: Record<string, any> = ready
           '-c',
           `import json, os, sys, tempfile
 os.environ["CAD_VIEWER_DATA_DIR"] = tempfile.mkdtemp()  # not the real sidecars
-os.environ["CAD_VIEWER_FONT_DIRS"] = ${JSON.stringify(PY)}  # the Web version's Japanese font, for the backend too
+os.environ["CAD_VIEWER_FONT_DIRS"] = ${JSON.stringify(PY)}  # the Web version's Japanese font (drawing.py adds it when needed)
 sys.path.insert(0, ${JSON.stringify(path.join(ROOT, 'backend'))})
+import shutil
 from ezdxf.fonts import fonts
-# the fonts the Web version has, and only those (the PC's would draw a text in its own
-# fallback font: GitHub's runner's is not DejaVu Sans, the Web version's)
+# the fonts the Web version starts with, and only those: DejaVu Sans (the PC's would draw a
+# text in its own fallback font: GitHub's runner's is not DejaVu Sans). The Japanese font is
+# added from CAD_VIEWER_FONT_DIRS for a drawing with Japanese, as the Web version adds it
+start = tempfile.mkdtemp()
+shutil.copy(os.path.join(${JSON.stringify(PY)}, "DejaVuSans.ttf"), start)
 fonts.font_manager.clear()
-fonts.font_manager.build([${JSON.stringify(PY)}], support_dirs=False)
+fonts.font_manager.build([start], support_dirs=False)
 from fastapi.testclient import TestClient
 from app.drawing import DrawingLoadError, load_drawing
 from app.main import app
