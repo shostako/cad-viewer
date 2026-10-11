@@ -1,0 +1,56 @@
+name: pages
+
+# The Web version on GitHub Pages (https://shostako.github.io/cad-viewer/):
+# the frontend built with its engine in the page (npm run build:web, see
+# docs/designs/web-version.md). Static files only: a file opened there is read
+# in the visitor's browser tab and never sent anywhere.
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Build the Web version
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:web
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: frontend/dist-web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

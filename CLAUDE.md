@@ -33,6 +33,8 @@ for g in make_testdata make_step_assembly make_dxf make_iges_loose; do backend/.
 
 # frontend の型チェックとビルド
 (cd frontend && npm run build)
+(cd frontend && npm run build:web)   # Web 版（frontend/dist-web、backend 無し）
+(cd frontend && npm test)            # Web 版の計算を backend と突き合わせる（backend/.venv が要る）
 
 # E2E（Playwright。各スクリプトは独立して動く。終了コード 0 で合格）
 # backend と Vite の両方が要る。exec で立てるので、ジョブの pid がサーバー本体になる
@@ -51,7 +53,7 @@ for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do
 done
 ```
 
-CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す（Windows のインストール版は別の `windows.yml`、下の節）。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
+CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す（Windows のインストール版は別の `windows.yml`、下の節）。Web 版は、`npm test` と、`e2e (web)` のジョブ（Web 版を配り、backend を立てずに `e2e/web_scripts.txt` の本を流す。段が進んだら一覧に足す）。master に入ると `pages.yml` が Web 版を GitHub Pages に配る。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
 
 ### Windows のインストール版
 
@@ -144,7 +146,8 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `picking.ts` / `measure.ts` / `section.ts` / `drawing2d.ts` — ピッキング、計測と注記、断面、2D 図面
 - `materials.ts` / `materialpop.ts` — 材料と用途（射出成形／一般）。材料ごとの一般的な基準（比重・肉厚の下限・勾配と根拠。出典は `docs/material-basis.md`）、直した値の保存、材料の基準のカード。判定の基準の初めは材料に合わせる（PMMA 0.64 mm・0.5°）。1.5 mm・1.0° を前提に書いた E2E は `nav_common.classic_basis` で「手で決める」を明示してから始める
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
-- `engine.ts` — 計算をどこでするか（Web 版の境目、`docs/designs/web-version.md`）。`api.ts` はここを通してだけ backend の道（`/api/...`）を呼ぶ。今は HttpEngine（fetch と、送った量の分かる XMLHttpRequest）だけ。`api.ts` に `fetch` を直に書き足さない
+- `engine.ts` — 計算をどこでするか（Web 版の境目、`docs/designs/web-version.md`）。`api.ts` はここを通してだけ backend の道（`/api/...`）を呼ぶ。HttpEngine（fetch と、送った量の分かる XMLHttpRequest）と、Web 版の LocalEngine（`local/`）。どちらかはビルドで決まる（`VITE_CAD_ENGINE=local`、`npm run build:web`）。`api.ts` に `fetch` を直に書き足さない
+- `local/` — Web 版の計算（Worker の中の backend）。`backend.ts` が backend と同じ道・状態コード・本文で答える。まだ無い道は 501 と「Web 版ではまだ使えない」。backend の Python を写したもの（`meshload.ts`＝loaders、`smooth.ts`＝trimesh の smooth_shade、`meshprops.ts`＝properties のメッシュの分）なので、**backend の計算を変えたら、ここも同じに変える**。`frontend/tests/*.test.ts`（`npm test`）が、同じファイルを `scripts/engine_golden.py`（backend の手続き）と突き合わせる。Node が TS をそのまま走らせるので、`local/` の中の import には `.ts` を付ける
 
 ## 既知の罠（変更時に壊しやすい）
 

@@ -11,6 +11,7 @@
  * button. Placed by the caller (main.ts places it above the status card).
  */
 import { version } from '../package.json'
+import { isLocal } from './engine'
 
 /** a key or a mouse action; an array is keys pressed together (Shift + 矢印) */
 type Key = string | string[]
@@ -116,7 +117,8 @@ export class KeyHelp {
     this.body.id = 'help-keys'
     const foot = document.createElement('div')
     foot.id = 'help-foot'
-    foot.textContent = `cad-viewer ${version}`
+    // the Web version says so: its calculations are in the page (and some are not there yet)
+    foot.textContent = isLocal ? `cad-viewer ${version}（Web 版：計算はこのページの中）` : `cad-viewer ${version}`
     card.setAttribute('role', 'dialog')
     card.setAttribute('aria-labelledby', 'help-title')
     card.replaceChildren(head, this.body, foot)

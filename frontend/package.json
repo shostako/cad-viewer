@@ -5,8 +5,12 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite --mode web",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build:web": "tsc && vite build --mode web",
+    "preview": "vite preview",
+    "preview:web": "vite preview --mode web",
+    "test": "node --test tests/*.test.ts"
   },
   "devDependencies": {
     "@types/three": "^0.185.0",

@@ -65,6 +65,85 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm run build:web
+
+      # the Web version's engine (frontend/src/local/) against the backend's
+      # answers for the same files (scripts/engine_golden.py, backend/.venv)
+      - name: Web engine tests
+        working-directory: frontend
+        run: npm test
+
+  # The Web version (npm run build:web: the engine in the page, no backend):
+  # the E2E scripts listed in e2e/web_scripts.txt, those whose features the
+  # Web version has so far (docs/designs/web-version.md). No backend runs here.
+  e2e-web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    name: e2e (web)
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # the test-data generators need OCP; the scripts, playwright
+      - name: Python
+        run: |
+          python -m venv backend/.venv
+          backend/.venv/bin/pip install -q -r backend/requirements.lock
+          backend/.venv/bin/pip install -q playwright==1.58.0
+          backend/.venv/bin/python -m playwright install --with-deps chromium
+
+      - name: Test data
+        run: |
+          set -e
+          for g in make_testdata make_step_assembly make_dxf make_iges_loose; do
+            backend/.venv/bin/python "testdata/$g.py"
+          done
+
+      - name: Build the Web version
+        working-directory: frontend
+        run: |
+          npm ci
+          npm run build:web
+
+      - name: E2E (web)
+        env:
+          E2E_SCRIPT_TIMEOUT: 600
+          PYTHONUNBUFFERED: '1'
+        run: |
+          (cd frontend && nohup npx vite preview --mode web --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
+          for _ in $(seq 1 60); do curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break; sleep 1; done
+          mapfile -t scripts < <(grep -v '^\s*\(#\|$\)' e2e/web_scripts.txt)
+          passed=0
+          for t in "${scripts[@]}"; do
+            echo "::group::$t"
+            if timeout "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "e2e/$t"; then
+              passed=$((passed + 1))
+            else
+              echo "::error title=E2E (web) failed::$t"
+            fi
+            echo "::endgroup::"
+          done
+          echo "E2E (web): ${passed} / ${#scripts[@]} passed"
+          [ "${#scripts[@]}" -gt 0 ] && [ "$passed" -eq "${#scripts[@]}" ]
+
+      - name: Upload screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-web-artifacts
+          path: |
+            /tmp/cad_viewer_*.png
+            /tmp/vite.log
+          if-no-files-found: ignore
 
   e2e:
     runs-on: ubuntu-24.04

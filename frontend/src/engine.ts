@@ -1,7 +1,7 @@
 /**
  * Where the app's calculations are done (docs/designs/web-version.md): the
  * backend over HTTP (a checkout, the installed app), or, in the Web version, a
- * Worker in this page (LocalEngine, to come). api.ts is the only caller.
+ * Worker in this page (local/). api.ts is the only caller.
  *
  * The Engine answers the backend's own requests (the same paths, methods,
  * statuses and bodies, as a Response), so api.ts reads every answer, and every
@@ -54,5 +54,15 @@ export const httpEngine: Engine = {
 /** no answer at all (the backend is not there, the request was cut) */
 export class EngineUnreachable extends Error {}
 
-/** the engine this build uses: VITE_CAD_ENGINE=local is the Web version's (not yet) */
-export const engine: Engine = httpEngine
+/** the Web version's (local/client.ts), loaded on its first use; not in the checkout's build at all */
+function lazyLocal(): Engine {
+  const load = () => import('./local/client.ts').then((m) => m.localEngine)
+  return {
+    fetch: async (path, init) => (await load()).fetch(path, init),
+    upload: async (file, onSent) => (await load()).upload(file, onSent),
+  }
+}
+
+/** the engine this build uses: VITE_CAD_ENGINE=local (npm run build:web) is the Web version's */
+export const isLocal = import.meta.env.VITE_CAD_ENGINE === 'local'
+export const engine: Engine = isLocal ? lazyLocal() : httpEngine
