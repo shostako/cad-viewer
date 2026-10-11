@@ -1430,13 +1430,15 @@ thicknessFolder
   .name('方式')
   .onChange(() => {
     showDeviationRows()
+    showNominalRow()
     void updateThickness()
     scheduleChecks()
   })
 // 一般部との比's bands (shown with that 方式): % off the general wall, Moldflow's own at first
+// (small 1..199, large 2..200: there is always room for the small one under the large one)
 const deviationCtls = (['small', 'large'] as const).map((k) =>
   thicknessFolder
-    .add(deviationState, k, 1, 200, 1)
+    .add(deviationState, k, k === 'small' ? 1 : 2, k === 'small' ? 199 : 200, 1)
     .name(k === 'small' ? 'ずれ 小 (%)' : 'ずれ 大 (%)')
     .onChange(() => {
       // the small band inside the large one
@@ -1486,7 +1488,11 @@ const thickNominalCtl = thicknessFolder
     scheduleChecks()
     if (thicknessState.enabled && (thicknessState.method === 'face' || thicknessState.method === 'ratio')) void updateThickness() // its 厚肉 band, the ratio's wall
   })
-thickNominalCtl.domElement.title = '厚肉の倍率の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
+thickNominalCtl.domElement.title = '厚肉の倍率と「一般部との比」の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
+/** the general wall's row: 射出成形's (厚肉), and 一般部との比's in any 用途 (its colours come from it) */
+function showNominalRow(): void {
+  thickNominalCtl.show(materialStore.use === 'molding' || thicknessState.method === 'ratio')
+}
 
 // ---- draft angle (抜き勾配)
 function updateDraft(): void {
@@ -2355,7 +2361,7 @@ function applyUseVisibility(): void {
   pressureCtl.show(molding)
   // 厚肉 is the moulding's (sinks, voids): its rows go with 問題の一覧
   thickRatioCtl.show(molding)
-  thickNominalCtl.show(molding)
+  showNominalRow()
 }
 
 // ---- projected area along the mold-opening direction (for the clamping force)

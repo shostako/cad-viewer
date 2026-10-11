@@ -12,6 +12,8 @@ The specification, written out here (not read from the code):
   this 方式 only); the general wall each part's own, or the one given.
 - the legend says the bands and the general wall; under the cursor the
   thickness and its % off the general wall.
+- the small band always under the large one (ずれ 大 at its least 2, the small 1);
+  the general wall's row with this 方式 in any 用途 (一般 too: the colours come from it).
 
 Oracles (none from the code under test): ribbed_plate.stl's make
 (testdata/make_testdata.py): the plate 2 thick (the general wall), the ribs
@@ -126,6 +128,31 @@ with nav_session() as n:
     assert green(colour_at(RIB_SIDE)) and purple(colour_at(PLATE_TOP)), (colour_at(RIB_SIDE), colour_at(PLATE_TOP))
     set_number("一般部 (mm・0 で自動)", 0)
     print("3 the general wall given")
+
+    # ---- the bands stay apart: ずれ 大 at its least, the small one still under it
+    set_number("ずれ 大 (%)", 1)
+    small = float(ctl("ずれ 小 (%)").locator("input").last.input_value())
+    large = float(ctl("ずれ 大 (%)").locator("input").last.input_value())
+    assert 1 <= small < large, ("the green band inside the orange one", small, large)
+    set_number("ずれ 小 (%)", 20)
+    set_number("ずれ 大 (%)", 50)
+    page.wait_for_function("document.querySelector('.deviation-band[data-band=\"2\"]')?.textContent === '±20 %（一般部）'", timeout=30000)
+    print("3b the bands apart:", small, large)
+
+    # ---- 一般: the general wall's row stays with this 方式 (the colours come from it), not with others
+    def choose(name, label):
+        ctl(name).locator("select").select_option(label=label)
+        page.evaluate("document.activeElement && document.activeElement.blur()")
+
+    choose("用途", "一般")
+    assert shown("一般部 (mm・0 で自動)"), "一般 with 一般部との比: the general wall's row"
+    choose("方式", "レイ法")
+    assert not shown("一般部 (mm・0 で自動)"), "一般 with レイ法: no general wall"
+    choose("方式", "一般部との比（面ごと）")
+    assert shown("一般部 (mm・0 で自動)")
+    choose("用途", "射出成形")
+    page.wait_for_function("document.querySelector('.thick-title')?.textContent.startsWith('肉厚（一般部との比')", timeout=30000)
+    print("3c 一般: the general wall's row with this 方式")
 
     # ---- an assembly: each part against its own wall (the plate 15, the block's walls, the pins)
     n.load(str(TESTDATA / "mini_mold.step"), props="live")
