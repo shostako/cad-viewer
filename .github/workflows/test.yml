@@ -68,7 +68,8 @@ jobs:
           npm run build:web
 
       # the Web version's engine (frontend/src/local/) against the backend's
-      # answers for the same files (scripts/engine_golden.py, backend/.venv)
+      # answers for the same files (scripts/engine_golden.py, backend/.venv);
+      # its drawings with the Python build:web fetched (web-public/py/)
       - name: Web engine tests
         working-directory: frontend
         run: npm test
@@ -110,9 +111,13 @@ jobs:
             backend/.venv/bin/python "testdata/$g.py"
           done
 
+      # and the Web version's Python for its 2D drawings (web-public/py/: Pyodide,
+      # ezdxf, the font), which Vite serves from there
       - name: Frontend dependencies
         working-directory: frontend
-        run: npm ci
+        run: |
+          npm ci
+          node scripts/web-assets.mjs
 
       - name: E2E (web)
         env:

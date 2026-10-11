@@ -55,3 +55,27 @@ test_spots.py
 test_thick_deviation.py
 test_thick_faces.py
 test_thick_spots.py
+
+# W6: 2D drawings (DXF in Pyodide); a route's handler may wait (route.fetch)
+test_check_list.py
+test_display_styles_more.py
+test_draft_thickness.py
+test_drawing2d.py
+test_drawing2d_dims.py
+test_half_window.py
+test_hide_panels.py
+test_hover_preselect.py
+test_measure_modes.py
+test_measure_undo.py
+test_nav_fit.py
+test_ortho.py
+test_png_export.py
+test_projection.py
+test_properties.py
+test_report.py
+test_status_line.py
+test_theme.py
+test_thickness_scale.py
+test_toolbar.py
+test_triad.py
+test_view_modes.py

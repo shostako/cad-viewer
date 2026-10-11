@@ -14,7 +14,10 @@ export default defineConfig(({ mode }) => ({
   worker: { format: 'es' },
   server: { proxy: mode === 'web' ? {} : backendProxy },
   preview: { proxy: mode === 'web' ? {} : backendProxy },
-  // libcascade finds its glue and wasm next to its own module (import.meta.url):
-  // not pre-bundled into Vite's cache, where they are not
-  optimizeDeps: mode === 'web' ? { exclude: ['libcascade'] } : undefined,
+  // libcascade finds its glue and wasm next to its own module (import.meta.url),
+  // pyodide its node: imports only in Node: neither pre-bundled into Vite's cache
+  optimizeDeps: mode === 'web' ? { exclude: ['libcascade', 'pyodide'] } : undefined,
+  // the Web version's Python for drawings (web-public/py/, scripts/web-assets.mjs);
+  // the checkout's version has nothing to copy
+  publicDir: mode === 'web' ? 'web-public' : false,
 }))

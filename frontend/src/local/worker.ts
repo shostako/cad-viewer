@@ -8,6 +8,7 @@ import wasmUrl from 'libcascade/single/wasm?url'
 
 import { version } from '../../package.json'
 import { LocalBackend, type Answer } from './backend.ts'
+import { pyodideRenderer, type DrawingRenderer } from './drawing.ts'
 import { idbStore } from './idb.ts'
 
 /** OpenCASCADE, loaded on the first STEP/IGES (its 43 MB wasm is fetched then, and cached by the browser) */
@@ -16,9 +17,31 @@ const occt = async () => {
   return createInstance({ locateFile: (file: string) => (file.endsWith('.wasm') ? wasmUrl : file) })
 }
 
-const backend = new LocalBackend(idbStore(), version, occt)
+/** where web-public/py's files are served: the page says it first (init) */
+let pyBase: string | null = null
+let renderer: DrawingRenderer | null = null
+const drawing: DrawingRenderer = (bytes, name) => {
+  if (!pyBase) throw new Error('the page has not said where py/ is')
+  const base = pyBase
+  renderer ??= pyodideRenderer(
+    base,
+    async (opts) => (await import('pyodide')).loadPyodide(opts),
+    async (file) => {
+      const res = await fetch(base + file)
+      if (!res.ok) throw new Error(`${file}: ${res.status}`)
+      return new Uint8Array(await res.arrayBuffer())
+    },
+  )
+  return renderer(bytes, name)
+}
 
-self.onmessage = async (e: MessageEvent<{ id: number; method: string; path: string; body?: unknown }>) => {
+const backend = new LocalBackend(idbStore(), version, occt, drawing)
+
+self.onmessage = async (e: MessageEvent<{ id: number; method: string; path: string; body?: unknown; init?: { pyBase: string } }>) => {
+  if (e.data.init) {
+    pyBase = e.data.init.pyBase
+    return
+  }
   const { id, method, path, body } = e.data
   let answer: Answer
   try {
