@@ -5,4 +5,4 @@ raises it together with backend/pyproject.toml and frontend/package.json /
 package-lock.json; tests/test_version.py checks that they agree.
 """
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
