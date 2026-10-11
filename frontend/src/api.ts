@@ -1,3 +1,4 @@
+import { engine, EngineUnreachable } from './engine'
 import { parseMeshPack, type MeshPack } from './meshpack'
 
 export interface ModelMeta {
@@ -19,7 +20,7 @@ export interface ModelMeta {
 }
 
 export async function fetchDrawingSvg(modelId: string): Promise<string> {
-  const res = await fetch(`/api/models/${modelId}/drawing.svg`)
+  const res = await engine.fetch(`/api/models/${modelId}/drawing.svg`)
   if (!res.ok) throw new Error(`svg fetch failed: ${res.status}`)
   return res.text()
 }
@@ -34,42 +35,30 @@ export class UploadError extends Error {
 }
 
 /**
- * Send a file; the backend converts it before it answers. XMLHttpRequest, not
- * fetch: only it tells how much of the file has gone up (onSent, 0..1; 1 once
- * all of it has, when the conversion starts).
+ * Send a file; the engine converts it before it answers. onSent: how much of
+ * the file has gone up (0..1; 1 once all of it has, when the conversion starts).
  */
-export function uploadModel(file: File, onSent?: (fraction: number) => void): Promise<ModelMeta> {
-  return new Promise((resolve, reject) => {
-    const xhr = new XMLHttpRequest()
-    xhr.open('POST', '/api/models')
-    if (onSent) {
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable && e.total > 0) onSent(e.loaded / e.total)
-      })
-      xhr.upload.addEventListener('load', () => onSent(1))
-    }
-    xhr.addEventListener('load', () => {
-      let body: unknown = null
-      try {
-        body = JSON.parse(xhr.responseText)
-      } catch {
-        // not JSON: the status line says what there is to say
-      }
-      if (xhr.status >= 200 && xhr.status < 300 && body) return resolve(body as ModelMeta)
-      const detail = (body as { detail?: unknown } | null)?.detail
-      const message = typeof detail === 'string' ? detail : xhr.statusText || `upload failed: ${xhr.status}`
-      reject(new UploadError(message, xhr.status))
-    })
-    xhr.addEventListener('error', () => reject(new UploadError('no answer from the backend (network error)', 0)))
-    xhr.addEventListener('abort', () => reject(new UploadError('the upload was aborted', 0)))
-    const form = new FormData()
-    form.append('file', file)
-    xhr.send(form)
-  })
+export async function uploadModel(file: File, onSent?: (fraction: number) => void): Promise<ModelMeta> {
+  let answer
+  try {
+    answer = await engine.upload(file, onSent)
+  } catch (e) {
+    if (e instanceof EngineUnreachable) throw new UploadError(e.message, 0)
+    throw e
+  }
+  let body: unknown = null
+  try {
+    body = JSON.parse(answer.body)
+  } catch {
+    // not JSON: the status line says what there is to say
+  }
+  if (answer.status >= 200 && answer.status < 300 && body) return body as ModelMeta
+  const detail = (body as { detail?: unknown } | null)?.detail
+  throw new UploadError(typeof detail === 'string' ? detail : answer.statusText || `upload failed: ${answer.status}`, answer.status)
 }
 
 export async function fetchMesh(modelId: string): Promise<MeshPack> {
-  const res = await fetch(`/api/models/${modelId}/mesh.bin`)
+  const res = await engine.fetch(`/api/models/${modelId}/mesh.bin`)
   if (!res.ok) throw new Error(`mesh fetch failed: ${res.status}`)
   return parseMeshPack(await res.arrayBuffer())
 }
@@ -158,7 +147,7 @@ export interface FaceInfoResult {
 }
 
 async function measureRequest<T>(modelId: string, body: unknown): Promise<T> {
-  const res = await fetch(`/api/models/${modelId}/measure`, {
+  const res = await engine.fetch(`/api/models/${modelId}/measure`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -222,7 +211,7 @@ export async function fetchThickness(
   method: 'ray' | 'ball' | 'face' = 'ray',
 ): Promise<Map<number, Float32Array>> {
   const url = method === 'face' ? `/api/models/${modelId}/thick.bin` : `/api/models/${modelId}/thickness.bin?method=${method}`
-  const res = await fetch(url)
+  const res = await engine.fetch(url)
   if (!res.ok) throw new Error(`thickness fetch failed: ${res.status}`)
   const pack = parseMeshPack(await res.arrayBuffer())
   const out = new Map<number, Float32Array>()
@@ -240,7 +229,7 @@ export async function fetchThickness(
  * opening as if nothing had been saved.
  */
 export async function getSidecar(modelId: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`/api/models/${modelId}/sidecar`)
+  const res = await engine.fetch(`/api/models/${modelId}/sidecar`)
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(detail.detail ?? `sidecar fetch failed: ${res.status}`)
@@ -261,7 +250,7 @@ export async function putSidecar(modelId: string, body: unknown): Promise<void> 
     _stallNextSidecarMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  await fetch(`/api/models/${modelId}/sidecar`, {
+  await engine.fetch(`/api/models/${modelId}/sidecar`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -316,7 +305,7 @@ export interface ThickPart {
 export async function fetchThick(modelId: string, ratio: number, nominals: ReadonlyMap<number, number>): Promise<ThickPart[]> {
   const nominal = [...nominals].map(([id, mm]) => `${id}:${mm}`).join(',')
   const q = new URLSearchParams({ ratio: String(ratio), nominal })
-  const res = await fetch(`/api/models/${modelId}/thick?${q}`)
+  const res = await engine.fetch(`/api/models/${modelId}/thick?${q}`)
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(detail.detail ?? `thick failed: ${res.status}`)
@@ -377,7 +366,7 @@ export async function fetchProjectedArea(modelId: string, axis: Axis, parts: rea
     await new Promise((r) => setTimeout(r, ms))
   }
   const q = new URLSearchParams({ axis, parts: parts.join(','), client: PAGE_ID })
-  const res = await fetch(`/api/models/${modelId}/projected_area?${q}`)
+  const res = await engine.fetch(`/api/models/${modelId}/projected_area?${q}`)
   if (res.status === 409) throw new ProjectionSuperseded('superseded')
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
@@ -398,7 +387,7 @@ export async function fetchProperties(modelId: string): Promise<ModelProperties>
     _stallNextPropertiesMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  const res = await fetch(`/api/models/${modelId}/properties`)
+  const res = await engine.fetch(`/api/models/${modelId}/properties`)
   if (!res.ok) {
     const detail = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(detail.detail ?? `properties failed: ${res.status}`)

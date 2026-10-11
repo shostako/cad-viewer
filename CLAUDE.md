@@ -144,6 +144,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `picking.ts` / `measure.ts` / `section.ts` / `drawing2d.ts` — ピッキング、計測と注記、断面、2D 図面
 - `materials.ts` / `materialpop.ts` — 材料と用途（射出成形／一般）。材料ごとの一般的な基準（比重・肉厚の下限・勾配と根拠。出典は `docs/material-basis.md`）、直した値の保存、材料の基準のカード。判定の基準の初めは材料に合わせる（PMMA 0.64 mm・0.5°）。1.5 mm・1.0° を前提に書いた E2E は `nav_common.classic_basis` で「手で決める」を明示してから始める
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
+- `engine.ts` — 計算をどこでするか（Web 版の境目、`docs/designs/web-version.md`）。`api.ts` はここを通してだけ backend の道（`/api/...`）を呼ぶ。今は HttpEngine（fetch と、送った量の分かる XMLHttpRequest）だけ。`api.ts` に `fetch` を直に書き足さない
 
 ## 既知の罠（変更時に壊しやすい）
 
