@@ -82,3 +82,6 @@ test_view_modes.py
 
 # W7: the last one; and e2e/test_web_offline.py, run on the build (its own step)
 test_user_frame.py
+
+# after W7: 版の比較 (docs/designs/compare.md; computed in the page in both versions)
+test_compare.py

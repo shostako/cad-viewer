@@ -11,6 +11,9 @@ written in inches (the 計測の単位's file unit; see make_inch_block).
 
 Creates named_parts.step: an instance's own name and colour (see make_named_parts).
 
+Creates revision_a.step and revision_b.step: two versions of one part, for 版の
+比較 (see make_revisions).
+
 Usage: backend/.venv/bin/python testdata/make_step_assembly.py
 """
 import math
@@ -92,6 +95,7 @@ def main() -> None:
     make_curved_part()
     make_inch_block()
     make_named_parts()
+    make_revisions()
 
 
 def make_named_parts() -> None:
@@ -209,6 +213,40 @@ def make_inch_block() -> None:
         assert writer.Write(str(OUT / "inch_block.step")) == IFSelect_RetDone
     finally:
         Interface_Static.SetCVal_s("write.step.unit", old)
+
+
+
+def make_revisions() -> None:
+    """Two versions of a plate of 60 x 40 x 3 mm (z 0 to 3), one solid each.
+
+    revision_a.step (the first):  a boss of R4 at (15, 20) to z 11; a rib of
+                                  1.5 x 24 (x 44.25..45.75, y 8..32) to z 9
+    revision_b.step (the next):   the boss to z 13 (2 higher); a new boss of R3
+                                  at (30, 30) to z 8; no rib
+    """
+    from OCP.STEPControl import STEPControl_Writer
+
+    def plate_with(*shapes):
+        solid = BRepPrimAPI_MakeBox(60, 40, 3).Shape()
+        for sh in shapes:
+            fuse = BRepAlgoAPI_Fuse(solid, sh)
+            fuse.Build()
+            assert fuse.IsDone()
+            solid = fuse.Shape()
+        return solid
+
+    def boss(x, y, r, top):
+        return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, y, 3), gp_Dir(0, 0, 1)), r, top - 3).Shape()
+
+    rib = BRepPrimAPI_MakeBox(gp_Pnt(44.25, 8, 3), gp_Pnt(45.75, 32, 9)).Shape()
+    for name, shape in (
+        ("revision_a.step", plate_with(boss(15, 20, 4, 11), rib)),
+        ("revision_b.step", plate_with(boss(15, 20, 4, 13), boss(30, 30, 3, 8))),
+    ):
+        writer = STEPControl_Writer()
+        writer.Transfer(shape, STEPControl_AsIs)
+        assert writer.Write(str(OUT / name)) == IFSelect_RetDone
+        print(f"wrote {OUT / name}")
 
 
 if __name__ == "__main__":

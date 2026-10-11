@@ -221,6 +221,10 @@ export class Viewer {
    */
   readonly cues = new THREE.Group()
   private modelGroup = new THREE.Group()
+  /** 版の比較's meshes (compareview.ts), shown in place of the model's (setComparison) */
+  private compareGroup = new THREE.Group()
+  /** the section's planes now (setClippingPlanes), for the comparison's meshes put on later */
+  private clipping: THREE.Plane[] | null = null
   private gridHelper: THREE.GridHelper | null = null
   /** size and placement of the current grid, so an export can build a recoloured copy */
   private gridSpec: { size: number; x: number; y: number; z: number } | null = null
@@ -370,6 +374,7 @@ export class Viewer {
     this.scene.add(fill)
 
     this.scene.add(this.modelGroup)
+    this.scene.add(this.compareGroup)
     this.scene.add(this.overlay)
     this.scene.add(this.cues)
 
@@ -543,6 +548,7 @@ export class Viewer {
    * larger than the part, and framing them would shrink the part to a speck.
    */
   modelBBox(): THREE.Box3 {
+    if (this.comparing) return new THREE.Box3().setFromObject(this.compareGroup)
     const box = new THREE.Box3()
     for (const [id, mesh] of this.partMeshes) {
       if (mesh.geometry.index?.count && this.partGroups.get(id)?.visible !== false) {
@@ -752,11 +758,35 @@ export class Viewer {
   setClippingPlanes(planes: THREE.Plane[]): void {
     this.wake()
     const list = planes.length ? planes : null
-    this.modelGroup.traverse((o) => {
-      if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
-        ;(o.material as THREE.Material).clippingPlanes = list
-      }
-    })
+    this.clipping = list
+    for (const group of [this.modelGroup, this.compareGroup]) {
+      group.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
+          ;(o.material as THREE.Material).clippingPlanes = list
+        }
+      })
+    }
+  }
+
+  /** 版の比較's meshes are on screen in place of the model's */
+  get comparing(): boolean {
+    return this.compareGroup.children.length > 0
+  }
+
+  /**
+   * Show the comparison's meshes in place of the model's faces and lines, or
+   * (null or none) the model again. The meshes are the caller's (compareview.ts
+   * disposes them); the section clips them as it clips the model.
+   */
+  setComparison(meshes: THREE.Mesh[] | null): void {
+    this.wake()
+    this.compareGroup.clear()
+    for (const m of meshes ?? []) {
+      ;(m.material as THREE.Material).clippingPlanes = this.clipping
+      this.compareGroup.add(m)
+    }
+    this.modelGroup.visible = !this.comparing
+    this.updateDepthSphere()
   }
 
   /** Create a screen-space label attached to a 3D point. */
@@ -797,6 +827,8 @@ export class Viewer {
   /** depthSphere for the model just built (once per model: hiding parts must not move it) */
   private updateDepthSphere(): void {
     const box = new THREE.Box3().setFromObject(this.modelGroup)
+    // 版の比較's other version may reach further than the model
+    if (this.compareGroup.children.length) box.union(new THREE.Box3().setFromObject(this.compareGroup))
     const g = this.gridSpec
     if (g) {
       box.expandByPoint(new THREE.Vector3(g.x - g.size / 2, g.y - g.size / 2, g.z))
@@ -1050,6 +1082,7 @@ export class Viewer {
   clearModel(): void {
     this.wake()
     this._modelGen++
+    this.setComparison(null) // the comparison was the old model's (its owner disposes the meshes)
     for (const child of [...this.modelGroup.children]) {
       this.modelGroup.remove(child)
       child.traverse((o) => {
