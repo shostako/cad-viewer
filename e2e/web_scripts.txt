@@ -1,0 +1,8 @@
+# The E2E scripts the Web version must pass (CI's "e2e (web)" job, no backend):
+# those whose features it has so far (docs/designs/web-version.md). Add a
+# script here when its stage lands; every script in e2e/ should be here by W7.
+# One file name per line.
+
+# W2: mesh formats
+test_stl_view.py
+test_mesh_annotation.py
