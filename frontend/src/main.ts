@@ -42,6 +42,7 @@ import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { CompareView, renderCompareLegend, runCompare, signed, startTolerance, type CompareRole, type CompareShow } from './compareview'
 import type { Surface } from './compare'
+import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
 import { SpotNav } from './spotnav'
 import {
   METALS,
@@ -131,6 +132,7 @@ app.innerHTML = `
   <div id="triad" class="hidden"></div>
   <div id="hud">
     <div id="compare-legend" class="hidden"></div>
+    <div id="undercut-legend" class="hidden"></div>
     <div id="draft-legend" class="hidden"></div>
     <div id="thickness-legend" class="hidden"></div>
     <div id="hud-line">
@@ -155,6 +157,7 @@ const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
 const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const thicknessLegend = document.querySelector<HTMLDivElement>('#thickness-legend')!
 const compareLegend = document.querySelector<HTMLDivElement>('#compare-legend')!
+const undercutLegend = document.querySelector<HTMLDivElement>('#undercut-legend')!
 const compareInput = document.querySelector<HTMLInputElement>('#compare-input')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
@@ -208,6 +211,7 @@ const partTree = new PartTree(treePanel, {
     scheduleChecks()
     propsPanel.refresh()
     updateProjection()
+    showUndercut() // the candidates' area is of the parts shown
     probe.refresh() // a part under a still cursor may have gone (its row mark, its value)
   },
   highlight: (ids) => viewer.setHighlight(ids),
@@ -1160,7 +1164,7 @@ function dropThicknessHud(): void {
  * Which feature's colours are on the meshes. Turning one feature off (or
  * changing its parameters while it is off) must not wipe the other's colours.
  */
-type ColorOwner = 'none' | 'thickness' | 'draft' | 'compare'
+type ColorOwner = 'none' | 'thickness' | 'draft' | 'compare' | 'undercut'
 let colorOwner: ColorOwner = 'none'
 function releaseColors(owner: ColorOwner): void {
   if (colorOwner === owner) {
@@ -1427,7 +1431,11 @@ thicknessFolder
   .name('ヒートマップ')
   .listen() // reset programmatically on errors / model switch / 抜き勾配 taking over
   .onChange((on: boolean) => {
-    if (on) stopCompare() // the heatmap is on the open model's faces, which the comparison hides
+    if (on) {
+      // the heatmap is on the open model's faces, which these show something else in place of
+      stopCompare()
+      stopUndercut()
+    }
     // one vertex-colour feature at a time: the heatmap takes over from the draft
     if (on && draftState.enabled) {
       draftState.enabled = false
@@ -1546,7 +1554,11 @@ draftFolder
   .name('色分け')
   .listen() // reset programmatically on model switch / heatmap taking over
   .onChange((on: boolean) => {
-    if (on) stopCompare() // the colouring is on the open model's faces, which the comparison hides
+    if (on) {
+      // the colouring is on the open model's faces, which these show something else in place of
+      stopCompare()
+      stopUndercut()
+    }
     if (on && thicknessState.enabled) {
       // The draft takes over. An in-flight thickness fetch sees enabled=false
       // and is dropped. Clearing first keeps the meshes plain if the box snaps
@@ -1565,6 +1577,7 @@ draftFolder
     updateDraft()
     updateProjection() // the clamping force's projected area follows the direction
     scheduleChecks()
+    if (undercutState.enabled) void updateUndercut()
   })
 const requiredCtl = draftFolder
   .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
@@ -1575,6 +1588,107 @@ const requiredCtl = draftFolder
     updateDraft()
     scheduleChecks()
   })
+
+// ---- アンダーカットの候補 (docs/designs/undercut.md): what neither half of the
+// mold reaches along the pull direction above (undercutview.ts; computed in a
+// Worker, undercut.ts, the same in both versions of the app)
+const undercutState = { enabled: false }
+let undercutView: UndercutView | null = null
+let undercutRun: { cancel(): void } | null = null
+let undercutGen = 0
+let undercutHud = ''
+draftFolder
+  .add(undercutState, 'enabled')
+  .name('アンダーカットの候補')
+  .listen() // reset on a model switch, and when another colouring takes over
+  .onChange((on: boolean) => {
+    if (on) {
+      // one at a time: the draft's colours, the heatmap and the comparison go
+      stopCompare()
+      if (draftState.enabled) {
+        draftState.enabled = false
+        updateDraft()
+      }
+      if (thicknessState.enabled) {
+        thicknessState.enabled = false
+        clearThickness()
+      }
+      void updateUndercut()
+    } else stopUndercut()
+  })
+function setUndercutHud(text: string): void {
+  undercutHud = text
+  hudInfo.textContent = text
+}
+/** compute the candidates for the pull direction now, and show them */
+async function updateUndercut(): Promise<void> {
+  dropUndercutView()
+  if (!undercutState.enabled || !contentShown || is2D) return
+  const gen = ++undercutGen
+  const modelGen = viewer.modelGen
+  // every part with faces (hidden ones too: showing a part needs no new computation)
+  const parts: Surface[] = []
+  const ids: number[] = []
+  for (const [id, mesh] of viewer.getPartMeshes()) {
+    if (!mesh.geometry.index?.count) continue
+    parts.push({ positions: mesh.geometry.getAttribute('position').array, normals: mesh.geometry.getAttribute('normal').array, indices: mesh.geometry.index.array })
+    ids.push(id)
+  }
+  if (!parts.length) return
+  setUndercutHud(`アンダーカットの候補: 型開き方向 ${PULL_DIR_LABELS[draftState.dir]} で調べている...`)
+  const run = runReach(parts, PULL_DIRS[draftState.dir])
+  undercutRun = run
+  try {
+    const reach = await run.promise
+    if (gen !== undercutGen || modelGen !== viewer.modelGen) return
+    undercutRun = null
+    viewer.clearVertexColors()
+    colorOwner = 'undercut'
+    undercutView = new UndercutView(reach, ids)
+    viewer.setStandIn(undercutView.build())
+    showUndercut()
+    probe.refresh()
+  } catch (e) {
+    if (gen !== undercutGen) return
+    undercutRun = null
+    undercutState.enabled = false
+    setUndercutHud(`アンダーカットの候補を調べられなかった — ${e instanceof Error ? e.message : e}`)
+  }
+}
+// the colours are the theme's (theme.ts): made again in the new one
+onTheme(() => {
+  if (!undercutView) return
+  viewer.setStandIn(undercutView.build())
+  showUndercut()
+})
+/** the legend and the line, for the parts shown now */
+function showUndercut(): void {
+  if (!undercutView) return
+  const area = undercutView.area((id) => viewer.isPartVisible(id))
+  renderUndercutLegend(undercutLegend, PULL_DIR_LABELS[draftState.dir], area)
+  undercutLegend.classList.remove('hidden')
+  setUndercutHud(`アンダーカットの候補: ${area > 0 ? `${area.toFixed(1)} mm²` : 'なし'}（型開き方向 ${PULL_DIR_LABELS[draftState.dir]}）`)
+}
+/** the view goes (a new computation comes, or none) */
+function dropUndercutView(): void {
+  undercutGen++
+  undercutRun?.cancel()
+  undercutRun = null
+  if (undercutView) {
+    viewer.setStandIn(null)
+    undercutView.dispose()
+    undercutView = null
+  }
+  releaseColors('undercut')
+  undercutLegend.classList.add('hidden')
+  if (undercutHud && hudInfo.textContent === undercutHud) hudInfo.textContent = modelSummary
+  undercutHud = ''
+}
+/** off: the model as it was */
+function stopUndercut(): void {
+  undercutState.enabled = false
+  dropUndercutView()
+}
 
 // ---- 問題の一覧 (checklist.ts): 薄肉・勾配不足・反対側 in one list, by the
 // conditions of the two folders above; a row goes to its place
@@ -1678,6 +1792,7 @@ function scheduleChecks(): void {
 /** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
 async function colourFor(kind: CheckRow['kind']): Promise<void> {
   stopCompare() // the place is on the open model
+  stopUndercut()
   if (kind === 'thick') return // its sphere says it (viewer.goToSpot): whatever colours are up stay
   if (kind === 'thin') {
     if (!(thicknessState.enabled && colorOwner === 'thickness')) {
@@ -1811,6 +1926,7 @@ function openSurfaces(): Surface[] {
 async function compareWith(file: File): Promise<void> {
   if (!contentShown || is2D) return
   stopCompare()
+  stopUndercut()
   const gen = ++compareGen
   const modelGen = viewer.modelGen
   compareState.name = file.name
@@ -1871,7 +1987,7 @@ function redrawCompare(): void {
   compareView.role = compareState.role
   compareView.show = compareState.show
   compareView.tolerance = compareState.tolerance
-  viewer.setComparison(compareView.build())
+  viewer.setStandIn(compareView.build())
   renderCompareLegend(compareLegend, compareView, compareNames, compareNote)
   compareLegend.classList.remove('hidden')
   const s = compareView.stats()
@@ -1885,7 +2001,7 @@ function stopCompare(): void {
   compareRun?.cancel()
   compareRun = null
   if (compareView) {
-    viewer.setComparison(null)
+    viewer.setStandIn(null)
     compareView.dispose()
     compareView = null
   }
@@ -1973,12 +2089,18 @@ probe.onStop(() => {
   partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
-  if (compareView && viewer.comparing && !is2D) {
+  if (compareView && viewer.standingIn && !is2D) {
     // 版の比較: the change where the cursor is (the open model is hidden)
     preselect.hide()
     infoCache.rest(null)
     partTree.markFrom3D(null)
     return compareView.valueAt(toNdc(clientX, clientY), viewer.camera)
+  }
+  if (undercutView && viewer.standingIn && !is2D && state.mode === 'なし') {
+    // アンダーカットの候補: the class where the cursor is
+    preselect.hide()
+    infoCache.rest(null)
+    return undercutView.valueAt(toNdc(clientX, clientY), viewer.camera)
   }
   if ((state.mode !== 'なし' || frameTool.active) && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
@@ -3341,6 +3463,7 @@ async function loadFile(file: File): Promise<void> {
       currentModelId = meta.id
       measureTool.clearAll()
       stopCompare() // it was the old model's
+      stopUndercut()
       thicknessCache.clear()
       thickCache.clear()
       thicknessInFlight.clear()
