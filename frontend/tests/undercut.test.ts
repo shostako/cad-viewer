@@ -122,10 +122,11 @@ test('the area counts the parts shown only', () => {
   const one = join(block, slab)
   const reach = reachOf([one, lifted(one, 40)], [0, 0, 1])
   const view = new UndercutView(reach, [7, 9])
-  const each = undercutArea(reach.parts[0])
-  assert.ok(each > 100)
-  assert.ok(Math.abs(view.area(() => true) - 2 * each) < 1e-6)
-  assert.ok(Math.abs(view.area((id) => id !== 9) - each) < 1e-6)
+  // (the two need not be equal to the last point: one on a shadow's edge may fall either way at another place)
+  const [a7, a9] = reach.parts.map(undercutArea)
+  assert.ok(a7 > 100 && a9 > 100)
+  assert.ok(Math.abs(view.area(() => true) - (a7 + a9)) < 1e-9)
+  assert.ok(Math.abs(view.area((id) => id !== 9) - a7) < 1e-9)
   assert.equal(view.area(() => false), 0)
 })
 
@@ -137,7 +138,7 @@ test('under the cursor: the class of the corner nearest the point (a class does 
     indices: Uint32Array.from([0, 1, 2]),
     reach: Uint8Array.from([UP, 0, DOWN]),
   }
-  const view = new UndercutView({ parts: [part], edge: 1 }, [1])
+  const view = new UndercutView({ parts: [part], edges: [1] }, [1])
   view.build()
   const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0.1, 100)
   const at = (x: number, y: number) => {
@@ -150,4 +151,17 @@ test('under the cursor: the class of the corner nearest the point (a class does 
   assert.equal(at(0.5, 8.5), reachText(DOWN), 'by the third')
   assert.equal(at(1, 1), reachText(UP), 'by the first')
   assert.equal(at(20, 20), null, 'off it')
+})
+
+test('a small part beside a large one, far off: its own resolution and its own offset (Codex on #102)', () => {
+  // the slab over the block at 1/100 (a gap of 0.05 mm under the slab), and a 1 m box 10 m away
+  const scale = (s: Surface, k: number): Surface => ({ ...s, positions: s.positions.map((v) => v * k) })
+  const small = scale(join(block, slab), 0.01)
+  const big = box([10000, 0, 0], [11000, 1000, 1000])
+  const { parts, edges } = reachOf([small, big], [0, 0, 1])
+  assert.ok(edges[0] < edges[1] / 1000, `${edges}`)
+  // the shadows as at full size, scaled by 1/100 squared
+  const area = undercutArea(parts[0])
+  assert.ok(Math.abs(area - 0.012) < 0.0012, `area ${area}`)
+  assert.equal(undercutArea(parts[1]), 0)
 })

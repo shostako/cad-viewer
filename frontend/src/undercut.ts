@@ -14,7 +14,7 @@
  */
 import { DoubleSide, Ray, Vector3 } from 'three'
 
-import { SAMPLE_BUDGET, bvhOfParts, chooseEdge, diagonalOf, subdivide, type Surface } from './compare.ts'
+import { SAMPLE_BUDGET, bvhOfParts, diagonalOf, partEdges, subdivide, type Surface } from './compare.ts'
 
 /** a vertex the upper half (along +d) reaches */
 export const UP = 1
@@ -31,20 +31,22 @@ export interface ReachPart {
 
 export interface Reach {
   parts: ReachPart[]
-  /** the edge length the triangles were cut to */
-  edge: number
+  /** the edge length each part's triangles were cut to */
+  edges: number[]
 }
 
 /** each part's finer mesh with what each vertex is reached from along dir (a unit vector) */
 export function reachOf(parts: Surface[], dir: readonly [number, number, number], budget = SAMPLE_BUDGET): Reach {
-  const edge = chooseEdge(parts, parts, budget)
-  const eps = Math.max(diagonalOf(parts) * 1e-5, 1e-9)
+  // each part at its own resolution, and off its surface by its own size's
+  // 1e-5: a large part beside a small one sets neither (Codex on #102)
+  const edges = partEdges(parts, budget)
   const d = new Vector3(...dir).normalize()
   const back = d.clone().negate()
   const ray = new Ray()
   const out: ReachPart[] = []
-  for (const part of parts) {
-    const f = subdivide([part], edge)
+  parts.forEach((part, k) => {
+    const eps = Math.max(diagonalOf([part]) * 1e-5, 1e-9)
+    const f = subdivide([part], edges[k])
     const n = f.positions.length / 3
     const reach = new Uint8Array(n)
     if (part.indices.length) {
@@ -62,9 +64,9 @@ export function reachOf(parts: Surface[], dir: readonly [number, number, number]
         reach[i] = r
       }
     }
-    out.push({ ...f, reach })
-  }
-  return { parts: out, edge }
+    out.push({ positions: f.positions, normals: f.normals, indices: f.indices, reach })
+  })
+  return { parts: out, edges }
 }
 
 /** the area of a part's undercut candidates: each finer triangle by the share of its vertices that are (mm²) */
