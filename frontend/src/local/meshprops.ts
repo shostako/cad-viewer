@@ -56,12 +56,12 @@ export function meshArea(m: TriMesh): number {
 }
 
 /** each directed edge (from, to), as from * nv + to -> how many faces run along it that way */
-interface Edges {
+export interface Edges {
   count: Map<number, number>
   nv: number
 }
 
-function directedEdges(m: TriMesh): Edges {
+export function directedEdges(m: TriMesh): Edges {
   const nv = m.positions.length / 3
   const f = m.indices
   const count = new Map<number, number>()
@@ -75,7 +75,7 @@ function directedEdges(m: TriMesh): Edges {
 }
 
 /** every edge has exactly two faces (whichever way they run) */
-function watertight({ count, nv }: Edges): boolean {
+export function watertight({ count, nv }: Edges): boolean {
   const undirected = new Map<number, number>()
   for (const [key, n] of count) {
     const a = Math.floor(key / nv), b = key % nv
@@ -87,7 +87,7 @@ function watertight({ count, nv }: Edges): boolean {
 }
 
 /** the two faces of every edge run along it opposite ways (a closed mesh) */
-function windingConsistent({ count, nv }: Edges): boolean {
+export function windingConsistent({ count, nv }: Edges): boolean {
   for (const [key, n] of count) {
     if (n !== 1) return false
     const a = Math.floor(key / nv), b = key % nv
@@ -96,7 +96,7 @@ function windingConsistent({ count, nv }: Edges): boolean {
   return true
 }
 
-function bounds(p: ArrayLike<number>): [Vec3, Vec3] {
+export function bounds(p: ArrayLike<number>): [Vec3, Vec3] {
   const lo: Vec3 = [Infinity, Infinity, Infinity]
   const hi: Vec3 = [-Infinity, -Infinity, -Infinity]
   for (let i = 0; i < p.length; i += 3) {
@@ -108,7 +108,7 @@ function bounds(p: ArrayLike<number>): [Vec3, Vec3] {
   return [lo, hi]
 }
 
-interface Body {
+export interface Body {
   /** its faces' indices into the mesh's (three per face) */
   faces: Uint32Array
   signed: number
@@ -118,7 +118,7 @@ interface Body {
 }
 
 /** the mesh's bodies: faces connected through shared edges */
-function splitBodies(m: TriMesh): Body[] {
+export function splitBodies(m: TriMesh): Body[] {
   const f = m.indices
   const nf = f.length / 3
   const nv = m.positions.length / 3
@@ -154,7 +154,7 @@ function splitBodies(m: TriMesh): Body[] {
 }
 
 /** a body's signed volume (positive when its faces point out) and centre of mass */
-function body(p: Float64Array, faces: Uint32Array): Body {
+export function body(p: Float64Array, faces: Uint32Array): Body {
   let vol = 0
   const mom: Vec3 = [0, 0, 0]
   const lo: Vec3 = [Infinity, Infinity, Infinity]
@@ -208,7 +208,7 @@ function meshBodies(m: TriMesh): [number, Vec3] {
 }
 
 /** inner lies within outer: a majority of inner's centre and a few of its vertices (pulled a hair toward it) */
-function inside(p: Float64Array, inner: Body, outer: Body): boolean {
+export function inside(p: Float64Array, inner: Body, outer: Body): boolean {
   for (let k = 0; k < 3; k++) if (inner.lo[k] < outer.lo[k] || inner.hi[k] > outer.hi[k]) return false
   const verts = [...new Set(inner.faces)].sort((a, b) => a - b)
   const step = Math.max(1, Math.floor(verts.length / 4))

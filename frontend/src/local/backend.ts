@@ -3,11 +3,12 @@
  * answered in the page's Worker (worker.ts) with the same paths, statuses and
  * bodies, so api.ts reads them the one way (../engine.ts).
  *
- * So far (docs/designs/web-version.md, W2–W4): mesh formats (STL, OBJ, PLY,
+ * So far (docs/designs/web-version.md, W2–W5): mesh formats (STL, OBJ, PLY,
  * OFF, 3MF: the display mesh, volume and area), STEP/IGES (OpenCASCADE in
  * WebAssembly, brep.ts: parts, tree, colours, the display mesh with its B-rep
  * face / edge / vertex IDs; the exact measurements, volume and centre of mass:
- * measure.ts, brepprops.ts), the sidecars (kept in IndexedDB, by the file's
+ * measure.ts, brepprops.ts), the wall thickness (thickness.ts), 厚肉 (thick.ts),
+ * the projected area (projection.ts), the sidecars (kept in IndexedDB, by the file's
  * content hash as the backend names its files). The rest answers 501 with what
  * is not there yet in the Web version.
  */
@@ -17,6 +18,9 @@ import { MeasureError, Measurer } from './measure.ts'
 import { MESH_EXTS, loadMesh, MeshLoadError } from './meshload.ts'
 import { meshPartProperties, modelProps, type ModelProps } from './meshprops.ts'
 import { packBuffers, packParts } from './pack.ts'
+import { projectedArea } from './projection.ts'
+import { gridBudgets, NotSolid, partField, spots, type PartField } from './thick.ts'
+import { vertexThickness, vertexThicknessBall } from './thickness.ts'
 import { displayMesh, type DisplayMesh } from './smooth.ts'
 
 /** an answer: JSON, bytes or text, with its HTTP status */
@@ -51,7 +55,22 @@ interface Model {
   /** a B-rep's parts, with their shapes and face / edge / vertex maps (for measuring) */
   brep?: PartMesh[]
   properties?: ModelProps
+  /** thickness.bin by method, the 厚肉 grids, thick.bin, the projected areas (kept once computed) */
+  thickness?: Partial<Record<'ray' | 'ball', ArrayBuffer>>
+  thickFields?: Map<number, PartField | string>
+  thickBlob?: ArrayBuffer
+  projections?: Map<string, unknown>
 }
+
+interface DisplayPart {
+  id: number
+  positions: Float32Array
+  normals: Float32Array
+  indices: Uint32Array
+  faceRanges: { faceId: number; triStart: number; triCount: number }[]
+}
+
+const THICK_SPOTS_MAX = 50
 
 /** OpenCASCADE (libcascade), made once on the first STEP/IGES */
 export type OcctProvider = () => Promise<unknown>
@@ -122,18 +141,7 @@ export class LocalBackend {
         await this.sidecars.put(model.hash, body)
         return json(200, { saved: true })
       case 'GET properties':
-        if (model.format === 'brep') {
-          const oc = await this.occt!
-          model.properties ??= modelProps(
-            'brep',
-            model.brep!.map((m) => ({ id: m.part.id, name: m.part.name, ...brepPartProperties(oc, m.part.shape) })),
-          )
-          return json(200, model.properties)
-        }
-        model.properties ??= modelProps('mesh', [
-          { id: 0, name: model.name, ...meshPartProperties(model.mesh!.positions, model.mesh!.indices) },
-        ])
-        return json(200, model.properties)
+        return json(200, await this.properties(model))
       case 'POST measure': {
         if (model.format !== 'brep') return detail(422, 'measurement requires a B-rep model (STEP/IGES)')
         const oc = await this.occt!
@@ -147,16 +155,162 @@ export class LocalBackend {
       }
       case 'GET drawing.svg':
         return detail(422, 'not a drawing')
-      case 'GET thickness.bin':
-        return notYet('肉厚')
+      case 'GET thickness.bin': {
+        const method = url.searchParams.get('method') ?? 'ray'
+        if (method !== 'ray' && method !== 'ball') return detail(422, "method must be 'ray' or 'ball'")
+        model.thickness ??= {}
+        model.thickness[method] ??= packBuffers(
+          this.displayParts(model).map((p) => {
+            const t = (method === 'ball' ? vertexThicknessBall : vertexThickness)(p.positions, p.normals, p.indices)
+            // Infinity (no hit) as 0: the frontend's "no data"
+            return [`p${p.id}:thickness`, Float32Array.from(t, (x) => (Number.isFinite(x) ? x : 0)), 1] as [string, Float32Array, number]
+          }),
+        )
+        return { status: 200, kind: 'binary', body: model.thickness[method]!.slice(0) }
+      }
       case 'GET thick':
+        return this.thick(model, url.searchParams)
       case 'GET thick.bin':
-        return notYet('厚肉')
-      case 'GET projected_area':
-        return notYet('投影面積')
+        return this.thickBin(model)
+      case 'GET projected_area': {
+        const axis = url.searchParams.get('axis') ?? 'Z'
+        if (!['X', 'Y', 'Z'].includes(axis)) return detail(422, 'axis must be X, Y or Z')
+        const raw = url.searchParams.get('parts')
+        let wanted: Set<number> | null = null
+        if (raw !== null) {
+          const ids = raw.split(',').filter((x) => x.trim())
+          if (ids.some((x) => !/^\s*-?\d+\s*$/.test(x))) return detail(422, 'parts must be comma-separated part ids')
+          wanted = new Set(ids.map(Number))
+        }
+        const meshes = this.displayParts(model).filter((p) => wanted === null || wanted.has(p.id))
+        const ids = meshes.map((p) => p.id).sort((a, b) => a - b)
+        const key = `${axis}:${ids.join(',')}`
+        model.projections ??= new Map()
+        if (!model.projections.has(key)) {
+          model.projections.set(key, { ...projectedArea(meshes, axis), parts: ids })
+          while (model.projections.size > 8) model.projections.delete(model.projections.keys().next().value!)
+        }
+        return json(200, model.projections.get(key))
+      }
       default:
         return detail(404, 'Not Found')
     }
+  }
+
+  /** the model's /properties (kept once computed) */
+  private async properties(model: Model): Promise<ModelProps> {
+    if (model.format === 'brep') {
+      const oc = await this.occt!
+      model.properties ??= modelProps(
+        'brep',
+        model.brep!.map((m) => ({ id: m.part.id, name: m.part.name, ...brepPartProperties(oc, m.part.shape) })),
+      )
+    } else {
+      model.properties ??= modelProps('mesh', [{ id: 0, name: model.name, ...meshPartProperties(model.mesh!.positions, model.mesh!.indices) }])
+    }
+    return model.properties
+  }
+
+  /** the display mesh part by part (what mesh.bin sends) */
+  private displayParts(model: Model): DisplayPart[] {
+    if (model.format === 'brep') {
+      return model.brep!.map((m) => ({ id: m.part.id, positions: m.positions, normals: m.normals, indices: m.indices, faceRanges: m.faceRanges }))
+    }
+    return [{ id: 0, positions: model.mesh!.positions, normals: model.mesh!.normals, indices: model.mesh!.indices, faceRanges: [] }]
+  }
+
+  /** each part's 厚肉 grid, or why it has none (main._thick_fields): computed once, kept */
+  private async thickFields(model: Model): Promise<Map<number, PartField | string>> {
+    if (model.thickFields) return model.thickFields
+    // a B-rep part's closure is the B-rep's (its display mesh has hairline gaps along curved seams)
+    const closed = new Map<number, string | null>()
+    if (model.format === 'brep') {
+      for (const p of (await this.properties(model)).parts) closed.set(p.id, p.closed ? null : (p.reason ?? 'open'))
+    }
+    const parts = this.displayParts(model)
+    const boxes = new Map<number, number>()
+    for (const p of parts) {
+      let v = 0
+      if (p.positions.length) {
+        const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]
+        for (let i = 0; i < p.positions.length; i += 3) for (let k = 0; k < 3; k++) (lo[k] = Math.min(lo[k], p.positions[i + k])), (hi[k] = Math.max(hi[k], p.positions[i + k]))
+        v = (hi[0] - lo[0]) * (hi[1] - lo[1]) * (hi[2] - lo[2])
+      }
+      boxes.set(p.id, v)
+    }
+    const budget = gridBudgets(boxes)
+    const fields = new Map<number, PartField | string>()
+    for (const p of parts) {
+      const why = closed.get(p.id)
+      if (why) {
+        fields.set(p.id, why)
+        continue
+      }
+      try {
+        fields.set(p.id, partField(p.positions, p.indices, p.faceRanges, closed.has(p.id), budget.get(p.id)))
+      } catch (e) {
+        fields.set(p.id, e instanceof NotSolid ? e.reason : 'failed')
+      }
+    }
+    model.thickFields = fields
+    return fields
+  }
+
+  private async thick(model: Model, q: URLSearchParams): Promise<Answer> {
+    const ratio = Number(q.get('ratio') ?? '1.5')
+    if (!(ratio >= 1 && ratio <= 10)) return detail(422, 'ratio must be 1..10')
+    const given = new Map<number, number>()
+    for (const item of (q.get('nominal') ?? '').split(',').filter(Boolean)) {
+      const m = item.match(/^\s*(-?\d+)\s*:\s*([-+0-9.eE]+)\s*$/)
+      if (!m || !Number.isFinite(Number(m[2]))) return detail(422, `nominal: '${item}' is not partId:mm`)
+      const mm = Number(m[2])
+      if (!(mm >= 0.01 && mm <= 1000)) return detail(422, 'nominal must be 0.01..1000 mm')
+      given.set(Number(m[1]), mm)
+    }
+    const fields = await this.thickFields(model)
+    const out = [...fields.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([id, f]) => {
+        if (typeof f === 'string') return { id, status: f }
+        const nom = given.get(id) ?? f.nominalAuto
+        const found = nom ? spots(f, nom, ratio) : []
+        const r4 = (x: number) => Math.round(x * 1e4) / 1e4
+        return {
+          id,
+          status: nom ? 'ok' : 'no_nominal',
+          pitch: r4(f.pitch),
+          nominalAuto: f.nominalAuto === null ? null : r4(f.nominalAuto),
+          nominal: nom === null || nom === undefined ? null : r4(nom),
+          spots: found.slice(0, THICK_SPOTS_MAX),
+          spotsMore: Math.max(found.length - THICK_SPOTS_MAX, 0),
+        }
+      })
+    return json(200, { ratio, parts: out })
+  }
+
+  private async thickBin(model: Model): Promise<Answer> {
+    if (!model.thickBlob) {
+      const fields = await this.thickFields(model)
+      model.thickBlob = packBuffers(
+        this.displayParts(model).map((p) => {
+          const v = new Float32Array(p.positions.length / 3)
+          const f = fields.get(p.id)
+          if (f && typeof f !== 'string') {
+            if (f.vertexThickness) v.set(f.vertexThickness)
+            else {
+              const t = new Map(f.faceThickness.map(([fid, th]) => [fid, th]))
+              for (const fr of p.faceRanges) {
+                const th = t.get(fr.faceId)
+                if (!th) continue
+                for (let k = 3 * fr.triStart; k < 3 * (fr.triStart + fr.triCount); k++) v[p.indices[k]] = th
+              }
+            }
+          }
+          return [`p${p.id}:thick`, v, 1] as [string, Float32Array, number]
+        }),
+      )
+    }
+    return { status: 200, kind: 'binary', body: model.thickBlob.slice(0) }
   }
 
   private touch(m: Model): void {

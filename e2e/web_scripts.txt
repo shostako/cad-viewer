@@ -43,3 +43,15 @@ test_ortho_nav.py
 test_panel_column.py
 test_pick_filter.py
 test_recent.py
+
+# W5: wall thickness (the rays, the rolling ball), 厚肉, the projected area
+test_card_fold.py
+test_display_styles.py
+test_draft_mesh.py
+test_materials.py
+test_render_idle.py
+test_report_spots.py
+test_spots.py
+test_thick_deviation.py
+test_thick_faces.py
+test_thick_spots.py

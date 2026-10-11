@@ -5,7 +5,7 @@
   plate's sides, each rib's, each boss's), 反対側 the six faces that look
   down (the plate's bottom, the ribs' and the bosses' bottoms on the plate),
   and 判定できない one row: the vertices without a thickness, as many as the
-  backend's thickness.bin has (read by this test).
+  backend's thickness.bin has (read by this test; the Web version's has none).
 - A row's press: the colours of its kind come on (the heatmap for 薄肉, the
   draft colouring for 勾配不足), the view goes there with the marker on the
   place, and the row is marked.
@@ -239,9 +239,14 @@ with nav_session() as n:
     assert downs == sorted(["plate bottom", "rib 0 bottom", "rib 1 bottom", "rib 2 bottom", "boss 0 bottom", "boss 1 bottom"]), downs
     assert kinds(c) == ["thin"] * 3 + ["short"] * 6 + ["opposite"] * 6, ("thin, then short, then opposite", kinds(c))
     none, verts = no_value_count(page, TESTDATA / "ribbed_plate.stl")
-    assert none > 0 and c["undecided"] == [{"partId": 0, "why": f"肉厚の値が出ない頂点 {none} / {verts} 個"}], (c["undecided"], none, verts)
+    # the backend's rays (embree) that start along a face next to their vertex stop
+    # on that face: those vertices have no thickness. The Web version's go on to the
+    # far side, and every vertex has one
+    assert (none == 0) if engine_net.LOCAL else (none > 0), (none, verts)
+    undecided = [{"partId": 0, "why": f"肉厚の値が出ない頂点 {none} / {verts} 個"}] if none else []
+    assert c["undecided"] == undecided, (c["undecided"], none, verts)
     counts = page.inner_text("#check-panel .check-counts")
-    assert counts == "薄肉 3・勾配不足 6・反対側 6・判定できない 1", counts
+    assert counts == "薄肉 3・勾配不足 6・反対側 6" + ("・判定できない 1" if none else ""), counts
     cond = page.inner_text("#check-panel .check-conditions")
     assert cond == "肉厚 1.5 mm 未満（レイ法）・型開き +Z・勾配 1.0° 未満", cond
     print("1 ribbed_plate", counts, f"({none} of {verts} without a thickness)")
@@ -279,9 +284,9 @@ with nav_session() as n:
     gui_common.open_folder(page, "肉厚")
     set_number("閾値 (mm)", 1.0)
     c = wait_list("c.conditions.thin && c.conditions.thin.threshold === 1 && !c.conditions.draft")
-    assert c["rows"] == [] and len(c["undecided"]) == 1, c
+    assert c["rows"] == [] and c["undecided"] == undecided, c
     assert marker() is None, "a new list takes the marker away"
-    assert page.inner_text("#check-panel .check-counts") == "薄肉 0・判定できない 1"
+    assert page.inner_text("#check-panel .check-counts") == "薄肉 0" + ("・判定できない 1" if none else "")
     set_number("閾値 (mm)", 1.5)
     set_box("抜き勾配を調べる", True)
     print("3 at 1.0 mm none")
