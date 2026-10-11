@@ -135,7 +135,30 @@ with nav_session() as n:
     assert not purple(colour_at(BOSS_TOP)), "一般: the boss in the heatmap's own colours"
     ctl("用途").locator("select").select_option(label="射出成形")
     page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.wait_for_function("!!document.querySelector('.thick-band')", timeout=30000)
     print("4 一般: no band")
+
+    # ---- a late answer does not paint over a newer one: a new ratio asks /thick
+    # (held 3 s here), 一般 meanwhile: the band stays away when the answer comes
+    import time
+
+    def slow(route):
+        time.sleep(3)
+        route.continue_()
+
+    page.route("**/thick?*", slow)
+    set_number("厚肉 (一般部の倍)", 2)
+    ctl("用途").locator("select").select_option(label="一般")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.wait_for_timeout(4500)
+    n.settle()
+    assert page.locator(".thick-band").count() == 0, "the late molding answer painted its band over 一般"
+    assert not purple(colour_at(BOSS_TOP))
+    page.unroute("**/thick?*")
+    ctl("用途").locator("select").select_option(label="射出成形")
+    page.evaluate("document.activeElement && document.activeElement.blur()")
+    page.wait_for_function("document.querySelector('.thick-band')?.textContent.includes('2 倍以上')", timeout=30000)
+    print("4b a late answer dropped")
 
     # ---- a B-rep model: every vertex has a value (the faces' own), unlike the rolling ball
     n.load(str(TESTDATA / "mini_mold.step"), props="live")

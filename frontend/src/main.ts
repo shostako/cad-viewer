@@ -1313,7 +1313,10 @@ function thicknessFor(method: ThicknessMethod): Promise<Map<number, Float32Array
   }
   return p
 }
+/** the latest updateThickness: only it may paint (an older one whose answer comes late is dropped) */
+let thicknessUpdate = 0
 async function updateThickness(): Promise<void> {
+  const update = ++thicknessUpdate
   if (!currentModelId) return
   if (!thicknessState.enabled) {
     clearThickness()
@@ -1339,10 +1342,16 @@ async function updateThickness(): Promise<void> {
         !thicknessState.enabled
       )
         return // superseded: don't cache, don't recolor, don't touch the HUD
+      if (update !== thicknessUpdate) {
+        thicknessCache.set(requestedMethod, data) // the answer is the model's still: a newer update uses it
+        return
+      }
       thicknessCache.set(requestedMethod, data)
     }
     // 面ごと: the 厚肉 band too (射出成形's), each part's limit from its general wall
     const thick = requestedMethod === 'face' && materialStore.use === 'molding' ? await thickLimits() : null
+    // a newer update (the 用途, the ratio or the general wall changed while this waited) paints instead
+    if (update !== thicknessUpdate) return
     if (requestedGen !== loadGen || requestedId !== currentModelId || requestedMethod !== thicknessState.method || !thicknessState.enabled) return
     viewer.setThicknessColors(data, thicknessState.threshold, thick)
     colorOwner = 'thickness'
@@ -1360,6 +1369,7 @@ async function updateThickness(): Promise<void> {
     setThicknessHud(heatmapHud())
     probe.refresh() // other values under a cursor that stays where it is
   } catch (e) {
+    if (update !== thicknessUpdate) return // a newer update is the one that counts
     if (requestedGen !== loadGen || requestedId !== currentModelId) return // stale failure
     // the user moved on (抜き勾配 took over, toggled off, other 方式): a late error is noise
     if (!thicknessState.enabled || requestedMethod !== thicknessState.method) return
