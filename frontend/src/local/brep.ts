@@ -5,10 +5,14 @@
  * tree, and face / edge / vertex numbers (TopExp.MapShapes' order) as the
  * checkout's backend gives it. Change one, change the other.
  *
- * OCCT objects live in the WebAssembly heap: the ones made per node or per
- * edge are deleted as soon as they are read (a model of a million nodes would
- * otherwise fill the heap).
+ * OCCT objects live in the WebAssembly heap, and embind frees one only on
+ * .delete() (occtbag.ts). The ones made per node or per triangle are deleted
+ * as soon as they are read (a model of a million nodes would otherwise fill
+ * the heap); the ones per face or per edge go in that face's or edge's bag; the
+ * rest of a load in the load's bag (k), out of which the model's own (its parts'
+ * shapes and maps) are taken before it is emptied.
  */
+import { Bag, withBag, type Keep } from './occtbag.ts'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 type OC = any
@@ -58,44 +62,41 @@ const SEW_MAX_REL = 1e-4
 
 // ---- reading ------------------------------------------------------------------
 
-function labelName(oc: OC, label: any): string {
+function labelName(oc: OC, k: Keep, label: any): string {
   // FindAttribute's out-parameter comes back in its result (as the attribute's own type)
-  const found = label.FindAttribute(oc.TDataStd_Name.GetID())
+  const found = label.FindAttribute(k(oc.TDataStd_Name.GetID()))
+  k(found?.anAttribute)
   try {
     if (!found?.returnValue) return ''
     // the extended (UTF-16) string through an ASCII one with no replacement
     // character: OCCT converts it to UTF-8 then (ToExtString and Value are not
     // bound in this build)
-    const ascii = new oc.TCollection_AsciiString(found.anAttribute.Get(), '\0')
-    const s = String(ascii.ToCString())
-    ascii.delete()
-    return s
+    const ascii = k(new oc.TCollection_AsciiString(k(found.anAttribute.Get()), '\0'))
+    return String(ascii.ToCString())
   } catch {
     return ''
-  } finally {
-    found?.anAttribute?.delete?.()
   }
 }
 
-function stepUnit(oc: OC, reader: any): string | null {
-  const lengths = new oc.NCollection_Sequence_TCollection_AsciiString()
-  const angles = new oc.NCollection_Sequence_TCollection_AsciiString()
-  const solid = new oc.NCollection_Sequence_TCollection_AsciiString()
-  reader.ChangeReader().FileUnits(lengths, angles, solid)
+function stepUnit(oc: OC, k: Keep, reader: any): string | null {
+  const lengths = k(new oc.NCollection_Sequence_TCollection_AsciiString())
+  const angles = k(new oc.NCollection_Sequence_TCollection_AsciiString())
+  const solid = k(new oc.NCollection_Sequence_TCollection_AsciiString())
+  k(reader.ChangeReader()).FileUnits(lengths, angles, solid)
   const names: string[] = []
   for (let i = 1; i <= lengths.Length(); i++) {
-    const raw = String(lengths.Value(i).ToCString()).trim()
+    const raw = String(k(lengths.Value(i)).ToCString()).trim()
     const name = STEP_UNITS[raw.toLowerCase()] ?? raw
     if (name && !names.includes(name)) names.push(name)
   }
   return names.join('・') || null
 }
 
-function igesUnit(reader: any): string | null {
-  const gs = reader.IGESModel().GlobalSection()
+function igesUnit(k: Keep, reader: any): string | null {
+  const gs = k(k(reader.IGESModel()).GlobalSection())
   const flag = gs.UnitFlag()
   if (IGES_UNITS[flag]) return IGES_UNITS[flag]
-  const name = gs.UnitName()
+  const name = k(gs.UnitName())
   const text = name ? String(name.ToCString()).trim() : ''
   return text || null
 }
@@ -109,27 +110,27 @@ function safeUnit(read: () => string | null): string | null {
 }
 
 /** the file as an XCAF document; info.fileUnit: the length unit it is written in (OCCT reads it into mm) */
-export function readDocument(oc: OC, bytes: Uint8Array, filename: string, info: { fileUnit?: string | null } = {}): any {
+export function readDocument(oc: OC, k: Keep, bytes: Uint8Array, filename: string, info: { fileUnit?: string | null } = {}): any {
   const ext = filename.slice(filename.lastIndexOf('.') + 1).toLowerCase()
   // a short fixed name: a long one has made a reader find nothing before (an old opencascade.js)
   const path = `/m.${ext}`
   oc.FS.writeFile(path, bytes)
   try {
-    const doc = new oc.TDocStd_Document(new oc.TCollection_ExtendedString('XmlXCAF'))
+    const doc = k(new oc.TDocStd_Document(k(new oc.TCollection_ExtendedString('XmlXCAF'))))
     if (ext === 'step' || ext === 'stp') {
-      const reader = new oc.STEPCAFControl_Reader()
+      const reader = k(new oc.STEPCAFControl_Reader())
       reader.SetColorMode(true)
       reader.SetNameMode(true)
       if (reader.ReadFile(path) !== 'IFSelect_RetDone') throw new BrepLoadError('STEP read failed (file corrupt or unsupported)')
-      if (!reader.Transfer(doc, new oc.Message_ProgressRange())) throw new BrepLoadError('STEP transfer failed')
-      info.fileUnit = safeUnit(() => stepUnit(oc, reader))
+      if (!reader.Transfer(doc, k(new oc.Message_ProgressRange()))) throw new BrepLoadError('STEP transfer failed')
+      info.fileUnit = safeUnit(() => stepUnit(oc, k, reader))
     } else if (ext === 'iges' || ext === 'igs') {
-      const reader = new oc.IGESCAFControl_Reader()
+      const reader = k(new oc.IGESCAFControl_Reader())
       reader.SetColorMode(true)
       reader.SetNameMode(true)
       if (reader.ReadFile(path) !== 'IFSelect_RetDone') throw new BrepLoadError('IGES read failed (file corrupt or unsupported)')
-      if (!reader.Transfer(doc, new oc.Message_ProgressRange())) throw new BrepLoadError('IGES transfer failed')
-      info.fileUnit = safeUnit(() => igesUnit(reader))
+      if (!reader.Transfer(doc, k(new oc.Message_ProgressRange()))) throw new BrepLoadError('IGES transfer failed')
+      info.fileUnit = safeUnit(() => igesUnit(k, reader))
     } else {
       throw new BrepLoadError(`not a B-rep format: .${ext}`)
     }
@@ -144,16 +145,16 @@ export function readDocument(oc: OC, bytes: Uint8Array, filename: string, info: 
 }
 
 /** the XCAF assembly flattened into located leaf parts and a display tree (tessellation.extract_parts) */
-export function extractParts(oc: OC, doc: any): [BrepPart[], TreeNode] {
-  const shapeTool = oc.XCAFDoc_DocumentTool.ShapeTool(doc.Main())
+export function extractParts(oc: OC, k: Keep, doc: any): [BrepPart[], TreeNode] {
+  const shapeTool = k(oc.XCAFDoc_DocumentTool.ShapeTool(k(doc.Main())))
   const parts: BrepPart[] = []
   const root: TreeNode = { name: 'root', children: [] }
 
   const labelColor = (label: any): RGB | null => {
     for (const ctype of [oc.XCAFDoc_ColorType.XCAFDoc_ColorSurf, oc.XCAFDoc_ColorType.XCAFDoc_ColorGen]) {
-      const colorLabel = new oc.TDF_Label()
+      const colorLabel = k(new oc.TDF_Label())
       if (oc.XCAFDoc_ColorTool.GetColor(label, ctype, colorLabel)) {
-        const c = new oc.Quantity_Color()
+        const c = k(new oc.Quantity_Color())
         if (oc.XCAFDoc_ColorTool.GetColor(colorLabel, c)) return [c.Red(), c.Green(), c.Blue()]
       }
     }
@@ -161,84 +162,83 @@ export function extractParts(oc: OC, doc: any): [BrepPart[], TreeNode] {
   }
 
   const visit = (label: any, loc: any, node: TreeNode, inherited: RGB | null, nameOverride: string | null = null): void => {
-    let rawName = labelName(oc, label)
+    let rawName = labelName(oc, k, label)
     // instance labels carry auto-generated names like "=>[0:1:1:2]": ignored
     if (rawName.startsWith('=>')) rawName = ''
     const name = nameOverride || rawName || 'part'
     const color = labelColor(label) ?? inherited
 
-    const ref = new oc.TDF_Label()
+    const ref = k(new oc.TDF_Label())
     if (oc.XCAFDoc_ShapeTool.GetReferredShape(label, ref)) {
       // an instance: follow the reference, its location composed
-      const instLoc = oc.XCAFDoc_ShapeTool.GetLocation(label)
-      visit(ref, loc.Multiplied(instLoc), node, color, rawName || null)
+      const instLoc = k(oc.XCAFDoc_ShapeTool.GetLocation(label))
+      visit(ref, k(loc.Multiplied(instLoc)), node, color, rawName || null)
       return
     }
     if (oc.XCAFDoc_ShapeTool.IsAssembly(label)) {
-      const comps = new oc.NCollection_Sequence_TDF_Label()
+      const comps = k(new oc.NCollection_Sequence_TDF_Label())
       oc.XCAFDoc_ShapeTool.GetComponents(label, comps, false)
       const sub: TreeNode = { name, children: [] }
       node.children!.push(sub)
-      for (let i = 1; i <= comps.Length(); i++) visit(comps.Value(i), loc, sub, color)
+      for (let i = 1; i <= comps.Length(); i++) visit(k(comps.Value(i)), loc, sub, color)
       return
     }
-    const shape = new oc.TopoDS_Shape()
+    const shape = k(new oc.TopoDS_Shape())
     if (!oc.XCAFDoc_ShapeTool.GetShape(label, shape) || shape.IsNull()) return
-    const located = shape.Moved(loc, true)
+    const located = k(shape.Moved(loc, true))
     const part: BrepPart = { id: parts.length, name, shape: located, color }
     parts.push(part)
     node.children!.push({ name, partId: part.id })
   }
 
-  const free = new oc.NCollection_Sequence_TDF_Label()
+  const free = k(new oc.NCollection_Sequence_TDF_Label())
   shapeTool.GetFreeShapes(free)
-  for (let i = 1; i <= free.Length(); i++) visit(free.Value(i), new oc.TopLoc_Location(), root, null)
+  for (let i = 1; i <= free.Length(); i++) visit(k(free.Value(i)), k(new oc.TopLoc_Location()), root, null)
   if (!parts.length) throw new BrepLoadError('no shapes found in file')
   return [parts, root]
 }
 
 // ---- loose shapes ------------------------------------------------------------
 
-const contains = (oc: OC, shape: any, kind: any) => new oc.TopExp_Explorer(shape, kind, oc.TopAbs_ShapeEnum.TopAbs_SHAPE).More()
+const contains = (oc: OC, k: Keep, shape: any, kind: any) => k(new oc.TopExp_Explorer(shape, kind, oc.TopAbs_ShapeEnum.TopAbs_SHAPE)).More()
 
-function isSheet(oc: OC, shape: any): boolean {
+function isSheet(oc: OC, k: Keep, shape: any): boolean {
   const E = oc.TopAbs_ShapeEnum
   const t = shape.ShapeType()
   if (t === E.TopAbs_FACE || t === E.TopAbs_SHELL) return true
-  return t === E.TopAbs_COMPOUND && contains(oc, shape, E.TopAbs_FACE) && !contains(oc, shape, E.TopAbs_SOLID)
+  return t === E.TopAbs_COMPOUND && contains(oc, k, shape, E.TopAbs_FACE) && !contains(oc, k, shape, E.TopAbs_SOLID)
 }
 
-function isCurve(oc: OC, shape: any): boolean {
+function isCurve(oc: OC, k: Keep, shape: any): boolean {
   const E = oc.TopAbs_ShapeEnum
   const t = shape.ShapeType()
   if (t === E.TopAbs_EDGE || t === E.TopAbs_WIRE) return true
-  return t === E.TopAbs_COMPOUND && !contains(oc, shape, E.TopAbs_FACE) && contains(oc, shape, E.TopAbs_EDGE)
+  return t === E.TopAbs_COMPOUND && !contains(oc, k, shape, E.TopAbs_FACE) && contains(oc, k, shape, E.TopAbs_EDGE)
 }
 
-function faceTotal(oc: OC, shapes: any[]): number {
+function faceTotal(oc: OC, k: Keep, shapes: any[]): number {
   let n = 0
   for (const s of shapes) {
-    const e = new oc.TopExp_Explorer(s, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE)
+    const e = k(new oc.TopExp_Explorer(s, oc.TopAbs_ShapeEnum.TopAbs_FACE, oc.TopAbs_ShapeEnum.TopAbs_SHAPE))
     for (; e.More(); e.Next()) n++
-    e.delete()
   }
   return n
 }
 
 /** loose top-level faces sewn into bodies, loose curves gathered into one part (tessellation.merge_loose_shapes) */
-export function mergeLooseShapes(oc: OC, parts: BrepPart[], tree: TreeNode): [BrepPart[], TreeNode] {
+export function mergeLooseShapes(oc: OC, k: Keep, parts: BrepPart[], tree: TreeNode): [BrepPart[], TreeNode] {
   const topIds = (tree.children ?? []).filter((c) => c.partId !== undefined).map((c) => c.partId!)
   const byId = new Map(parts.map((p) => [p.id, p]))
-  let sheets = topIds.map((i) => byId.get(i)!).filter((p) => isSheet(oc, p.shape))
-  let curves = topIds.map((i) => byId.get(i)!).filter((p) => isCurve(oc, p.shape))
-  if (faceTotal(oc, sheets.map((p) => p.shape)) < 2) sheets = []
+  let sheets = topIds.map((i) => byId.get(i)!).filter((p) => isSheet(oc, k, p.shape))
+  let curves = topIds.map((i) => byId.get(i)!).filter((p) => isCurve(oc, k, p.shape))
+  if (faceTotal(oc, k, sheets.map((p) => p.shape)) < 2) sheets = []
   if (curves.length < 2) curves = []
   if (!sheets.length && !curves.length) return [parts, tree]
 
   let bodies: any[] = []
   if (sheets.length) {
     try {
-      bodies = sew(oc, sheets.map((p) => p.shape))
+      bodies = sew(oc, k, sheets.map((p) => p.shape))
     } catch {
       return [parts, tree]
     }
@@ -276,8 +276,8 @@ export function mergeLooseShapes(oc: OC, parts: BrepPart[], tree: TreeNode): [Br
     })
   }
   if (curves.length) {
-    const builder = new oc.BRep_Builder()
-    const compound = new oc.TopoDS_Compound()
+    const builder = k(new oc.BRep_Builder())
+    const compound = k(new oc.TopoDS_Compound())
     builder.MakeCompound(compound)
     for (const p of curves) builder.Add(compound, p.shape)
     add(`曲線（${curves.length} 本）`, compound, commonColor(curves))
@@ -290,11 +290,11 @@ function commonColor(parts: BrepPart[]): RGB | null {
   return keys.size === 1 ? parts[0].color : null
 }
 
-function shapeDiagonal(oc: OC, shapes: any[]): number {
-  const box = new oc.Bnd_Box()
+function shapeDiagonal(oc: OC, k: Keep, shapes: any[]): number {
+  const box = k(new oc.Bnd_Box())
   for (const s of shapes) oc.BRepBndLib.Add(s, box, true)
   if (box.IsVoid()) return 0
-  const lo = box.CornerMin(), hi = box.CornerMax()
+  const lo = k(box.CornerMin()), hi = k(box.CornerMax())
   return Math.hypot(hi.X() - lo.X(), hi.Y() - lo.Y(), hi.Z() - lo.Z())
 }
 
@@ -302,53 +302,51 @@ function isClosedShell(oc: OC, shape: any): boolean {
   return shape.ShapeType() === oc.TopAbs_ShapeEnum.TopAbs_SHELL && oc.BRep_Tool.IsClosed(shape)
 }
 
-function topLevel(oc: OC, shape: any): any[] {
+function topLevel(oc: OC, k: Keep, shape: any): any[] {
   if (!shape || shape.IsNull()) return []
   if (shape.ShapeType() !== oc.TopAbs_ShapeEnum.TopAbs_COMPOUND) return [shape]
   const out: any[] = []
-  const it = new oc.TopoDS_Iterator(shape, true, true)
-  for (; it.More(); it.Next()) out.push(...topLevel(oc, it.Value()))
+  const it = k(new oc.TopoDS_Iterator(shape, true, true))
+  for (; it.More(); it.Next()) out.push(...topLevel(oc, k, k(it.Value())))
   return out
 }
 
 /** faces sewn into bodies, each shell settled at the smallest tolerance that closes it (tessellation._sew) */
-function sew(oc: OC, shapes: any[]): any[] {
-  const cap = Math.max(shapeDiagonal(oc, shapes) * SEW_MAX_REL, SEW_TOLERANCES[0]) * (1 + 1e-9)
+function sew(oc: OC, k: Keep, shapes: any[]): any[] {
+  const cap = Math.max(shapeDiagonal(oc, k, shapes) * SEW_MAX_REL, SEW_TOLERANCES[0]) * (1 + 1e-9)
   const settled: any[] = []
   let pending = [...shapes]
   for (const tol of SEW_TOLERANCES.filter((t) => t <= cap)) {
-    const sewing = new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false)
+    const sewing = k(new oc.BRepBuilderAPI_Sewing(tol, true, true, true, false))
     for (const s of pending) sewing.Add(s)
-    sewing.Perform(new oc.Message_ProgressRange())
-    const bodies = topLevel(oc, sewing.SewedShape())
+    sewing.Perform(k(new oc.Message_ProgressRange()))
+    const bodies = topLevel(oc, k, k(sewing.SewedShape()))
     if (!bodies.length) throw new Error(`sewing at ${tol} returned no shape`)
     settled.push(...bodies.filter((b) => isClosedShell(oc, b)))
     pending = bodies.filter((b) => !isClosedShell(oc, b))
     if (!pending.length) break
   }
-  return [...settled, ...pending].map((b) => close(oc, b))
+  return [...settled, ...pending].map((b) => close(oc, k, b))
 }
 
-function volumeOf(oc: OC, shape: any): number {
-  const props = new oc.GProp_GProps()
+function volumeOf(oc: OC, k: Keep, shape: any): number {
+  const props = k(new oc.GProp_GProps())
   oc.BRepGProp.VolumeProperties(shape, props, false, false, false)
-  const v = props.Mass()
-  props.delete()
-  return v
+  return props.Mass()
 }
 
 /** a closed shell as an outward-facing solid; anything else unchanged */
-function close(oc: OC, body: any): any {
+function close(oc: OC, k: Keep, body: any): any {
   if (!isClosedShell(oc, body)) return body
   try {
-    const solid = new oc.BRepBuilderAPI_MakeSolid(oc.TopoDS.Shell(body)).Solid()
-    const fix = new oc.ShapeFix_Solid()
+    const solid = k(k(new oc.BRepBuilderAPI_MakeSolid(k(oc.TopoDS.Shell(body)))).Solid())
+    const fix = k(new oc.ShapeFix_Solid())
     fix.Init(solid)
-    fix.Perform(new oc.Message_ProgressRange())
-    let result = fix.Solid()
-    const volume = volumeOf(oc, result)
+    fix.Perform(k(new oc.Message_ProgressRange()))
+    let result = k(fix.Solid())
+    const volume = volumeOf(oc, k, result)
     if (Math.abs(volume) < 1e-12) return body
-    if (volume < 0) result = result.Reversed()
+    if (volume < 0) result = k(result.Reversed())
     return result
   } catch {
     return body
@@ -357,37 +355,37 @@ function close(oc: OC, body: any): any {
 
 // ---- meshing -----------------------------------------------------------------
 
-export function combinedDeflection(oc: OC, parts: BrepPart[], relative = 1e-3): number {
-  const diag = shapeDiagonal(oc, parts.map((p) => p.shape))
+export function combinedDeflection(oc: OC, k: Keep, parts: BrepPart[], relative = 1e-3): number {
+  const diag = shapeDiagonal(oc, k, parts.map((p) => p.shape))
   if (diag === 0) return 0.1
   return Math.max(diag * relative, 1e-6)
 }
 
-function shapeMap(oc: OC, shape: any, kind: any): any {
-  const map = new oc.NCollection_IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher()
+function shapeMap(oc: OC, k: Keep, shape: any, kind: any): any {
+  const map = k(new oc.NCollection_IndexedMap_TopoDS_Shape_TopTools_ShapeMapHasher())
   oc.TopExp.MapShapes(shape, kind, map)
   return map
 }
 
 /** a part's display mesh, every triangle and edge segment tagged with its B-rep face / edge (tessellation.tessellate_part) */
-export function tessellatePart(oc: OC, part: BrepPart, linDeflection: number, angDeflection = 0.35): PartMesh {
+export function tessellatePart(oc: OC, k: Keep, part: BrepPart, linDeflection: number, angDeflection = 0.35): PartMesh {
   const E = oc.TopAbs_ShapeEnum
   const shape = part.shape
   new oc.BRepMesh_IncrementalMesh(shape, linDeflection, false, angDeflection, true).delete()
 
-  const faceMap = shapeMap(oc, shape, E.TopAbs_FACE)
+  const faceMap = shapeMap(oc, k, shape, E.TopAbs_FACE)
   const pos: number[] = []
   const nrm: number[] = []
   const tris: number[] = []
   const faceRanges: PartMesh['faceRanges'] = []
   let vertOffset = 0
   let triOffset = 0
-  for (let fi = 1; fi <= faceMap.Size(); fi++) {
-    const face = oc.TopoDS.Face(faceMap.FindKey(fi))
-    const loc = new oc.TopLoc_Location()
-    const tri = oc.BRep_Tool.Triangulation(face, loc, 0)
-    if (!tri || tri.IsNull?.() || tri.NbTriangles() === 0) continue
-    const trsf = loc.Transformation()
+  for (let fi = 1; fi <= faceMap.Size(); fi++) withBag((f) => {
+    const face = f(oc.TopoDS.Face(f(faceMap.FindKey(fi))))
+    const loc = f(new oc.TopLoc_Location())
+    const tri = f(oc.BRep_Tool.Triangulation(face, loc, 0))
+    if (!tri || tri.IsNull?.() || tri.NbTriangles() === 0) return
+    const trsf = f(loc.Transformation())
     const nNodes = tri.NbNodes()
     for (let i = 1; i <= nNodes; i++) {
       const p = tri.Node(i)
@@ -422,38 +420,34 @@ export function tessellatePart(oc: OC, part: BrepPart, linDeflection: number, an
     faceRanges.push({ faceId: fi, triStart: triOffset, triCount: nTris })
     vertOffset += nNodes
     triOffset += nTris
-  }
+  })
 
   // edges: the polyline on an adjacent face's triangulation; a free curve sampled
-  const edgeMap = shapeMap(oc, shape, E.TopAbs_EDGE)
-  const ancestors = new oc.NCollection_IndexedDataMap_TopoDS_Shape_NCollection_List_TopoDS_Shape_TopTools_ShapeMapHasher()
+  const edgeMap = shapeMap(oc, k, shape, E.TopAbs_EDGE)
+  // only the edge loop needs it (the face / edge / vertex maps are kept)
+  const ancestors = k(new oc.NCollection_IndexedDataMap_TopoDS_Shape_NCollection_List_TopoDS_Shape_TopTools_ShapeMapHasher())
   oc.TopExp.MapShapesAndAncestors(shape, E.TopAbs_EDGE, E.TopAbs_FACE, ancestors)
   const segs: number[] = []
   const edgeRanges: PartMesh['edgeRanges'] = []
   let segOffset = 0
-  try {
-    for (let ei = 1; ei <= edgeMap.Size(); ei++) {
-      const edge = oc.TopoDS.Edge(edgeMap.FindKey(ei))
-      let pl = edgePolyline(oc, edge, ancestors)
-      if (pl === null && faceCount(edge, ancestors) === 0) pl = curvePolyline(oc, edge, linDeflection, angDeflection)
-      if (pl === null || pl.length < 6) continue
-      const n = pl.length / 3
-      for (let k = 0; k + 1 < n; k++) segs.push(pl[3 * k], pl[3 * k + 1], pl[3 * k + 2], pl[3 * k + 3], pl[3 * k + 4], pl[3 * k + 5])
-      edgeRanges.push({ edgeId: ei, segStart: segOffset, segCount: n - 1 })
-      segOffset += n - 1
-    }
-  } finally {
-    ancestors.delete() // only the edge loop needs it (the face / edge / vertex maps are kept)
-  }
+  for (let ei = 1; ei <= edgeMap.Size(); ei++) withBag((e) => {
+    const edge = e(oc.TopoDS.Edge(e(edgeMap.FindKey(ei))))
+    let pl = edgePolyline(oc, e, edge, ancestors)
+    if (pl === null && faceCount(e, edge, ancestors) === 0) pl = curvePolyline(oc, e, edge, linDeflection, angDeflection)
+    if (pl === null || pl.length < 6) return
+    const n = pl.length / 3
+    for (let i = 0; i + 1 < n; i++) segs.push(pl[3 * i], pl[3 * i + 1], pl[3 * i + 2], pl[3 * i + 3], pl[3 * i + 4], pl[3 * i + 5])
+    edgeRanges.push({ edgeId: ei, segStart: segOffset, segCount: n - 1 })
+    segOffset += n - 1
+  })
 
   // vertices: the B-rep's exact points (snap targets)
-  const vertexMap = shapeMap(oc, shape, E.TopAbs_VERTEX)
+  const vertexMap = shapeMap(oc, k, shape, E.TopAbs_VERTEX)
   const verts = new Float32Array(vertexMap.Size() * 3)
-  for (let vi = 1; vi <= vertexMap.Size(); vi++) {
-    const p = oc.BRep_Tool.Pnt(oc.TopoDS.Vertex(vertexMap.FindKey(vi)))
+  for (let vi = 1; vi <= vertexMap.Size(); vi++) withBag((v) => {
+    const p = v(oc.BRep_Tool.Pnt(v(oc.TopoDS.Vertex(v(vertexMap.FindKey(vi))))))
     verts.set([p.X(), p.Y(), p.Z()], 3 * (vi - 1))
-    p.delete()
-  }
+  })
   return {
     part,
     positions: Float32Array.from(pos),
@@ -470,26 +464,26 @@ export function tessellatePart(oc: OC, part: BrepPart, linDeflection: number, an
 }
 
 /** the faces an edge bounds (MapShapesAndAncestors also lists edges that bound none, with an empty list) */
-function facesOf(edge: any, ancestors: any): any | null {
+function facesOf(k: Keep, edge: any, ancestors: any): any | null {
   const i = ancestors.FindIndex(edge)
-  return i > 0 ? ancestors.FindFromIndex(i) : null
+  return i > 0 ? k(ancestors.FindFromIndex(i)) : null
 }
 
-function faceCount(edge: any, ancestors: any): number {
-  return facesOf(edge, ancestors)?.Size() ?? 0
+function faceCount(k: Keep, edge: any, ancestors: any): number {
+  return facesOf(k, edge, ancestors)?.Size() ?? 0
 }
 
-function edgePolyline(oc: OC, edge: any, ancestors: any): number[] | null {
-  const faces = facesOf(edge, ancestors)
+function edgePolyline(oc: OC, k: Keep, edge: any, ancestors: any): number[] | null {
+  const faces = facesOf(k, edge, ancestors)
   if (!faces || faces.Size() === 0) return null
-  const face = oc.TopoDS.Face(faces.First())
-  const loc = new oc.TopLoc_Location()
-  const tri = oc.BRep_Tool.Triangulation(face, loc, 0)
+  const face = k(oc.TopoDS.Face(k(faces.First())))
+  const loc = k(new oc.TopLoc_Location())
+  const tri = k(oc.BRep_Tool.Triangulation(face, loc, 0))
   if (!tri || tri.IsNull?.()) return null
-  const poly = oc.BRep_Tool.PolygonOnTriangulation(edge, tri, loc)
+  const poly = k(oc.BRep_Tool.PolygonOnTriangulation(edge, tri, loc))
   if (!poly || poly.IsNull?.()) return null
-  const trsf = loc.Transformation()
-  const nodes = poly.Nodes()
+  const trsf = k(loc.Transformation())
+  const nodes = k(poly.Nodes())
   const out: number[] = []
   for (let i = nodes.Lower(); i <= nodes.Upper(); i++) {
     const p = tri.Node(nodes.Value(i))
@@ -501,13 +495,13 @@ function edgePolyline(oc: OC, edge: any, ancestors: any): number[] | null {
   return out
 }
 
-function curvePolyline(oc: OC, edge: any, lin: number, ang: number): number[] | null {
+function curvePolyline(oc: OC, k: Keep, edge: any, lin: number, ang: number): number[] | null {
   if (oc.BRep_Tool.Degenerated(edge)) return null
   try {
-    const curve = new oc.BRepAdaptor_Curve(edge)
+    const curve = k(new oc.BRepAdaptor_Curve(edge))
     // three arguments: with six, the overload taken is the one with a parameter
     // range (first, last) in second and third place
-    const disc = new oc.GCPnts_TangentialDeflection(curve, ang, lin)
+    const disc = k(new oc.GCPnts_TangentialDeflection(curve, ang, lin))
     const n = disc.NbPoints()
     if (n < 2) return null
     const out: number[] = []
@@ -526,10 +520,18 @@ function curvePolyline(oc: OC, edge: any, lin: number, ang: number): number[] | 
 
 /** bytes -> located parts -> tessellated meshes + tree (tessellation.load_brep) */
 export function loadBrep(oc: OC, bytes: Uint8Array, filename: string, info: { fileUnit?: string | null } = {}): { meshes: PartMesh[]; tree: TreeNode; deflection: number } {
-  const doc = readDocument(oc, bytes, filename, info)
-  let [parts, tree] = extractParts(oc, doc)
-  ;[parts, tree] = mergeLooseShapes(oc, parts, tree)
-  const deflection = combinedDeflection(oc, parts)
-  const meshes = parts.map((p) => tessellatePart(oc, p, deflection))
-  return { meshes, tree, deflection }
+  const bag = new Bag()
+  const k = bag.k
+  try {
+    const doc = readDocument(oc, k, bytes, filename, info)
+    let [parts, tree] = extractParts(oc, k, doc)
+    ;[parts, tree] = mergeLooseShapes(oc, k, parts, tree)
+    const deflection = combinedDeflection(oc, k, parts)
+    const meshes = parts.map((p) => tessellatePart(oc, k, p, deflection))
+    // the model's own, kept with it (deleted when the model is: backend.ts)
+    for (const m of meshes) bag.spare(m.part.shape, m.faceMap, m.edgeMap, m.vertexMap)
+    return { meshes, tree, deflection }
+  } finally {
+    bag.free()
+  }
 }

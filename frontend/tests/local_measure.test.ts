@@ -26,6 +26,7 @@ import { fileURLToPath } from 'node:url'
 import { createInstance } from 'libcascade/single/init'
 
 import { LocalBackend, memoryStore } from '../src/local/backend.ts'
+import { tracer } from './occt_tracer.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..', '..')
@@ -124,40 +125,6 @@ test('B-rep volumes, known values (no backend needed): turned over, open, two bo
   // faces only: none (curves or points only)
   assert.equal(brepPartProperties(oc, new oc.BRepBuilderAPI_MakeVertex(new oc.gp_Pnt(1, 2, 3)).Vertex()).reason, 'no_faces')
 })
-
-/**
- * the OCCT objects a calculation gets hold of, for the leak check: oc wrapped,
- * every object that comes out of a constructor or a call recorded (what the
- * model keeps is wrapped by own(), and not recorded). The calculation sees
- * wrappers; OCCT sees the objects themselves.
- */
-function tracer(oc: any) {
-  const made: any[] = []
-  const raw = new WeakMap<object, any>()
-  const unwrap = (v: any) => (v !== null && typeof v === 'object' && raw.has(v) ? raw.get(v) : v)
-  const wrapObject = (t: any, record: boolean): any => {
-    if (record) made.push(t)
-    const px = new Proxy(t, {
-      get(target, prop) {
-        const v = target[prop]
-        if (typeof v !== 'function') return v
-        if (prop === 'delete' || prop === 'isDeleted') return v.bind(target)
-        return (...args: any[]) => out(v.apply(target, args.map(unwrap)))
-      },
-    })
-    raw.set(px, t)
-    return px
-  }
-  const out = (v: any) => (v !== null && typeof v === 'object' && typeof v.delete === 'function' ? wrapObject(v, true) : v)
-  const wrapFunction = (f: any): any =>
-    new Proxy(f, {
-      construct: (target, args) => out(new target(...args.map(unwrap))),
-      apply: (target, self, args) => out(target.apply(self, args.map(unwrap))),
-      get: (target, prop) => (typeof target[prop] === 'function' ? wrapFunction(target[prop]) : target[prop]),
-    })
-  const wrapped = new Proxy(oc, { get: (target, prop) => (typeof target[prop] === 'function' ? wrapFunction(target[prop]) : target[prop]) })
-  return { oc: wrapped, own: (t: any) => wrapObject(t, false), made }
-}
 
 for (const file of FILES) {
   test(`${path.basename(file)}: each measurement and the properties leave no OCCT object behind`, { skip: !ready && 'no backend venv or testdata' }, async () => {
