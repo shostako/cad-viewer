@@ -142,3 +142,30 @@ def test_the_testdata_drawing(japanese_font):
     }
     mtexts = [e.text for e in doc.modelspace().query("MTEXT")]
     assert mtexts == [f"\\f{family}|b0|i0|c128|p49;材質 PMMA", f"\\f{family};ゲート"], mtexts
+
+
+def test_only_what_is_drawn_counts(japanese_font):
+    """modelspace and the blocks it inserts (nested, and an insert's attributes) are drawn;
+    paper space and a block nothing uses are not, and do not change a style"""
+    doc = new_doc()
+    for name in ("SHARED", "INBLOCK", "NESTED", "ATTR", "UNUSED"):
+        doc.styles.new(name, dxfattribs={"font": "msgothic.ttc"})
+    msp = doc.modelspace()
+    msp.add_text("GATE", dxfattribs={"style": "SHARED"})
+    doc.paperspace().add_text("注記", dxfattribs={"style": "SHARED"})
+    inner = doc.blocks.new("INNER")
+    inner.add_text("詳細", dxfattribs={"style": "NESTED"})
+    title = doc.blocks.new("TITLE")
+    title.add_text("表題", dxfattribs={"style": "INBLOCK"})
+    title.add_blockref("INNER", (0, 0))
+    msp.add_blockref("TITLE", (0, 0)).add_attrib("NAME", "品名", dxfattribs={"style": "ATTR"})
+    doc.blocks.new("SPARE").add_text("予備", dxfattribs={"style": "UNUSED"})
+    drawing._fit_fonts(doc)
+    fonts_now = {s.dxf.name: s.dxf.font for s in doc.styles if s.dxf.name in ("SHARED", "INBLOCK", "NESTED", "ATTR", "UNUSED")}
+    assert fonts_now == {
+        "SHARED": "msgothic.ttc",  # Japanese in paper space only: not drawn
+        "INBLOCK": japanese_font,
+        "NESTED": japanese_font,
+        "ATTR": japanese_font,
+        "UNUSED": "msgothic.ttc",
+    }

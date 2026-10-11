@@ -86,7 +86,8 @@ def _render(data, name):
       const name = manifest?.japaneseFont
       if (!name) return
       py.FS.writeFile(`/fonts/${name}`, await read(name))
-      py.runPython("_ff.font_manager.build(['/fonts'], support_dirs=False)")
+      // drawing.py forgets what ezdxf remembered of the lookups before it (a family not found)
+      py.runPython("_ff.font_manager.build(['/fonts'], support_dirs=False); drawing.forget_font_lookups()")
     })().catch((e) => {
       japanese = null // try again next time
       throw e

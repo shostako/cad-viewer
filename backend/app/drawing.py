@@ -98,11 +98,45 @@ def _add_extra_fonts() -> None:
     dirs = [d for d in os.environ.get("CAD_VIEWER_FONT_DIRS", "").split(os.pathsep) if d and os.path.isdir(d)]
     if dirs:
         fonts.font_manager.build(dirs, support_dirs=False)
+        forget_font_lookups()
+
+
+def forget_font_lookups() -> None:
+    """after fonts are added (here, and the Web version's Japanese font: src/local/drawing.ts):
+    what ezdxf remembers of the lookups made before them forgotten. It keeps a family not found
+    as not found, and a missing font's stand-in (DejaVu Sans) under that font's name. ezdxf
+    1.4.4's own (pinned in requirements.lock): check them on an upgrade"""
+    fm = fonts.font_manager
+    fm._match_cache.clear()
+    fm._loaded_ttf_fonts.clear()
+    fonts._CachedFont._glyph_caches.clear()
+
+
+def _drawn_entities(doc):
+    """the entities load_drawing draws: modelspace's, and those of the blocks they insert
+    (an INSERT's, a dimension's), nested; an INSERT's attributes too. Not paper space, not a
+    block nothing in modelspace uses"""
+    seen: set[str] = set()
+    layouts = [doc.modelspace()]
+    while layouts:
+        for e in layouts.pop():
+            yield e
+            t = e.dxftype()
+            if t == "INSERT":
+                yield from e.attribs
+                name = e.dxf.get("name")
+            elif t in ("DIMENSION", "ARC_DIMENSION", "RADIAL_DIMENSION", "LARGE_RADIAL_DIMENSION"):
+                name = e.dxf.get("geometry")
+            else:
+                continue
+            if name and name not in seen and name in doc.blocks:
+                seen.add(name)
+                layouts.append(doc.blocks.get(name))
 
 
 def _japanese_by_style(doc) -> dict[str, set[str]]:
-    """the Japanese characters each text style draws (styles by name, in lower case): a
-    text's, an attribute's, an MTEXT's style. A dimension's text is an MTEXT in its block
+    """the Japanese characters each text style draws (styles by name, in lower case), of the
+    entities drawn (modelspace's and its blocks'): a text's, an attribute's, an MTEXT's style. A dimension's text is an MTEXT in its block
     (ezdxf draws a dimension from its block only), in its dimension style's text style"""
     out: dict[str, set[str]] = {}
 
@@ -111,7 +145,7 @@ def _japanese_by_style(doc) -> dict[str, set[str]]:
         if chars:
             out.setdefault((style or "Standard").lower(), set()).update(chars)
 
-    for e in doc.entitydb.values():
+    for e in _drawn_entities(doc):
         t = e.dxftype()
         if t == "MTEXT":
             add(e.dxf.get("style"), e.text)
@@ -183,7 +217,7 @@ def _fit_fonts(doc) -> None:
         if used and not _has_glyphs(_style_font_file(style), used):
             style.dxf.font = cjk
     family = fonts.font_manager.get_font_face(cjk).family
-    for e in doc.entitydb.values():
+    for e in _drawn_entities(doc):
         if e.dxftype() == "MTEXT":
             used = set(_CJK.findall(e.text))
             if used:

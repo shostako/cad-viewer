@@ -134,3 +134,25 @@ test('which drawings may have Japanese in them (the Japanese font loaded for tho
   const plate = path.join(ROOT, 'testdata', 'plate_drawing.dxf')
   if (fs.existsSync(plate)) assert.equal(mayHaveJapanese(new Uint8Array(fs.readFileSync(plate))), false, 'plate_drawing.dxf')
 })
+
+test('a drawing with Japanese after one that named the Japanese font: drawn as on its own', { skip: !ready && 'no backend venv, testdata or web-public/py' }, async () => {
+  // a drawing without Japanese that asks for Noto Sans JP (a style on its file, an MTEXT on
+  // its family) before the font is loaded: ezdxf remembers both as missing
+  const named = path.join(TMP, 'named_font.dxf')
+  execFileSync(PYTHON, ['-c', `import ezdxf
+doc = ezdxf.new("R2010")
+doc.styles.new("N", dxfattribs={"font": "NotoSansJP-Regular.otf"})
+msp = doc.modelspace()
+msp.add_text("GATE", height=5, dxfattribs={"style": "N"})
+msp.add_mtext("\\\\fNoto Sans JP;GATE", dxfattribs={"char_height": 5, "insert": (0, 10)})
+doc.saveas(${JSON.stringify(named)})`])
+  const japanese = path.join(ROOT, 'testdata', 'japanese_drawing.dxf')
+  // a page of its own: Python started afresh
+  const fresh = new LocalBackend(memoryStore(), '0.0.0', null, pyodideRenderer(PY, async (opts) => (await import('pyodide')).loadPyodide(opts), async (f) => new Uint8Array(fs.readFileSync(PY + f))))
+  const first = await fresh.handle('POST', '/api/models', { name: 'named_font.dxf', bytes: new Uint8Array(fs.readFileSync(named)).buffer })
+  assert.equal(first.status, 200, JSON.stringify(first.body))
+  const up = await fresh.handle('POST', '/api/models', { name: 'japanese_drawing.dxf', bytes: new Uint8Array(fs.readFileSync(japanese)).buffer })
+  assert.equal(up.status, 200, JSON.stringify(up.body))
+  const svg = await fresh.handle('GET', `/api/models/${(up.body as any).id}/drawing.svg`)
+  assert.equal(svg.body, golden[japanese].svg, 'as when it is the first drawing with Japanese')
+})
