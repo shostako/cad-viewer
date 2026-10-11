@@ -8,6 +8,8 @@
  */
 import { unzipSync } from 'three/examples/jsm/libs/fflate.module.js'
 
+import { triangulate } from './polygons.ts'
+
 export interface TriMesh {
   /** x, y, z per vertex */
   positions: Float64Array
@@ -115,9 +117,16 @@ function readStl(bytes: Uint8Array): Soup {
 
 // ---- OBJ -----------------------------------------------------------------------
 
+/** the triangles of faces of any number of corners, each cut along its shape (polygons.ts) */
+function cut(positions: number[], faces: number[][]): number[] {
+  const indices: number[] = []
+  for (const f of faces) triangulate(positions, f, indices)
+  return indices
+}
+
 function readObj(s: string): Soup {
   const positions: number[] = []
-  const indices: number[] = []
+  const faces: number[][] = []
   for (const raw of s.split(/\r?\n/)) {
     const line = raw.trim()
     if (line.startsWith('v ')) {
@@ -125,18 +134,19 @@ function readObj(s: string): Soup {
       positions.push(Number(x), Number(y), Number(z))
     } else if (line.startsWith('f ')) {
       const nv = positions.length / 3
-      // "f 1 2 3", "f 1/1 2/2 3/3", "f 1//1 ...", negative = from the end; a polygon as a fan
-      const vs = line
-        .split(/\s+/)
-        .slice(1)
-        .map((tok) => {
-          const i = parseInt(tok.split('/')[0], 10)
-          return i < 0 ? nv + i : i - 1
-        })
-      for (let k = 1; k + 1 < vs.length; k++) indices.push(vs[0], vs[k], vs[k + 1])
+      // "f 1 2 3", "f 1/1 2/2 3/3", "f 1//1 ...", negative = from the end
+      faces.push(
+        line
+          .split(/\s+/)
+          .slice(1)
+          .map((tok) => {
+            const i = parseInt(tok.split('/')[0], 10)
+            return i < 0 ? nv + i : i - 1
+          }),
+      )
     }
   }
-  return { positions, indices }
+  return { positions, indices: cut(positions, faces) }
 }
 
 // ---- OFF -----------------------------------------------------------------------
@@ -155,14 +165,13 @@ function readOff(s: string): Soup {
   at++ // the edge count
   const positions = tokens.slice(at, at + 3 * nv).map(Number)
   at += 3 * nv
-  const indices: number[] = []
+  const faces: number[][] = []
   for (let f = 0; f < nf; f++) {
     const k = Number(tokens[at++])
-    const vs = tokens.slice(at, at + k).map(Number)
+    faces.push(tokens.slice(at, at + k).map(Number))
     at += k
-    for (let j = 1; j + 1 < vs.length; j++) indices.push(vs[0], vs[j], vs[j + 1])
   }
-  return { positions, indices }
+  return { positions, indices: cut(positions, faces) }
 }
 
 // ---- PLY -----------------------------------------------------------------------
@@ -199,12 +208,12 @@ function readPly(bytes: Uint8Array): Soup {
     }
   }
   const positions: number[] = []
-  const indices: number[] = []
+  const faces: number[][] = []
   const take = (el: string, values: Record<string, number | number[]>) => {
     if (el === 'vertex') positions.push(Number(values.x), Number(values.y), Number(values.z))
     else if (el === 'face') {
       const vs = (values.vertex_indices ?? values.vertex_index) as number[] | undefined
-      if (vs) for (let k = 1; k + 1 < vs.length; k++) indices.push(vs[0], vs[k], vs[k + 1])
+      if (vs) faces.push(vs)
     }
   }
   if (format === 'ascii') {
@@ -250,7 +259,7 @@ function readPly(bytes: Uint8Array): Soup {
       }
     }
   }
-  return { positions, indices }
+  return { positions, indices: cut(positions, faces) }
 }
 
 // ---- 3MF -----------------------------------------------------------------------

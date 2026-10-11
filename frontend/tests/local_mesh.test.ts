@@ -176,6 +176,60 @@ function threeMf(a: Tri[], b: Tri[], quote = '"'): Uint8Array {
   })
 }
 
+// ---- faces of more than three corners (#87; backend/tests/test_polygons.py has the same shapes) ----
+
+type Faces = { v: V[]; f: number[][] }
+type Poly = [number, number][]
+
+/** an L of area 64, from a corner that does not see the far end of the L (the fan from it is wrong) */
+const L_POLY: Poly = [[10, 4], [4, 4], [4, 10], [0, 10], [0, 0], [10, 0]]
+/** a comb of four slots (area 9 x 5 - 4 x 4), from a slot's bottom corner */
+const COMB: Poly = [[1, 1], [1, 5], [0, 5], [0, 0], [9, 0], [9, 5], [8, 5], [8, 1], [7, 1], [7, 5], [6, 5], [6, 1], [5, 1], [5, 5], [4, 5], [4, 1], [3, 1], [3, 5], [2, 5], [2, 1]]
+/** a 10 x 10 square with a 4 x 4 hole joined to the outside by a cut (its ends twice, at the same places) */
+const BRIDGED: Poly = [[0, 5], [0, 0], [10, 0], [10, 10], [0, 10], [0, 5], [3, 5], [3, 7], [7, 7], [7, 3], [3, 3], [3, 5]]
+/** the L from its first outer corner: concave, but the fan is right */
+const STAR: Poly = [[0, 0], [10, 0], [10, 4], [4, 4], [4, 10], [0, 10]]
+
+/** a prism over a counter-clockwise polygon: each cap one face from the polygon's
+ * first corner (the bottom turned over), the walls quads (skip: walls left out) */
+function prismFaces(poly: Poly, h: number, skip: (i: number, j: number) => boolean = () => false): Faces {
+  const n = poly.length
+  const v: V[] = [...poly.map(([x, y]): V => [x, y, 0]), ...poly.map(([x, y]): V => [x, y, h])]
+  const f: number[][] = [[0, ...Array.from({ length: n - 1 }, (_, i) => n - 1 - i)], Array.from({ length: n }, (_, i) => n + i)]
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n
+    if (!skip(i, j)) f.push([i, j, n + j, n + i])
+  }
+  return { v, f }
+}
+
+/** turned about the x axis (a > 0) or the y axis (a < 0) by |a|: the caps' normals' largest axis is then y or x */
+const tilt = ({ v, f }: Faces, a: number): Faces => {
+  const c = Math.cos(Math.abs(a)), s = Math.sin(Math.abs(a))
+  return { v: v.map(([x, y, z]): V => (a > 0 ? [x, y * c - z * s, y * s + z * c] : [x * c + z * s, y, -x * s + z * c])), f }
+}
+
+const objFaces = ({ v, f }: Faces) => `${v.map((p) => `v ${p.join(' ')}`).join('\n')}\n${f.map((t) => `f ${t.map((k) => k + 1).join(' ')}`).join('\n')}\n`
+const offFaces = ({ v, f }: Faces) => `OFF\n${v.length} ${f.length} 0\n${v.map((p) => p.join(' ')).join('\n')}\n${f.map((t) => `${t.length} ${t.join(' ')}`).join('\n')}\n`
+const plyHead = (fmt: string, { v, f }: Faces) =>
+  `ply\nformat ${fmt} 1.0\nelement vertex ${v.length}\nproperty double x\nproperty double y\nproperty double z\nelement face ${f.length}\nproperty list uchar int vertex_indices\nend_header\n`
+const plyFacesText = (m: Faces) => `${plyHead('ascii', m)}${m.v.map((p) => p.join(' ')).join('\n')}\n${m.f.map((t) => `${t.length} ${t.join(' ')}`).join('\n')}\n`
+function plyFacesBinary(m: Faces): Uint8Array {
+  const head = new TextEncoder().encode(plyHead('binary_little_endian', m))
+  const body = new DataView(new ArrayBuffer(m.v.length * 24 + m.f.reduce((s, t) => s + 1 + 4 * t.length, 0)))
+  let at = 0
+  for (const p of m.v) for (const x of p) (body.setFloat64(at, x, true), (at += 8))
+  for (const t of m.f) {
+    body.setUint8(at++, t.length)
+    for (const k of t) (body.setInt32(at, k, true), (at += 4))
+  }
+  const out = new Uint8Array(head.byteLength + body.byteLength)
+  out.set(head)
+  out.set(new Uint8Array(body.buffer), head.byteLength)
+  return out
+}
+const alongCut = (i: number, j: number) => (i === 5 && j === 6) || (i === 11 && j === 0)
+
 // ---- the files and the comparison -----------------------------------------------
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cad-viewer-engine-'))
@@ -202,6 +256,22 @@ const files: Record<string, Uint8Array | string> = {
   'box.off': off(box([0, 0, 0], [1, 2, 3])),
   'parts.3mf': threeMf(box([0, 0, 0], [2, 3, 4]), prism(16, 2, 3)),
   'single_quotes.3mf': threeMf(box([0, 0, 0], [3, 2, 1]), prism(12, 1, 2), "'"),
+  // faces of more than three corners, cut along their shape (#87). trimesh does
+  // not read the OFF and the binary PLY (different corner counts): the backend
+  // reads those as meshload.ts does
+  'l_prism.obj': objFaces(prismFaces(L_POLY, 3)),
+  'l_prism.off': offFaces(prismFaces(L_POLY, 3)),
+  'l_prism.ply': plyFacesText(prismFaces(L_POLY, 3)),
+  'l_prism_binary.ply': plyFacesBinary(prismFaces(L_POLY, 3)),
+  'comb.obj': objFaces(prismFaces(COMB, 2)),
+  'comb_binary.ply': plyFacesBinary(prismFaces(COMB, 2)),
+  'hole_cut.obj': objFaces(prismFaces(BRIDGED, 2, alongCut)),
+  'hole_cut.off': offFaces(prismFaces(BRIDGED, 2, alongCut)),
+  'star.obj': objFaces(prismFaces(STAR, 3)),
+  'tilted_x.obj': objFaces(tilt(prismFaces(COMB, 2), 1.1)),
+  'tilted_y.ply': plyFacesText(tilt(prismFaces(L_POLY, 3), -1.1)),
+  // one face that crosses itself: no ear, a fan
+  'bowtie.obj': 'v 0 0 0\nv 4 4 0\nv 4 0 0\nv 0 4 0\nf 1 2 3 4\n',
 }
 for (const [name, data] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), data)
 const paths = Object.keys(files).map((n) => path.join(dir, n))
@@ -240,6 +310,22 @@ for (const file of paths) {
     let off = 0
     for (let i = 0; i < mine.length; i++) if (mine[i].some((x, k) => Math.abs(x - theirs[i][k]) > 2e-4)) off++
     assert.equal(off, 0, `${off} of ${mine.length} vertices or their normals differ, e.g. ${JSON.stringify(mine.find((v, i) => v.some((x, k) => Math.abs(x - theirs[i][k]) > 2e-4)))}`)
+    // the same triangles (how a face of more than three corners is cut, #87):
+    // each from its least corner, the turn kept, as engine_golden.py's triangles
+    const idx = pack.buffers['p0:indices']
+    const tris: number[][] = []
+    for (let t = 0; t < idx.length; t += 3) {
+      const tri = [0, 1, 2].map((k) => [0, 1, 2].map((j) => r4(pos[3 * idx[t + k] + j])))
+      let least = 0
+      for (let k = 1; k < 3; k++) if (order([...tri[k], 0, 0, 0], [...tri[least], 0, 0, 0]) < 0) least = k
+      tris.push([...tri.slice(least), ...tri.slice(0, least)].flat())
+    }
+    const byCorners = (a: number[], b: number[]) => { for (let k = 0; k < 9; k++) if (a[k] !== b[k]) return a[k] - b[k]; return 0 }
+    tris.sort(byCorners)
+    const wantTris = (want.triangles as number[][][]).map((t) => t.flat()).sort(byCorners)
+    assert.equal(tris.length, wantTris.length, 'triangles')
+    const differ = tris.findIndex((t, i) => t.some((x, k) => Math.abs(x - wantTris[i][k]) > 2e-4))
+    assert.equal(differ, -1, `triangle ${differ} differs: ${JSON.stringify(tris[differ])} vs ${JSON.stringify(wantTris[differ])}`)
     const props = (await be.handle('GET', `/api/models/${meta.id}/properties`)).body as any
     const [got, exp] = [props.parts[0], want.properties.parts[0]]
     assert.equal(got.closed, exp.closed, 'closed')
@@ -267,6 +353,22 @@ test('known values (no backend needed)', async () => {
   close((await read('notch.stl')).total.volume, (100 - 36) * 3 + 4, 1e-9, 'an L and a box in its notch')
   close((await read('inside_out.stl')).total.volume, 27, 1e-9, 'a box turned inside out')
   assert.equal((await read('open.stl')).parts[0].reason, 'open')
+  // faces of more than three corners cut along their shape (#87): the fan from
+  // the first corner has the volume right too (its triangles out of the face
+  // cancel), but not the area
+  const perimeter = (p: Poly) => p.reduce((s, [x, y], i) => s + Math.hypot(p[(i + 1) % p.length][0] - x, p[(i + 1) % p.length][1] - y), 0)
+  for (const [name, area, h, poly] of [
+    ['l_prism.obj', 64, 3, L_POLY], ['l_prism.off', 64, 3, L_POLY], ['l_prism.ply', 64, 3, L_POLY], ['l_prism_binary.ply', 64, 3, L_POLY],
+    ['comb.obj', 29, 2, COMB], ['comb_binary.ply', 29, 2, COMB], ['tilted_x.obj', 29, 2, COMB], ['tilted_y.ply', 64, 3, L_POLY],
+    ['star.obj', 64, 3, STAR],
+  ] as [string, number, number, Poly][]) {
+    const p = (await read(name)).parts[0]
+    // the values come from the display mesh's float32 positions: off the grid (tilted), to 1e-7 or so
+    const rel = name.startsWith('tilted') ? 1e-6 : 1e-9
+    close(p.volume, area * h, rel, `${name}: volume`)
+    close(p.area, 2 * area + h * perimeter(poly), rel, `${name}: area`)
+  }
+  for (const name of ['hole_cut.obj', 'hole_cut.off']) close((await read(name)).total.volume, 84 * 2, 1e-9, `${name}: volume`)
   assert.equal((await read('mixed_winding.stl')).parts[0].reason, 'winding')
 })
 
