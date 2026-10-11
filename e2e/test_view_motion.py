@@ -174,16 +174,19 @@ with nav_session() as n:
 
     # ---- 5. a load frames at once: watched from before the load, every frame
     #      after 読み込み中 has gone is the same pose
-    # (kept on window: evaluate would wait for the promise, before the load ran)
+    # (kept on window: evaluate would wait for the promise, before the load ran).
+    # The same file again can load within a frame (the model kept, the Web
+    # version's Worker answering at once): 読み込み中 may never be drawn, so the
+    # frames are also counted from when the script has seen the load done
     page.evaluate(
-        """() => { window.__watch = new Promise(res => {
+        """() => { window.__loaded = false; window.__watch = new Promise(res => {
           const out = []
           let loading = false
           const t0 = performance.now()
           const tick = () => {
             const t = document.querySelector('#hud-info').textContent
             if (t.includes('読み込み中')) loading = true
-            else if (loading) out.push(window.__cadView().position)
+            else if (loading || window.__loaded) out.push(window.__cadView().position)
             if (performance.now() - t0 < 20000 && out.length < 30) requestAnimationFrame(tick)
             else res(out)
           }
@@ -191,6 +194,7 @@ with nav_session() as n:
         }) }"""
     )
     n.load(n.paths["step"])
+    page.evaluate("() => { window.__loaded = true }")
     positions = page.evaluate("() => window.__watch")
     assert len(positions) == 30, ("5 the frames after the load", len(positions))
     assert all(close(q, positions[0], 1e-9) for q in positions), ("5 the load fit moves", positions[0], positions[-1])
