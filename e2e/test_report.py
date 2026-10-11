@@ -115,6 +115,8 @@ with nav_session() as n:
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('距離 25.000')", timeout=10000)
     gui_common.set_mode(page, "なし")
     gui_common.open_folder(page, "問題の一覧")
+    # 厚肉 is test_thick_spots.py's: this list is the wall's and the draft's, as written
+    gui_common.ctl(page, "厚肉を調べる").locator("input").uncheck()
     gui_common.ctl(page, "一覧を出す").locator("input").check()
     page.wait_for_function("!!window.__cadCheck()", timeout=60000)
     page.wait_for_function("document.querySelector('#props-total-proj')?.textContent.includes('cm²')", timeout=60000)
@@ -162,7 +164,7 @@ with nav_session() as n:
     rec = dict(b["確認の記録"][1:])
     assert rec["ファイル"] == "mini_mold.step" and rec["識別（SHA-256 の先頭 32 桁）"] == MOLD_HASH, rec
     assert rec["アプリ"] == f"cad-viewer {VERSION}" and rec["単位"] == "mm" and rec["形式"] == "B-rep（STEP・IGES）", rec
-    assert rec["用途"] == "射出成形" and rec["材料"].startswith("PMMA（一般的な基準: 比重 1.19・肉厚の下限 0.64 mm・勾配 0.5°。根拠: "), rec
+    assert rec["用途"] == "射出成形" and rec["材料"].startswith("PMMA（一般的な基準: 比重 1.19・肉厚の下限 0.64 mm・勾配 0.5°・厚肉 1.5 倍。根拠: "), rec
     assert rec["判定"] == "要確認" and rec["確認者"] == "テスト 太郎" and rec["コメント"] == comment, rec
     assert re.fullmatch(r"\d{4}-\d\d-\d\d \d\d:\d\d", rec["確認日時"]), rec
 

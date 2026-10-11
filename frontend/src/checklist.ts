@@ -4,6 +4,10 @@
  *
  * - 薄肉: walls thinner than the 肉厚 threshold. A place is a run of thin
  *   vertices (spots.ts thinSpots); its value is the thinnest there.
+ * - 厚肉: where a sphere at least the ratio x the general wall across fits
+ *   (thick.py, GET /thick): a place where a sink or a void is to be feared.
+ *   Its value is its largest sphere's diameter; the general wall is each
+ *   part's own (the faces' mode) unless one is given.
  * - 勾配不足: faces short of the required draft for the pull direction. A
  *   place is a B-rep face, or a run of triangles of a mesh-format part
  *   (spots.ts draftSpots); its value is the draft angle at its marker.
@@ -26,15 +30,19 @@ import { DRAFT_CLASS_NAMES, DRAFT_COLORS } from './draft'
 import { ICON, icon } from './icons'
 import { fmtThin } from './materials'
 import { fmtNum } from './properties'
+import type { ThickPart } from './api'
 import { draftSpots, spotText, thinSpots, type Spot, type SpotPart } from './spots'
 import { cell, copyText } from './measurelist'
 import { foldButton } from './cardfold'
 import { ONLY_ICON } from './tree'
 
-export type CheckKind = 'thin' | 'short' | 'opposite'
+export type CheckKind = 'thin' | 'thick' | 'short' | 'opposite'
+/** the kinds in the list's order: the wall's two, then the draft's */
+const KINDS = ['thin', 'thick', 'short', 'opposite'] as const
 
 export const CHECK_KIND_NAMES: Record<CheckKind, string> = {
   thin: '薄肉',
+  thick: '厚肉',
   short: DRAFT_CLASS_NAMES.short,
   opposite: DRAFT_CLASS_NAMES.opposite,
 }
@@ -43,6 +51,8 @@ export const CHECK_KIND_NAMES: Record<CheckKind, string> = {
 export interface CheckConditions {
   thin: { threshold: number; methodName: string } | null
   draft: { dirLabel: string; dir: readonly [number, number, number]; required: number } | null
+  /** 厚肉: the ratio to the general wall, and the wall given (null: each part's own, found) */
+  thick?: { ratio: number; nominal: number | null } | null
   /** the 判定の基準 the values come from (materials.ts basisText: 「PC（根拠: 社内の目安）」); absent: set by hand */
   basis?: string | null
 }
@@ -80,6 +90,7 @@ export function runChecks(
   unjudged: (partId: number) => string | null,
   conditions: CheckConditions,
   values: ReadonlyMap<number, ArrayLike<number>> | null,
+  thick: ReadonlyMap<number, ThickPart> | null = null,
 ): CheckResult {
   const judged: SpotPart[] = []
   const undecided: Undecided[] = []
@@ -101,6 +112,38 @@ export function runChecks(
       if (none) undecided.push({ partId: part.partId, why: `肉厚の値が出ない頂点 ${none} / ${n} 個` })
     }
   }
+  if (conditions.thick && thick) {
+    const found: CheckRow[] = []
+    for (const part of judged) {
+      const t = thick.get(part.partId)
+      if (!t) continue
+      if (t.status !== 'ok' || !t.spots) {
+        undecided.push({ partId: part.partId, why: `厚肉を判定できない（${THICK_STATUS[t.status] ?? t.status}）` })
+        continue
+      }
+      for (const s of t.spots) {
+        const r = s.diameter / 2
+        found.push({
+          kind: 'thick',
+          spot: {
+            partId: part.partId,
+            faceId: null,
+            at: s.surface,
+            normal: s.normal,
+            min: [s.center[0] - r, s.center[1] - r, s.center[2] - r],
+            max: [s.center[0] + r, s.center[1] + r, s.center[2] + r],
+            value: s.diameter,
+            area: 0,
+            sphere: { center: s.center, radius: r },
+            ratio: s.ratio,
+          },
+        })
+      }
+      if (t.spotsMore) undecided.push({ partId: part.partId, why: `厚肉: ほか ${t.spotsMore} 所（大きい順に ${t.spots.length} 所まで出す）` })
+    }
+    // the largest first, over the parts
+    rows.push(...found.sort((a, b) => b.spot.value - a.spot.value))
+  }
   if (conditions.draft) {
     const { dir, required } = conditions.draft
     for (const kind of ['short', 'opposite'] as const) {
@@ -110,10 +153,27 @@ export function runChecks(
   return { rows, undecided }
 }
 
-/** 「肉厚 1.5 mm 未満（レイ法）」「型開き +Z」「勾配 1.0° 未満」 */
+/** why a part's 厚肉 cannot be judged (GET /thick's status) */
+const THICK_STATUS: Record<string, string> = {
+  open: '閉じていない',
+  winding: '面の向きが不揃い',
+  degenerate: '厚みがない',
+  no_faces: '面がない',
+  failed: '計算できない',
+  no_nominal: '一般部の肉厚が出ない',
+}
+
+/** 1.5 → 「1.5」, 1.25 → 「1.25」: a ratio of the 0.05 steps, as short as it reads */
+const fmtRatio = (v: number): string => String(Number(v.toFixed(2)))
+
+/** 「肉厚 1.5 mm 未満（レイ法）」「厚肉 一般部の 1.5 倍以上（一般部 部品ごとに自動）」「型開き +Z」「勾配 1.0° 未満」 */
 function conditionItems(c: CheckConditions): string[] {
   const parts: string[] = []
   if (c.thin) parts.push(`肉厚 ${fmtThin(c.thin.threshold)} mm 未満（${c.thin.methodName}）`)
+  if (c.thick) {
+    const wall = c.thick.nominal === null ? '部品ごとに自動' : `${fmtThin(c.thick.nominal)} mm`
+    parts.push(`厚肉 一般部の ${fmtRatio(c.thick.ratio)} 倍以上（一般部 ${wall}）`)
+  }
   if (c.draft) parts.push(`型開き ${c.draft.dirLabel}`, `勾配 ${c.draft.required.toFixed(1)}° 未満`)
   if (c.basis) parts.push(`基準 ${c.basis}`)
   return parts
@@ -147,6 +207,7 @@ export interface CheckPanelHooks {
 /** the colour mark of a row's kind: the colouring's own colour */
 const KIND_COLOR: Record<CheckKind | 'undecided', string> = {
   thin: '#d90805', // the heatmap's red (thickness.ts RED)
+  thick: '#9b4dca', // the 厚肉 sphere's (viewer.ts THICK_SPHERE_COLOR)
   short: `#${DRAFT_COLORS.short.toString(16).padStart(6, '0')}`,
   opposite: `#${DRAFT_COLORS.opposite.toString(16).padStart(6, '0')}`,
   undecided: '#8c9ebf', // the heatmap's データなし (thickness.ts NO_DATA)
@@ -201,7 +262,7 @@ export class CheckPanel {
     this.current = null
     const list = document.createElement('ul')
     list.className = 'check-list'
-    for (const kind of ['thin', 'short', 'opposite'] as const) {
+    for (const kind of KINDS) {
       const rows = result.rows.filter((r) => r.kind === kind)
       for (const row of rows.slice(0, CHECK_ROWS_MAX)) list.appendChild(this.placeRow(row))
       if (rows.length > CHECK_ROWS_MAX) {
@@ -229,7 +290,7 @@ export class CheckPanel {
   caption(row: CheckRow): string {
     const s = row.spot
     const face = s.faceId === null ? '' : ` 面#${s.faceId}`
-    const area = row.kind === 'thin' ? '' : ` ${fmtNum(s.area, 1)} mm²`
+    const area = row.kind === 'thin' || row.kind === 'thick' ? '' : ` ${fmtNum(s.area, 1)} mm²`
     return `${CHECK_KIND_NAMES[row.kind]} ${spotText(row.kind, s)}${area} · ${this.hooks.partName(s.partId)}${face} ${shortPoint(s.at)}`
   }
 
@@ -253,9 +314,10 @@ export class CheckPanel {
     const rows: string[][] = []
     for (const row of r.rows) {
       const s = row.spot
-      const value = row.kind === 'thin' ? fixed(s.value, 3) : fixed(s.value, 2)
-      const unit = row.kind === 'thin' ? 'mm' : '°'
-      const area = row.kind === 'thin' ? '' : s.area.toFixed(1)
+      const wall = row.kind === 'thin' || row.kind === 'thick'
+      const value = wall ? fixed(s.value, 3) : fixed(s.value, 2)
+      const unit = wall ? 'mm' : '°'
+      const area = wall ? '' : s.area.toFixed(1)
       rows.push([CHECK_KIND_NAMES[row.kind], value, unit, this.hooks.partName(s.partId), ...s.at.map((v) => fixed(v, 3)), area, cond])
     }
     for (const u of r.undecided) rows.push(['判定できない', u.why, '', this.hooks.partName(u.partId), '', '', '', '', cond])
@@ -289,8 +351,7 @@ export class CheckPanel {
   /** 「薄肉 3」「勾配不足 6」「反対側 6」「判定できない 1」 (the kinds checked) */
   private countItems(result: CheckResult): string[] {
     const n = (k: CheckKind) => result.rows.filter((r) => r.kind === k).length
-    const parts = (['thin', 'short', 'opposite'] as const)
-      .filter((k) => (k === 'thin' ? this.conditions?.thin : this.conditions?.draft))
+    const parts = KINDS.filter((k) => (k === 'thin' ? this.conditions?.thin : k === 'thick' ? this.conditions?.thick : this.conditions?.draft))
       .map((k) => `${CHECK_KIND_NAMES[k]} ${n(k)}`)
     if (result.undecided.length) parts.push(`判定できない ${result.undecided.length}`)
     return parts
@@ -312,11 +373,12 @@ export class CheckPanel {
     main.className = 'check-main'
     const value = document.createElement('span')
     value.className = 'check-value'
-    value.textContent = spotText(row.kind, s)
+    value.textContent = row.kind === 'thick' ? `⌀${s.value.toFixed(2)} mm` : spotText(row.kind, s)
     if (row.kind !== 'thin') {
+      // the draft's area, 厚肉's ratio: smaller, after the value
       const area = document.createElement('span')
       area.className = 'check-area'
-      area.textContent = ` ${fmtNum(s.area, 1)} mm²`
+      area.textContent = row.kind === 'thick' ? ` 一般部の ${(s.ratio ?? 0).toFixed(1)} 倍` : ` ${fmtNum(s.area, 1)} mm²`
       value.appendChild(area)
     }
     const what = document.createElement('span')

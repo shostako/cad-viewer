@@ -71,7 +71,7 @@ with nav_session() as n:
     assert not shown("#check-panel .check-list") and not shown("#check-panel .check-conditions"), "the rows and the conditions go"
     assert shown("#check-panel .check-counts") and shown("#check-panel .check-copy-all"), "the counts and すべてコピー stay"
     counts = page.inner_text("#check-panel .check-counts")
-    assert counts.startswith("薄肉 0・勾配不足 10・反対側 4"), counts
+    assert counts.startswith("薄肉 0・厚肉 0・勾配不足 10・反対側 4"), counts
     folded_h = rect("#check-panel")[3] - rect("#check-panel")[1]
     assert folded_h < 80 and folded_h < open_h["#check-panel"] / 2, (folded_h, open_h)
     # the room goes to the others: the operation panel first (it scrolled), then the measure list

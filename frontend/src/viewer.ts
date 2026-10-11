@@ -66,6 +66,9 @@ const SPOT_POINT_SHARE = 0.3
 const SPOT_TILT = 0.4
 // The ring the 記録's images put on a place's point (spotSnapshot) is the
 // palette's ring: the spot marker's colour (style.css .spot-ring).
+/** a 厚肉 place's sphere (checklist.ts KIND_COLOR thick): seen through the faces, see-through itself */
+const THICK_SPHERE_COLOR = 0x9b4dca
+const THICK_SPHERE_OPACITY = 0.35
 /** share of the limiting dimension of the fit area a fit fills; the rest is margin */
 const FIT_FILL = 0.88
 /**
@@ -259,6 +262,8 @@ export class Viewer {
   private pivotMarker: CSS2DObject | null = null
   /** the marker of the place a legend went to (goToSpot), until clearSpot */
   private spotMarker: CSS2DObject | null = null
+  /** a 厚肉 place's sphere, while its marker is up */
+  private spotSphere: THREE.Group | null = null
   /** the chosen coordinate system's mark (setFrameMarker), and its lines' materials (sized with the canvas) */
   private frameMarker: THREE.Group | null = null
   private frameLineMaterials: LineMaterial[] = []
@@ -1159,8 +1164,38 @@ export class Viewer {
     const box = this.frameSpot(spot)
     this.rememberFit(null, box)
     this.showSpotMarker(new THREE.Vector3(...spot.at), text)
+    if (spot.sphere) {
+      this.spotSphere = this.makeSpotSphere(spot.sphere)
+      this.scene.add(this.spotSphere)
+    }
     this.spotShown = spot
     this.animateFrom(from)
+  }
+
+  /**
+   * A 厚肉 place's largest sphere: drawn over the faces in front of it (no
+   * depth test), see-through, with its outline ring always facing the camera
+   */
+  private makeSpotSphere(sphere: NonNullable<Spot['sphere']>): THREE.Group {
+    const g = new THREE.Group()
+    g.name = 'thick-sphere'
+    const body = new THREE.Mesh(
+      new THREE.SphereGeometry(sphere.radius, 32, 16),
+      new THREE.MeshBasicMaterial({ color: THICK_SPHERE_COLOR, transparent: true, opacity: THICK_SPHERE_OPACITY, depthTest: false, depthWrite: false }),
+    )
+    body.renderOrder = 997
+    const rim = new THREE.Mesh(
+      new THREE.RingGeometry(sphere.radius * 0.97, sphere.radius, 64),
+      new THREE.MeshBasicMaterial({ color: THICK_SPHERE_COLOR, side: THREE.DoubleSide, depthTest: false, depthWrite: false, transparent: true }),
+    )
+    rim.renderOrder = 998
+    rim.onBeforeRender = (_r, _s, camera) => {
+      rim.quaternion.copy(camera.quaternion)
+      rim.updateMatrixWorld()
+    }
+    g.add(body, rim)
+    g.position.set(...sphere.center)
+    return g
   }
 
   /** the camera on a place, as goToSpot sets it (no motion); the box it framed */
@@ -1202,6 +1237,11 @@ export class Viewer {
     this.finishViewAnim()
     this.stopInertia()
     const avoid = this.fitArea
+    // a 厚肉 place's sphere is in its image too (the screen's, if it is up, is another place's: hidden for the shot)
+    const shown = this.spotSphere
+    if (shown) shown.visible = false
+    const sphere = spot.sphere ? this.makeSpotSphere(spot.sphere) : null
+    if (sphere) this.scene.add(sphere)
     try {
       this.fitArea = () => null
       this.frameSpot(spot)
@@ -1228,6 +1268,11 @@ export class Viewer {
       }
       return shot
     } finally {
+      if (sphere) {
+        this.scene.remove(sphere)
+        this.disposeOverlayObject(sphere)
+      }
+      if (shown) shown.visible = true
       this.fitArea = avoid
       this.persp.near = depth.near
       this.persp.far = depth.far
@@ -1258,6 +1303,12 @@ export class Viewer {
   /** the marker only (goToSpot puts the next one up; what H frames stays) */
   private removeSpotMarker(): void {
     this.spotShown = null
+    if (this.spotSphere) {
+      this.wake()
+      this.scene.remove(this.spotSphere)
+      this.disposeOverlayObject(this.spotSphere)
+      this.spotSphere = null
+    }
     if (!this.spotMarker) return
     this.wake()
     this.scene.remove(this.spotMarker)

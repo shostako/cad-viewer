@@ -280,6 +280,45 @@ export interface PartProperties {
   reason: PropsReason | null
 }
 
+// ---- 厚肉 (GET /thick): the general wall and the places much thicker -------------
+
+/** a place where a sphere at least ratio x the general wall across fits (thick.py) */
+export interface ThickSpot {
+  /** the sphere's centre (inside the part) and its diameter, mm */
+  center: Vec3
+  diameter: number
+  /** diameter / the general wall */
+  ratio: number
+  /** where the sphere touches the surface, and the outward normal there */
+  surface: Vec3
+  normal: Vec3
+}
+
+export interface ThickPart {
+  id: number
+  /** ok; or why the part cannot be judged (open, winding, degenerate, no_faces, failed); no_nominal: no wall found */
+  status: string
+  /** the grid's step (the values are within about it) */
+  pitch?: number
+  /** the general wall found (the faces' mode), and the one used (given, or that) */
+  nominalAuto?: number | null
+  nominal?: number | null
+  spots?: ThickSpot[]
+  /** places past the ones sent (the largest first) */
+  spotsMore?: number
+}
+
+export async function fetchThick(modelId: string, ratio: number, nominals: ReadonlyMap<number, number>): Promise<ThickPart[]> {
+  const nominal = [...nominals].map(([id, mm]) => `${id}:${mm}`).join(',')
+  const q = new URLSearchParams({ ratio: String(ratio), nominal })
+  const res = await fetch(`/api/models/${modelId}/thick?${q}`)
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(detail.detail ?? `thick failed: ${res.status}`)
+  }
+  return (await res.json()).parts
+}
+
 export interface ModelProperties {
   source: 'brep' | 'mesh'
   units: 'mm'

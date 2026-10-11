@@ -91,6 +91,8 @@ with nav_session() as n:
 
     # ---- with the list
     gui_common.open_folder(page, "問題の一覧")
+    # 厚肉 is test_thick_spots.py's: this list is the wall's and the draft's, as written
+    gui_common.ctl(page, "厚肉を調べる").locator("input").uncheck()
     gui_common.ctl(page, "一覧を出す").locator("input").check()
     page.wait_for_function("!!window.__cadCheck()", timeout=60000)
     n.settle()

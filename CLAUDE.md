@@ -114,6 +114,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
   - `tessellation.merge_loose_shapes` — 最上位のバラバラの面（IGES に多い）を縫い合わせて 1 つの形にし、閉じればソリッドにする。バラバラの曲線は「曲線（N 本）」の 1 部品にまとめる
 - `measure.py` — OCCT での計測（distance、edge_info、face_info）
 - `thickness.py` — 肉厚（レイ法とローリングボール法）。表示用メッシュで計算する
+- `thick.py` — 厚肉（`GET /thick`・`/thick.bin`）。部品の中に格子を並べ、表面までの距離（scipy の距離変換）から、面ごとの肉厚・一般部の肉厚（面の最頻値）・肉だまり（一般部の何倍もの球が入る所）を出す。格子はモデルごとに覚える（`entry.extra["thick_fields"]`）。B-rep の部品が閉じているかは `/properties` の判定に任せる（表示用メッシュは曲面の継ぎ目に髪の毛ほどの隙間があり、三角形で見ると開いて見える）。`/properties` はロックの外で先に呼ぶ（B-rep の読み直しが `entry.lock` を取るので、中で呼ぶと止まる）
 - `drawing.py` — DXF/DWG → SVG。DWG は ODA File Converter（無料、手動で入れる、再配布不可）が PATH に必要
 - `cache.py` — テッセレーションの結果を `backend/.cache/` に保存する（キー: ファイルの sha256＋パラメータ＋`CACHE_VERSION`）
 - `store.py` — 読み込んだモデルをメモリに置く（LRU、同じ中身は使い回す）

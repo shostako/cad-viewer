@@ -245,6 +245,153 @@ def get_thickness(model_id: str, method: str = "ray") -> Response:
     return Response(content=blob, media_type="application/octet-stream")
 
 
+def _brep_closure(entry: ModelEntry) -> dict[int, str | None]:
+    """a B-rep model's parts: None if closed, else why not (/properties). Called
+    before entry.lock is taken: the B-rep re-parse takes it by itself"""
+    if entry.fmt != "brep":
+        return {}
+    parts = _properties(entry)["parts"]
+    return {int(p["id"]): None if p.get("closed") else (p.get("reason") or "open") for p in parts}
+
+
+def _thick_fields(entry: ModelEntry, closed: dict[int, str | None]) -> dict[int, Any]:
+    """each part's 厚肉 grid (thick.py), or why it has none: computed once, kept
+    on the entry (under entry.lock).
+
+    A B-rep part's closure is the B-rep's (`closed`, from /properties): its
+    display mesh can have hairline gaps along curved seams that a mesh check
+    would call open; the grid's inside test (rays up its columns) does not see
+    them. A mesh part must be closed itself."""
+    fields = entry.extra.get("thick_fields")
+    if fields is not None:
+        return fields
+    import numpy as np
+
+    from .meshpack import unpack_parts
+    from .thick import NotSolid, grid_budgets, part_field
+
+    header, parts = unpack_parts(entry.mesh_blob)
+    ranges = {int(p["id"]): p.get("faceRanges") or [] for p in header["parts"]}
+    # one budget for the model's grids (they are kept): shared by the parts' sizes
+    boxes = {}
+    for part in parts:
+        pos = part["positions"].reshape(-1, 3)
+        boxes[int(part["id"])] = float(np.prod(pos.max(axis=0) - pos.min(axis=0))) if len(pos) else 0.0
+    budget = grid_budgets(boxes)
+    fields = {}
+    for part in parts:
+        pid = int(part["id"])
+        if pid in closed and closed[pid] is not None:
+            fields[pid] = closed[pid]
+            continue
+        try:
+            fields[pid] = part_field(
+                part["positions"], part["indices"], ranges.get(pid, []), trusted_closed=pid in closed, grid_max=budget[pid]
+            )
+        except NotSolid as e:
+            fields[pid] = e.reason
+        except Exception:
+            logging.getLogger(__name__).exception("厚肉 failed for part %s", pid)
+            fields[pid] = "failed"
+    entry.extra["thick_fields"] = fields
+    return fields
+
+
+@app.get("/api/models/{model_id}/thick")
+def get_thick(model_id: str, ratio: float = 1.5, nominal: str = "") -> dict:
+    """厚肉 (thick.py): per part, the general wall (nominal: the faces' mode, or
+    given as `partId:mm,...`) and the places a sphere at least ratio x nominal
+    across fits, largest first (at most THICK_SPOTS_MAX each, with how many
+    more). A part that cannot be judged says why (status: open, winding, ...)."""
+    if not (1.0 <= ratio <= 10.0):
+        raise HTTPException(422, "ratio must be 1..10")
+    given: dict[int, float] = {}
+    for item in filter(None, nominal.split(",")):
+        try:
+            k, v = item.split(":")
+            given[int(k)] = float(v)
+        except ValueError:
+            raise HTTPException(422, f"nominal: {item!r} is not partId:mm") from None
+        if not (0.01 <= given[int(k)] <= 1000):
+            raise HTTPException(422, "nominal must be 0.01..1000 mm")
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "厚肉 requires a 3D model (mesh or B-rep)")
+    from .thick import spots
+
+    closed = _brep_closure(entry)
+    with entry.lock:
+        fields = _thick_fields(entry, closed)
+    out = []
+    for pid, f in sorted(fields.items()):
+        if isinstance(f, str):
+            out.append({"id": pid, "status": f})
+            continue
+        nom = given.get(pid, f.nominal_auto)
+        found = spots(f, nom, ratio) if nom else []
+        out.append(
+            {
+                "id": pid,
+                "status": "ok" if nom else "no_nominal",
+                "pitch": round(f.pitch, 4),
+                "nominalAuto": None if f.nominal_auto is None else round(f.nominal_auto, 4),
+                "nominal": None if nom is None else round(nom, 4),
+                "spots": found[:THICK_SPOTS_MAX],
+                "spotsMore": max(len(found) - THICK_SPOTS_MAX, 0),
+            }
+        )
+    return {"ratio": ratio, "parts": out}
+
+
+@app.get("/api/models/{model_id}/thick.bin")
+def get_thick_bin(model_id: str) -> Response:
+    """面ごとの肉厚 per display vertex (thick.py): a B-rep face's thickness on
+    each of its vertices, a mesh part's from its triangles. 0: none (a part
+    that cannot be judged, a face too small to sample)."""
+    entry = store.get(model_id)
+    if entry is None:
+        raise HTTPException(404, "model not found")
+    if entry.fmt == "drawing" or not entry.mesh_blob:
+        raise HTTPException(422, "厚肉 requires a 3D model (mesh or B-rep)")
+    import numpy as np
+
+    from .meshpack import pack_buffers, unpack_parts
+
+    closed = _brep_closure(entry)
+    with entry.lock:
+        blob = entry.extra.get("thick_blob")
+        if blob is not None:
+            return Response(content=blob, media_type="application/octet-stream")
+        fields = _thick_fields(entry, closed)
+        header, parts = unpack_parts(entry.mesh_blob)
+        ranges = {int(p["id"]): p.get("faceRanges") or [] for p in header["parts"]}
+        buffers = {}
+        for part in parts:
+            pid = int(part["id"])
+            v = np.zeros(len(part["positions"]), dtype=np.float32)
+            f = fields.get(pid)
+            if f is not None and not isinstance(f, str):
+                if f.vertex_thickness is not None:
+                    v = f.vertex_thickness
+                else:
+                    t = dict((fid, th) for fid, th, _ in f.face_thickness)
+                    idx = part["indices"]
+                    for fr in ranges.get(pid, []):
+                        th = t.get(int(fr["faceId"]))
+                        if th:
+                            s, c = int(fr["triStart"]), int(fr["triCount"])
+                            v[idx[s : s + c].ravel()] = th
+            buffers[f"p{pid}:thick"] = (v, 1)
+        blob = pack_buffers(buffers)
+        entry.extra["thick_blob"] = blob
+    return Response(content=blob, media_type="application/octet-stream")
+
+
+THICK_SPOTS_MAX = 50
+
+
 @app.get("/api/models/{model_id}/properties")
 def get_properties(model_id: str) -> dict:
     """Volume, surface area and centre of mass per part, plus the closed parts' total.
@@ -258,6 +405,11 @@ def get_properties(model_id: str) -> dict:
         raise HTTPException(404, "model not found")
     if entry.fmt == "drawing" or not entry.mesh_blob:
         raise HTTPException(422, "properties require a 3D model (mesh or B-rep)")
+    return _properties(entry)
+
+
+def _properties(entry: ModelEntry) -> dict:
+    """the model's /properties (kept on the entry once computed)"""
     cached = entry.extra.get("properties")
     if cached is not None:
         return cached

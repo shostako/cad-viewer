@@ -13,6 +13,8 @@ import {
   DENSITY_MAX,
   DENSITY_MIN,
   SOURCE_MAX,
+  THICK_MAX,
+  THICK_MIN,
   THIN_MAX,
   THIN_MIN,
   builtin,
@@ -35,6 +37,7 @@ interface RowInputs {
   density: HTMLInputElement
   thin: HTMLInputElement
   draft: HTMLInputElement | null
+  thick: HTMLInputElement | null
   source: HTMLInputElement
   reset: HTMLButtonElement
 }
@@ -65,7 +68,7 @@ export class MaterialPop {
     const table = document.createElement('table')
     table.className = 'basis-table'
     const head = document.createElement('tr')
-    for (const h of ['材料', '比重', '肉厚 mm', '勾配 °', '根拠', '']) {
+    for (const h of ['材料', '比重', '肉厚 mm', '勾配 °', '厚肉 倍', '根拠', '']) {
       const th = document.createElement('th')
       th.textContent = h
       head.appendChild(th)
@@ -128,7 +131,7 @@ export class MaterialPop {
     this.working = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { ...v }]))
     this.savedFile = saved
     this.lead.textContent =
-      '材料ごとの比重、肉厚の下限、必要な勾配（樹脂）と根拠。初めは一般的な基準（出典は根拠に）。社内の基準などで直せる。直した行には印が付き、↺ でその行を既定に戻せる'
+      '材料ごとの比重、肉厚の下限、必要な勾配と厚肉の倍率（樹脂）と根拠。初めは一般的な基準（出典は根拠に）。社内の基準などで直せる。直した行には印が付き、↺ でその行を既定に戻せる'
     this.tbody.replaceChildren()
     this.rows.clear()
     // 金属 and 樹脂 under a heading each, when both are there (一般)
@@ -140,7 +143,7 @@ export class MaterialPop {
         const tr = document.createElement('tr')
         tr.className = 'basis-group'
         const th = document.createElement('th')
-        th.colSpan = 6
+        th.colSpan = 7
         th.textContent = kind === 'metal' ? '金属' : '樹脂'
         tr.appendChild(th)
         this.tbody.appendChild(tr)
@@ -178,13 +181,15 @@ export class MaterialPop {
       i.max = String(max)
       i.step = step
       i.className = cls
-      i.setAttribute('aria-label', `${name} ${cls === 'basis-density' ? '比重' : cls === 'basis-thin' ? '肉厚の下限' : '勾配'}`)
+      const what: Record<string, string> = { 'basis-density': '比重', 'basis-thin': '肉厚の下限', 'basis-draft': '勾配', 'basis-thick': '厚肉の倍率' }
+      i.setAttribute('aria-label', `${name} ${what[cls]}`)
       return i
     }
     cell(name)
     const density = num(DENSITY_MIN, DENSITY_MAX, '0.01', 'basis-density')
     const thin = num(THIN_MIN, THIN_MAX, '0.01', 'basis-thin')
     const draft = kind === 'resin' ? num(0, DRAFT_MAX_DEG, '0.1', 'basis-draft') : null
+    const thick = kind === 'resin' ? num(THICK_MIN, THICK_MAX, '0.05', 'basis-thick') : null
     const source = document.createElement('input')
     source.type = 'text'
     source.className = 'basis-source'
@@ -200,16 +205,21 @@ export class MaterialPop {
     reset.addEventListener('click', () => this.fillRow(name, builtin(name)))
     cell(density)
     cell(thin)
-    if (draft) cell(draft)
-    else {
-      const td = cell('—')
-      td.className = 'basis-none'
-      td.title = '金属は成形しないので勾配を見ない'
+    for (const [input, why] of [
+      [draft, '金属は成形しないので勾配を見ない'],
+      [thick, '金属は成形しないので厚肉（ヒケ・ボイド）を見ない'],
+    ] as const) {
+      if (input) cell(input)
+      else {
+        const td = cell('—')
+        td.className = 'basis-none'
+        td.title = why
+      }
     }
     cell(source)
     cell(reset)
-    const row: RowInputs = { tr, density, thin, draft, source, reset }
-    for (const i of [density, thin, draft, source]) i?.addEventListener('input', () => this.mark(name))
+    const row: RowInputs = { tr, density, thin, draft, thick, source, reset }
+    for (const i of [density, thin, draft, thick, source]) i?.addEventListener('input', () => this.mark(name))
     this.rows.set(name, row)
     this.tbody.appendChild(tr)
   }
@@ -220,6 +230,7 @@ export class MaterialPop {
     r.density.value = String(v.density)
     r.thin.value = String(v.thin)
     if (r.draft) r.draft.value = String(v.draft ?? '')
+    if (r.thick) r.thick.value = String(v.thick ?? '')
     r.source.value = v.source
     r.source.title = v.source // the whole of it (the field shows its start)
     this.mark(name)
@@ -233,6 +244,7 @@ export class MaterialPop {
       density: n(r.density),
       thin: n(r.thin),
       draft: r.draft ? n(r.draft) : null,
+      thick: r.thick ? n(r.thick) : null,
       source: r.source.value,
     }
     return validValues(name, v) ? v : null
@@ -261,10 +273,11 @@ export class MaterialPop {
       if (v.density !== raw.density) rounded.push(`${name} の比重 ${raw.density} → ${v.density}`)
       if (v.thin !== raw.thin) rounded.push(`${name} の肉厚 ${raw.thin} → ${v.thin}`)
       if (v.draft !== raw.draft) rounded.push(`${name} の勾配 ${raw.draft} → ${v.draft}`)
+      if (v.thick !== raw.thick) rounded.push(`${name} の厚肉 ${raw.thick} → ${v.thick}`)
       out[name] = v
     }
     if (bad.length) {
-      this.note.textContent = `保存しなかった: ${bad.join('・')} の値が範囲の外（比重 ${DENSITY_MIN}〜${DENSITY_MAX}、肉厚 ${THIN_MIN}〜${THIN_MAX} mm、勾配 0〜${DRAFT_MAX_DEG}°）`
+      this.note.textContent = `保存しなかった: ${bad.join('・')} の値が範囲の外（比重 ${DENSITY_MIN}〜${DENSITY_MAX}、肉厚 ${THIN_MIN}〜${THIN_MAX} mm、勾配 0〜${DRAFT_MAX_DEG}°、厚肉 ${THICK_MIN}〜${THICK_MAX} 倍）`
       return
     }
     this.working = out
