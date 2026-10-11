@@ -11,7 +11,7 @@ import type { FaceRange, ModelData, PartData } from './model'
 import type { Frame } from './sizes'
 import { paintLabels, type ExportBackground } from './snapshot'
 import type { Spot, SpotPart } from './spots'
-import { thicknessColors } from './thickness'
+import { deviationColors, thicknessColors, type DeviationBands } from './thickness'
 import { onTheme, palette } from './theme'
 
 /**
@@ -598,6 +598,21 @@ export class Viewer {
         continue
       }
       this.applyVertexColors(mesh, (colors) => thicknessColors(t, threshold, colors, thick?.get(partId) ?? null))
+    }
+  }
+
+  /** 一般部との比 (thickness.ts deviationColors): each part's values against its general wall (absent: データなし) */
+  setDeviationColors(thickness: Map<number, Float32Array>, nominals: ReadonlyMap<number, number>, bands: DeviationBands): void {
+    this.wake()
+    for (const [partId, t] of thickness) {
+      const mesh = this.partMeshes.get(partId)
+      if (!mesh) continue
+      this.removeFlatCopy(partId)
+      if (t.length !== mesh.geometry.getAttribute('position').count) {
+        console.warn(`thickness length mismatch for part ${partId} — skipped`)
+        continue
+      }
+      this.applyVertexColors(mesh, (colors) => deviationColors(t, nominals.get(partId) ?? null, bands, colors))
     }
   }
 

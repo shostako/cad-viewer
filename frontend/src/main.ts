@@ -68,7 +68,17 @@ import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
 import { ReportPop, SOURCE, reportCsv, reportHtml, reportTime, type Cell, type Report, type ReportTable, type Review } from './report'
 import { version as appVersion } from '../package.json'
-import { METHOD_NAMES, renderThicknessLegend, thicknessAt, thicknessTipText, type ThicknessMethod } from './thickness'
+import {
+  METHOD_NAMES,
+  deviationTipText,
+  renderDeviationLegend,
+  renderThicknessLegend,
+  thicknessAt,
+  thicknessTipText,
+  methodValues,
+  type DeviationBands,
+  type ThicknessMethod,
+} from './thickness'
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
 import { Toolbar, type Mode } from './toolbar'
@@ -1222,6 +1232,12 @@ async function thickNow(): Promise<Map<number, ThickPart>> {
   if (model === currentModelId) thickCache.set(key, got)
   return got
 }
+/** each judged part's general wall (mm): given, or found */
+async function thickNominals(): Promise<Map<number, number>> {
+  const out = new Map<number, number>()
+  for (const [id, p] of await thickNow()) if (p.status === 'ok' && p.nominal) out.set(id, p.nominal)
+  return out
+}
 /** each judged part's 厚肉 limit (mm): the ratio x its general wall */
 async function thickLimits(): Promise<Map<number, number>> {
   const out = new Map<number, number>()
@@ -1230,6 +1246,10 @@ async function thickLimits(): Promise<Map<number, number>> {
 }
 /** the values the heatmap on screen was painted from (part id -> one per display vertex) */
 let shownThickness: Map<number, Float32Array> | null = null
+/** with 一般部との比: the general walls the heatmap on screen was painted against (part id -> mm) */
+let shownNominals: Map<number, number> | null = null
+/** 一般部との比's bands: % off the general wall (Moldflow's Design Adviser: 20 and 50) */
+const deviationState: DeviationBands = { small: 20, large: 50 }
 const HEATMAP_HUD = '肉厚ヒートマップ表示中'
 function heatmapHud(): string {
   // B-rep faces are not drawn in ワイヤーフレーム, so their colours cannot show;
@@ -1300,7 +1320,8 @@ const thicknessInFlight = new Map<ThicknessMethod, Promise<Map<number, Float32Ar
  * who uses the answer caches it (an answer nobody wants any more is not kept:
  * the heatmap's late answers are dropped).
  */
-function thicknessFor(method: ThicknessMethod): Promise<Map<number, Float32Array>> {
+function thicknessFor(asked: ThicknessMethod): Promise<Map<number, Float32Array>> {
+  const method = methodValues(asked) // 一般部との比 paints 面ごと's values
   const cached = thicknessCache.get(method)
   if (cached) return Promise.resolve(cached)
   let p = thicknessInFlight.get(method)
@@ -1329,7 +1350,7 @@ async function updateThickness(): Promise<void> {
   const requestedGen = loadGen
   const requestedMethod = thicknessState.method // method can also change mid-flight
   try {
-    let data = thicknessCache.get(requestedMethod)
+    let data = thicknessCache.get(methodValues(requestedMethod))
     if (!data) {
       setThicknessHud(
         requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : requestedMethod === 'face' ? '肉厚計算中（形の中の格子、少し待て）...' : '肉厚計算中...',
@@ -1343,28 +1364,34 @@ async function updateThickness(): Promise<void> {
       )
         return // superseded: don't cache, don't recolor, don't touch the HUD
       if (update !== thicknessUpdate) {
-        thicknessCache.set(requestedMethod, data) // the answer is the model's still: a newer update uses it
+        thicknessCache.set(methodValues(requestedMethod), data) // the answer is the model's still: a newer update uses it
         return
       }
-      thicknessCache.set(requestedMethod, data)
+      thicknessCache.set(methodValues(requestedMethod), data)
     }
-    // 面ごと: the 厚肉 band too (射出成形's), each part's limit from its general wall
+    // 面ごと: the 厚肉 band too (射出成形's), each part's limit from its general wall;
+    // 一般部との比: each part's general wall itself
     const thick = requestedMethod === 'face' && materialStore.use === 'molding' ? await thickLimits() : null
+    const nominals = requestedMethod === 'ratio' ? await thickNominals() : null
     // a newer update (the 用途, the ratio or the general wall changed while this waited) paints instead
     if (update !== thicknessUpdate) return
     if (requestedGen !== loadGen || requestedId !== currentModelId || requestedMethod !== thicknessState.method || !thicknessState.enabled) return
-    viewer.setThicknessColors(data, thicknessState.threshold, thick)
+    if (nominals) viewer.setDeviationColors(data, nominals, deviationState)
+    else viewer.setThicknessColors(data, thicknessState.threshold, thick)
     colorOwner = 'thickness'
     shownThickness = data
+    shownNominals = nominals
     // the method named is thicknessState.method, equal to requestedMethod here
     // (a fetch that a method change overtook returned above)
-    renderThicknessLegend(
-      thicknessLegend,
-      thicknessState.threshold,
-      thicknessState.method,
-      thick ? { ratio: thickState.ratio, wall: thickState.nominal > 0 ? `${fmtThin(thickState.nominal)} mm` : '部品ごと' } : null,
-    )
-    spotNav.decorateThickness(thicknessLegend)
+    const wall = thickState.nominal > 0 ? `${fmtThin(thickState.nominal)} mm` : '部品ごと'
+    if (nominals) {
+      // one part: its own wall, said (several: each its own)
+      const one = nominals.size === 1 ? [...nominals.values()][0] : null
+      renderDeviationLegend(thicknessLegend, deviationState, thickState.nominal > 0 || one === null ? wall : `${fmtThin(Number(one.toFixed(2)))} mm`)
+    } else {
+      renderThicknessLegend(thicknessLegend, thicknessState.threshold, thicknessState.method, thick ? { ratio: thickState.ratio, wall } : null)
+      spotNav.decorateThickness(thicknessLegend) // 薄い所へ: the threshold's places
+    }
     thicknessLegend.classList.remove('hidden')
     setThicknessHud(heatmapHud())
     probe.refresh() // other values under a cursor that stays where it is
@@ -1399,12 +1426,36 @@ thicknessFolder
     void updateThickness()
   })
 thicknessFolder
-  .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball', '面ごと（形の中から）': 'face' })
+  .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball', '面ごと（形の中から）': 'face', '一般部との比（面ごと）': 'ratio' })
   .name('方式')
   .onChange(() => {
+    showDeviationRows()
+    showNominalRow()
     void updateThickness()
     scheduleChecks()
   })
+// 一般部との比's bands (shown with that 方式): % off the general wall, Moldflow's own at first
+// (small 1..199, large 2..200: there is always room for the small one under the large one)
+const deviationCtls = (['small', 'large'] as const).map((k) =>
+  thicknessFolder
+    .add(deviationState, k, k === 'small' ? 1 : 2, k === 'small' ? 199 : 200, 1)
+    .name(k === 'small' ? 'ずれ 小 (%)' : 'ずれ 大 (%)')
+    .onChange(() => {
+      // the small band inside the large one
+      if (deviationState.small >= deviationState.large) {
+        if (k === 'small') deviationState.large = deviationState.small + 1
+        else deviationState.small = Math.max(1, deviationState.large - 1)
+        for (const c of deviationCtls) c.updateDisplay()
+      }
+      if (thicknessState.enabled && thicknessState.method === 'ratio') void updateThickness()
+    }),
+)
+deviationCtls[0].domElement.title = '一般部からこの % 以内を一般部（緑）とする'
+deviationCtls[1].domElement.title = '一般部からこの % を超えると、薄い側は赤、厚い側は紫'
+function showDeviationRows(): void {
+  for (const c of deviationCtls) c.show(thicknessState.method === 'ratio')
+}
+showDeviationRows()
 const thresholdCtl = thicknessFolder
   .add(thicknessState, 'threshold', 0.1, 10, 0.01)
   .name('閾値 (mm)')
@@ -1420,7 +1471,7 @@ const thickRatioCtl = thicknessFolder
   .onChange(() => {
     basisLeft()
     scheduleChecks()
-    if (thicknessState.enabled && thicknessState.method === 'face') void updateThickness() // its 厚肉 band
+    if (thicknessState.enabled && (thicknessState.method === 'face' || thicknessState.method === 'ratio')) void updateThickness() // its 厚肉 band, the ratio's wall
   })
 thickRatioCtl.domElement.title = 'この倍率以上の球が入る所を、問題の一覧に厚肉（ヒケ・ボイドの心配な所）として出す'
 const thickNominalCtl = thicknessFolder
@@ -1435,9 +1486,13 @@ const thickNominalCtl = thicknessFolder
       thickNominalCtl.updateDisplay()
     }
     scheduleChecks()
-    if (thicknessState.enabled && thicknessState.method === 'face') void updateThickness() // its 厚肉 band
+    if (thicknessState.enabled && (thicknessState.method === 'face' || thicknessState.method === 'ratio')) void updateThickness() // its 厚肉 band, the ratio's wall
   })
-thickNominalCtl.domElement.title = '厚肉の倍率の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
+thickNominalCtl.domElement.title = '厚肉の倍率と「一般部との比」の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
+/** the general wall's row: 射出成形's (厚肉), and 一般部との比's in any 用途 (its colours come from it) */
+function showNominalRow(): void {
+  thickNominalCtl.show(materialStore.use === 'molding' || thicknessState.method === 'ratio')
+}
 
 // ---- draft angle (抜き勾配)
 function updateDraft(): void {
@@ -1529,7 +1584,7 @@ function unjudged(partId: number): string | null {
 }
 function checkConditions(): CheckConditions {
   return {
-    thin: checkState.thickness ? { threshold: thicknessState.threshold, methodName: METHOD_NAMES[thicknessState.method] } : null,
+    thin: checkState.thickness ? { threshold: thicknessState.threshold, methodName: METHOD_NAMES[methodValues(thicknessState.method)] } : null,
     draft: checkState.draft
       ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
       : null,
@@ -1564,7 +1619,7 @@ async function updateChecks(): Promise<void> {
   }
   let values: Map<number, Float32Array> | null = null
   if (conditions.thin) {
-    const method = thicknessState.method
+    const method = methodValues(thicknessState.method) // 一般部との比's values are 面ごと's
     values = thicknessCache.get(method) ?? null
     if (!values) {
       checkPanel.showBusy(method === 'ball' ? '肉厚を計算中（ボール法、少し待て）…' : '肉厚を計算中…')
@@ -1849,7 +1904,9 @@ function valueAt(hit: FaceHit | null): string | null {
   if (!hit || !viewer.facesDrawn(hit.partId)) return null
   if (colorOwner === 'thickness') {
     const values = shownThickness?.get(hit.partId)
-    return values ? thicknessTipText(thicknessAt(values, hit.vertices, hit.weights)) : null
+    if (!values) return null
+    const v = thicknessAt(values, hit.vertices, hit.weights)
+    return shownNominals ? deviationTipText(v, shownNominals.get(hit.partId) ?? null) : thicknessTipText(v)
   }
   const s = viewer.draftSineAt(hit.partId, hit.triangle, hit.weights, PULL_DIRS[draftState.dir])
   return s === null ? null : draftTipText(s, draftState.required)
@@ -2304,7 +2361,7 @@ function applyUseVisibility(): void {
   pressureCtl.show(molding)
   // 厚肉 is the moulding's (sinks, voids): its rows go with 問題の一覧
   thickRatioCtl.show(molding)
-  thickNominalCtl.show(molding)
+  showNominalRow()
 }
 
 // ---- projected area along the mold-opening direction (for the clamping force)
