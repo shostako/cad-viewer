@@ -127,11 +127,17 @@ jobs:
           passed=0
           for t in "${scripts[@]}"; do
             echo "::group::$t"
-            if timeout "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "e2e/$t"; then
+            start=$(date +%s)
+            # Playwright's calls logged (pw:api) to a file, shown when the script fails:
+            # where it stood when it stopped
+            if DEBUG=pw:api timeout "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "e2e/$t" 2>/tmp/pw-api.log; then
               passed=$((passed + 1))
             else
-              echo "::error title=E2E (web) failed::$t"
+              rc=$?
+              echo "::error title=E2E (web) failed::$t (exit $rc)"
+              tail -n 60 /tmp/pw-api.log
             fi
+            echo "$t took $(( $(date +%s) - start )) s"
             echo "::endgroup::"
           done
           echo "E2E (web): ${passed} / ${#scripts[@]} passed"
