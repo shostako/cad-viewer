@@ -1,8 +1,9 @@
 /**
  * The Web version's 2D drawings (src/local/drawing.ts: the backend's own
- * drawing.py in Pyodide) against the backend's (load_drawing in CPython): the
- * same SVG to the byte and the same meta (box, scale, snap points), and the
- * errors in the backend's words. DWG: not opened, said so.
+ * drawing.py in Pyodide) against the backend's (load_drawing in CPython, given
+ * the Web version's fonts only): the same SVG to the byte and the same meta
+ * (box, scale, snap points), and the errors in the backend's words. DWG: not
+ * opened, said so.
  *
  *   npm test   (testdata/make_dxf.py first; node scripts/web-assets.mjs, which npm run
  *               build:web / dev:web run; the backend's venv: backend/.venv or CAD_VIEWER_PYTHON)
@@ -43,6 +44,11 @@ const golden: Record<string, any> = ready
           `import json, os, sys, tempfile
 os.environ["CAD_VIEWER_DATA_DIR"] = tempfile.mkdtemp()  # not the real sidecars
 sys.path.insert(0, ${JSON.stringify(path.join(ROOT, 'backend'))})
+from ezdxf.fonts import fonts
+# the fonts the Web version has, and only those (the PC's would draw a text in its own
+# fallback font: GitHub's runner's is not DejaVu Sans, the Web version's)
+fonts.font_manager.clear()
+fonts.font_manager.build([${JSON.stringify(PY)}], support_dirs=False)
 from fastapi.testclient import TestClient
 from app.drawing import DrawingLoadError, load_drawing
 from app.main import app
