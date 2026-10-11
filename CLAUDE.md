@@ -127,7 +127,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `measure.py` — OCCT での計測（distance、edge_info、face_info）
 - `thickness.py` — 肉厚（レイ法とローリングボール法）。表示用メッシュで計算する
 - `thick.py` — 厚肉（`GET /thick`・`/thick.bin`）。部品の中に格子を並べ、表面までの距離（scipy の距離変換）から、面ごとの肉厚・一般部の肉厚（面の最頻値）・肉だまり（一般部の何倍もの球が入る所）を出す。格子はモデルごとに覚える（`entry.extra["thick_fields"]`）。B-rep の部品が閉じているかは `/properties` の判定に任せる（表示用メッシュは曲面の継ぎ目に髪の毛ほどの隙間があり、三角形で見ると開いて見える）。`/properties` はロックの外で先に呼ぶ（B-rep の読み直しが `entry.lock` を取るので、中で呼ぶと止まる）
-- `drawing.py` — DXF/DWG → SVG。DWG は ODA File Converter（無料、手動で入れる、再配布不可）が PATH に必要
+- `drawing.py` — DXF/DWG → SVG。DWG は ODA File Converter（無料、手動で入れる、再配布不可）が PATH に必要。日本語の字（#90）: ezdxf は PC に無いフォントを DejaVu Sans に置き換え、フォントに無い字を四角で描く（書式でフォントを指定した MTEXT は 1 字も描かない）。日本語を描くスタイルと MTEXT のフォント指定のうち、日本語の無い物を、`CJK_FONTS` の最初に見つかった物に差し替える（ラテン文字だけのスタイルは変えない）。`CAD_VIEWER_FONT_DIRS` で足したフォントの置き場も見る（テストと Web 版は Noto Sans JP）
 - `cache.py` — テッセレーションの結果を `backend/.cache/` に保存する（キー: ファイルの sha256＋パラメータ＋`CACHE_VERSION`）
 - `store.py` — 読み込んだモデルをメモリに置く（LRU、同じ中身は使い回す）
 - 計測と注記は、モデルごとに `backend/.sidecars/` に JSON で保存する（サイドカー。`PUT /sidecar` でまとめて保存）。ファイル名は読み込んだファイルの中身の sha256 の先頭 32 文字なので、同じ中身なら名前や置き場所が変わっても戻る。断面や表示の状態は保存しない

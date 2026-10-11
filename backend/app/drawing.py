@@ -10,6 +10,12 @@ linearly and y-flipped. The scale is derived from the emitted viewBox
 Snap points are shipped in BOTH coordinate systems: svg coords for display
 alignment, DXF coords for exact measurement values.
 
+Japanese text (issue #90): ezdxf draws a text style whose font the PC lacks
+with DejaVu Sans, and a character a font lacks as a box. In a drawing with
+Japanese in it, a style whose font has none of it is given a font that has
+(CJK_FONTS, the first found). CAD_VIEWER_FONT_DIRS (folders, os.pathsep
+between) adds fonts to the PC's: the tests' and the Web version's (Noto Sans JP).
+
 DWG requires the free ODA File Converter (not redistributable); when absent
 we fail with an actionable message. It is looked for on PATH, and on Windows
 also where its installer puts it (C:\\Program Files\\ODA\\ODAFileConverter
@@ -30,6 +36,7 @@ from ezdxf import bbox as ezbbox
 from ezdxf import recover
 from ezdxf.addons.drawing import Frontend, RenderContext, layout
 from ezdxf.addons.drawing.svg import SVGBackend
+from ezdxf.fonts import fonts
 
 MAX_SNAP_POINTS = 50000
 
@@ -60,6 +67,127 @@ def find_oda() -> str | None:
 
 class DrawingLoadError(Exception):
     pass
+
+
+# Japanese (and the other CJK scripts): the CJK punctuation, kana, the
+# ideographs and their compatibility forms, the full-width forms
+_CJK = re.compile("[\u3000-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uff00-\uffef]")
+
+# fonts with Japanese in them, the first one found used: the Web version's
+# (bundled), Linux's (Noto CJK), Windows' (Yu Gothic, Meiryo, MS Gothic), Office's
+CJK_FONTS = (
+    "NotoSansJP-Regular.otf",
+    "NotoSansCJK-Regular.ttc",
+    "NotoSansCJKjp-Regular.otf",
+    "YuGothR.ttc",
+    "YuGothM.ttc",
+    "meiryo.ttc",
+    "msgothic.ttc",
+    "ArialUni.ttf",
+)
+
+_extra_fonts_added = False
+
+
+def _add_extra_fonts() -> None:
+    """CAD_VIEWER_FONT_DIRS' fonts beside the PC's (once)"""
+    global _extra_fonts_added
+    if _extra_fonts_added:
+        return
+    _extra_fonts_added = True
+    dirs = [d for d in os.environ.get("CAD_VIEWER_FONT_DIRS", "").split(os.pathsep) if d and os.path.isdir(d)]
+    if dirs:
+        fonts.font_manager.build(dirs, support_dirs=False)
+
+
+def _japanese_by_style(doc) -> dict[str, set[str]]:
+    """the Japanese characters each text style draws (styles by name, in lower case): a
+    text's, an attribute's, an MTEXT's style. A dimension's text is an MTEXT in its block
+    (ezdxf draws a dimension from its block only), in its dimension style's text style"""
+    out: dict[str, set[str]] = {}
+
+    def add(style: str | None, text: str | None) -> None:
+        chars = set(_CJK.findall(text or ""))
+        if chars:
+            out.setdefault((style or "Standard").lower(), set()).update(chars)
+
+    for e in doc.entitydb.values():
+        t = e.dxftype()
+        if t == "MTEXT":
+            add(e.dxf.get("style"), e.text)
+        elif t in ("TEXT", "ATTRIB", "ATTDEF"):
+            add(e.dxf.get("style"), e.dxf.get("text"))
+    return out
+
+
+def _style_font_file(style) -> str:
+    """the font file a text style is drawn with here (ezdxf's own choice, the fallback included)"""
+    font = style.dxf.get("font", "") or ""
+    if font:
+        order = ezdxf.options.get("drawing-addon", "shx_resolve_order", "tsl")  # as the drawing add-on resolves it
+        return fonts.resolve_font_face(font, order=order).filename
+    family, italic, bold = style.get_extended_font_data()
+    face = fonts.find_best_match(family=family, weight=700 if bold else 400, italic=italic) if family else None
+    return (face or fonts.FontFace()).filename or fonts.font_manager.fallback_font_name()
+
+
+def _has_glyphs(font_file: str, chars: set[str]) -> bool:
+    """a TrueType/OpenType font with all of chars (a stroke font: none)"""
+    if not font_file.lower().endswith((".ttf", ".ttc", ".otf")):
+        return False
+    try:
+        cmap = fonts.font_manager.get_ttf_font(font_file).getBestCmap()
+    except Exception:  # noqa: BLE001 — unreadable: as one without them
+        return False
+    return all(ord(c) in cmap for c in chars)
+
+
+# an MTEXT's font change: \\fFamily|b0|i0|c128|p49; or \\Ffile.shx|c0; (not after an escaping backslash)
+_MTEXT_FONT = re.compile(r"(?<!\\)\\([fF])([^|;]*)((?:\|[^;]*)?);")
+
+
+def _fit_mtext(mtext, used: set[str], cjk: str, cjk_family: str) -> None:
+    """an MTEXT's font changes to a font without Japanese: to the one with it (a family not
+    found, or any font file, draws no Japanese at all, not even boxes)"""
+
+    def swap(m: re.Match) -> str:
+        code, name, rest = m.groups()
+        if code == "f":
+            face = fonts.find_best_match(family=name) if name else None
+            if face is not None and _has_glyphs(face.filename, used):
+                return m.group(0)
+            return f"\\f{cjk_family}{rest};"
+        order = ezdxf.options.get("drawing-addon", "shx_resolve_order", "tsl")
+        if name and _has_glyphs(fonts.resolve_font_face(name, order=order).filename, used):
+            return m.group(0)
+        # a font file (\\F, AutoCAD's for SHX fonts): ezdxf draws no Japanese from one, even
+        # one that has it; changed to a font family (its |… settings dropped: \\F's are not \\f's)
+        return f"\\f{cjk_family};"
+
+    mtext.text = _MTEXT_FONT.sub(swap, mtext.text)
+
+
+def _fit_fonts(doc) -> None:
+    """in a drawing with Japanese in it, the text styles that draw it and the MTEXTs' font
+    changes, whose font has none of it, given a font that has (a style with Latin text only
+    keeps its font)"""
+    by_style = _japanese_by_style(doc)
+    if not by_style:
+        return
+    _add_extra_fonts()
+    cjk = next((f for f in CJK_FONTS if fonts.font_manager.has_font(f)), None)
+    if cjk is None:
+        return  # none on this PC: as before
+    for style in doc.styles:
+        used = by_style.get(style.dxf.name.lower())
+        if used and not _has_glyphs(_style_font_file(style), used):
+            style.dxf.font = cjk
+    family = fonts.font_manager.get_font_face(cjk).family
+    for e in doc.entitydb.values():
+        if e.dxftype() == "MTEXT":
+            used = set(_CJK.findall(e.text))
+            if used:
+                _fit_mtext(e, used, cjk, family)
 
 
 def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
@@ -100,6 +228,7 @@ def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
                 # recovered with errors — still usable, but note it
                 pass
 
+    _fit_fonts(doc)
     msp = doc.modelspace()
     extents = ezbbox.extents(msp, fast=True)
     if not extents.has_data:
