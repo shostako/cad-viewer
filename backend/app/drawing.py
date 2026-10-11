@@ -11,13 +11,17 @@ Snap points are shipped in BOTH coordinate systems: svg coords for display
 alignment, DXF coords for exact measurement values.
 
 DWG requires the free ODA File Converter (not redistributable); when absent
-we fail with an actionable message.
+we fail with an actionable message. It is looked for on PATH, and on Windows
+also where its installer puts it (C:\\Program Files\\ODA\\ODAFileConverter
+<version>\\, the newest one).
 """
 from __future__ import annotations
 
+import glob
 import os
 import re
 import shutil
+import sys
 import tempfile
 from typing import Any
 
@@ -31,9 +35,27 @@ MAX_SNAP_POINTS = 50000
 
 ODA_HINT = (
     "DWGの読み込みには ODA File Converter が必要（無料・手動インストール）。"
-    "https://www.opendesign.com/guestfiles/oda_file_converter から入手して "
-    "PATH に通せ。DXFなら直接読める。"
+    "https://www.opendesign.com/guestfiles/oda_file_converter から入手して入れる"
+    "（Windows は既定の場所に入れれば見つける。ほかの場所や Linux では PATH に通す）。"
+    "DXFなら直接読める。"
 )
+
+
+def _version_key(path: str) -> tuple:
+    """ODAFileConverter 26.4.0 -> (26, 4, 0): the newest install sorts last"""
+    folder = os.path.basename(os.path.dirname(path))
+    return tuple(int(n) for n in re.findall(r"\d+", folder))
+
+
+def find_oda() -> str | None:
+    """the ODA File Converter's executable, or None when it is not installed"""
+    found = shutil.which("ODAFileConverter")
+    if found or sys.platform != "win32":
+        return found
+    hits = []
+    for root in {os.environ.get("ProgramFiles"), os.environ.get("ProgramFiles(x86)")} - {None}:
+        hits += glob.glob(os.path.join(root, "ODA", "ODAFileConverter*", "ODAFileConverter.exe"))
+    return max(hits, key=_version_key) if hits else None
 
 
 class DrawingLoadError(Exception):
@@ -49,13 +71,21 @@ def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
             f.write(data)
 
         if ext == "dwg":
-            if shutil.which("ODAFileConverter") is None:
+            oda = find_oda()
+            if oda is None:
                 raise DrawingLoadError(ODA_HINT)
-            # WSLg では WAYLAND_DISPLAY が立っており、Qt が wayland プラグインを
-            # 探して stderr に警告を吐く。ezdxf の odafc は stderr 非空を失敗と
-            # みなすため、xcb を明示して警告ごと黙らせる（変換自体は headless）。
-            os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+            import ezdxf
             from ezdxf.addons import odafc
+
+            if sys.platform == "win32":
+                # ezdxf looks only at its own setting (a fixed folder without the version)
+                ezdxf.options.set("odafc-addon", "win_exec_path", oda)
+            else:
+                # WSLg では WAYLAND_DISPLAY が立っており、Qt が wayland プラグインを
+                # 探して stderr に警告を吐く。ezdxf の odafc は stderr 非空を失敗と
+                # みなすため、xcb を明示して警告ごと黙らせる（変換自体は headless）。
+                # Windows の Qt には xcb が無いので、Linux だけ。
+                os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
             try:
                 doc = odafc.readfile(path)

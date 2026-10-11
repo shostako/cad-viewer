@@ -38,6 +38,19 @@ backend より backend のコードが新しければ backend を立て直す。
 > それを `/` にマウントして配信する（`/api/*` は既存ルートが優先）。dist が無い開発
 > 時は下記の dev サーバ構成にフォールバックする。
 
+## Windows のインストール版
+
+WSL も Python も無い Windows の PC で使うためのもの。GitHub の [Releases](https://github.com/shostako/cad-viewer/releases) から `cad-viewer-setup-X.Y.Z.exe` を落として実行する。
+
+- 管理者の権限は要らない。自分のユーザーだけに入る（`%LOCALAPPDATA%\Programs\cad-viewer`）。新しい版は、前の版の上にそのまま入れる。
+- 署名していないので、初めて実行するとき Windows の SmartScreen が「Windows によって PC が保護されました」と止める。「詳細情報」を押すと出る「実行」で進む。
+- スタートメニュー（とデスクトップ）の cad-viewer で起動すると、既定のブラウザで開く。もう一度起動しても、ブラウザで開くだけ（2 つ目は立てない）。
+- 動いているあいだは、通知領域（タスクバーの右端。隠れているときは「^」の中）に立方体のアイコンが出る。右クリックで「ブラウザで開く」「データのフォルダを開く」「終了」。ブラウザを閉じても裏で動き続けるので、止めるときは「終了」。
+- 画面のアドレスは `http://127.0.0.1:8018/`。WSL の start.sh（`:8008`）とは別のアドレスなので、配色や材料などのブラウザが覚える設定は、WSL 版とは別になる（8018 が別のプログラムに使われているときは 8019 から順に空いている所を使う）。
+- 計測・注記（サイドカー）、読み込みのキャッシュ、ログ（`cad-viewer.log`）は `%LOCALAPPDATA%\cad-viewer` に置く。アンインストールしても消さない。
+- DWG は、ODA File Converter を既定の場所（`C:\Program Files\ODA` の下）に入れれば開ける。
+- 作り方: `.github/workflows/windows.yml`。版のタグを push すると、Windows の実行機で固め（PyInstaller）、インストーラーにし（Inno Setup）、固めたものとインストールしたものを試してから Releases に載せる。`packaging/windows/` を触る PR でも同じものを作って試す（インストーラーは実行の Artifacts に残る）。手元で作るときの手順は `packaging/windows/cad-viewer.spec` と `cad-viewer.iss` の先頭にある。
+
 ## 開く・読み込み中・開けなかったとき
 
 - 何も開いていない画面では、真ん中に「CAD ファイルを開く」のカードが出る（「ファイルを選ぶ」か、画面のどこかにドロップ）

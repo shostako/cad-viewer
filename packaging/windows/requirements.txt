@@ -1,0 +1,10 @@
+# The Windows build's tools and the tray icon's library, on top of
+# backend/requirements.lock (pip install -r both). Pinned like the lock.
+altgraph==0.17.5
+colorama==0.4.6
+pefile==2024.8.26
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.8
+pystray==0.19.5
+pywin32-ctypes==0.2.3
+six==1.17.0

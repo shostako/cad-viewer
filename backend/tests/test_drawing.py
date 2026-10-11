@@ -67,9 +67,9 @@ def test_drawing_svg(model):
 
 def test_dwg_without_oda(model):
     client, _ = model
-    import shutil
+    from app.drawing import find_oda
 
-    if shutil.which("ODAFileConverter"):
+    if find_oda():
         pytest.skip("ODA installed; guidance path not applicable")
     r = client.post("/api/models", files={"file": ("a.dwg", b"AC1027garbage", "x")})
     assert r.status_code == 422
@@ -114,3 +114,4 @@ def test_snap_points_inside_blocks(tmp_path):
     assert (160.0, 40.0) in pts
     # line endpoint inside scaled insert: 150 - 5*2 = 140
     assert (140.0, 40.0) in pts
+

@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
-from . import __version__, cache, measure, projection, properties
+from . import __version__, cache, measure, paths, projection, properties
 from .drawing import DrawingLoadError, load_drawing
 from .loaders import UnsupportedFormatError, classify, load_mesh
 from .meshpack import pack_parts, pack_trimesh
@@ -29,7 +29,7 @@ from .tessellation import BrepLoadError, load_brep
 app = FastAPI(title="cad-viewer backend", version=__version__)
 
 MAX_UPLOAD_BYTES = 500 * 1024 * 1024  # 500 MB
-SIDECAR_DIR = Path(__file__).resolve().parent.parent / ".sidecars"
+SIDECAR_DIR = paths.data_dir("sidecars")  # backend/.sidecars, or the installed app's
 
 
 @app.get("/api/health")
@@ -632,6 +632,7 @@ def delete_model(model_id: str) -> dict:
 # same server so the whole app runs as ONE process on port 8008 — no separate
 # Vite dev server. Mounted LAST so every /api/* route above matches first;
 # absent dist (dev mode) leaves this off and the Vite dev server proxies /api.
-_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+# The installed app serves the frontend bundled with it (paths.dist_dir).
+_DIST = paths.dist_dir()
 if _DIST.is_dir():
     app.mount("/", StaticFiles(directory=_DIST, html=True), name="spa")
