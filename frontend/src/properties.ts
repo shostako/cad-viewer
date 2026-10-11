@@ -11,7 +11,7 @@
  * takes at the chosen cavity pressure (issue #47 item 4). The area comes from
  * the display mesh (GET /projected_area): an estimate, like the thickness.
  */
-import type { Axis, ModelProperties, PartProperties, PropsReason } from './api'
+import type { ModelProperties, PartProperties, PropsReason } from './api'
 import { SOURCE, type Cell, type ReportTable } from './report'
 import { fmtNum } from './sizes'
 
@@ -39,14 +39,14 @@ export function clampForce(areaMm2: number, mpa: number): { kN: number; tf: numb
 /** 40 / 37.5 / 0.25: as typed, without trailing zeros */
 export const fmtPressure = (mpa: number): string => String(Number(mpa.toFixed(3)))
 
-/** what the projected-area rows show */
+/** what the projected-area rows show: `axis` names the pull direction (Z, −X, 選んだ向き, ...) */
 export type ProjectionState =
-  | { state: 'loading'; axis: Axis }
-  | { state: 'ok'; axis: Axis; area: number }
-  | { state: 'error'; axis: Axis; message: string }
+  | { state: 'loading'; axis: string }
+  | { state: 'ok'; axis: string; area: number }
+  | { state: 'error'; axis: string; message: string }
 
 /** what the projected area is, on its row's tooltip */
-export const projectionTitle = (axis: Axis): string =>
+export const projectionTitle = (axis: string): string =>
   `投影面積: 型開き方向（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）`
 
 /** 1.19 / 1.20 / 0.90 / 1.234: three decimals, one trailing zero dropped */

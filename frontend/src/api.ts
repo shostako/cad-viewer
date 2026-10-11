@@ -330,9 +330,11 @@ export interface ModelProperties {
 
 export type Axis = 'X' | 'Y' | 'Z'
 
-/** the model's shadow along an axis, from the display mesh (an estimate) */
+/** the model's shadow along an axis or a direction, from the display mesh (an estimate) */
 export interface ProjectedArea {
-  axis: Axis
+  /** the axis, or 'dir' for a direction (then `dir`, a unit vector) */
+  axis: Axis | 'dir'
+  dir?: [number, number, number]
   /** mm² */
   area: number
   /** the finer bitmap's pixel, mm (null when there was nothing to project) */
@@ -358,14 +360,22 @@ const PAGE_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2
 /** an answer the backend gave up on because this page has asked again since */
 export class ProjectionSuperseded extends Error {}
 
-/** parts: the ids to include (the visible ones) */
-export async function fetchProjectedArea(modelId: string, axis: Axis, parts: readonly number[]): Promise<ProjectedArea> {
+/** along: an axis, or a direction of its own (one picked from a face or an edge); parts: the ids to include (the visible ones) */
+export async function fetchProjectedArea(
+  modelId: string,
+  along: Axis | readonly [number, number, number],
+  parts: readonly number[],
+): Promise<ProjectedArea> {
   if (_stallNextProjectionMs > 0) {
     const ms = _stallNextProjectionMs
     _stallNextProjectionMs = 0
     await new Promise((r) => setTimeout(r, ms))
   }
-  const q = new URLSearchParams({ axis, parts: parts.join(','), client: PAGE_ID })
+  const q = new URLSearchParams({
+    ...(typeof along === 'string' ? { axis: along } : { dir: along.join(',') }),
+    parts: parts.join(','),
+    client: PAGE_ID,
+  })
   const res = await engine.fetch(`/api/models/${modelId}/projected_area?${q}`)
   if (res.status === 409) throw new ProjectionSuperseded('superseded')
   if (!res.ok) {

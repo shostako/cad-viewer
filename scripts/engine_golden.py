@@ -213,6 +213,8 @@ def routes(path: Path) -> dict:
     out["thick_low"] = c.get(f"/api/models/{mid}/thick?ratio=1.1").json()
     out["thick_bin"] = unpack(c.get(f"/api/models/{mid}/thick.bin").content)
     out["projected"] = {ax: c.get(f"/api/models/{mid}/projected_area?axis={ax}").json() for ax in "XYZ"}
+    # along a direction of its own (one picked from a face or an edge)
+    out["projected"]["dir"] = c.get(f"/api/models/{mid}/projected_area?dir=1,2,3").json()
     return out
 
 

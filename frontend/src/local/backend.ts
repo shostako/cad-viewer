@@ -21,7 +21,7 @@ import { cacheKey, type MeshCache } from './meshcache.ts'
 import { MESH_EXTS, loadMesh, MeshLoadError } from './meshload.ts'
 import { meshPartProperties, modelProps, type ModelProps } from './meshprops.ts'
 import { packBuffers, packParts } from './pack.ts'
-import { projectedArea } from './projection.ts'
+import { projectedArea, unitDirection } from './projection.ts'
 import { gridBudgets, NotSolid, partField, spots, type PartField } from './thick.ts'
 import { vertexThickness, vertexThicknessBall } from './thickness.ts'
 import { displayMesh, type DisplayMesh } from './smooth.ts'
@@ -201,7 +201,13 @@ export class LocalBackend {
         return this.thickBin(model)
       case 'GET projected_area': {
         const axis = url.searchParams.get('axis') ?? 'Z'
-        if (!['X', 'Y', 'Z'].includes(axis)) return detail(422, 'axis must be X, Y or Z')
+        // dir: "x,y,z", a direction of its own (main.py's projected_area)
+        const rawDir = url.searchParams.get('dir')
+        let unit: [number, number, number] | null = null
+        if (rawDir !== null) {
+          unit = unitDirection(rawDir.split(',').map((x) => (x.trim() === '' ? NaN : Number(x))))
+          if (!unit) return detail(422, 'dir must be three numbers, not all 0')
+        } else if (!['X', 'Y', 'Z'].includes(axis)) return detail(422, 'axis must be X, Y or Z')
         const raw = url.searchParams.get('parts')
         let wanted: Set<number> | null = null
         if (raw !== null) {
@@ -211,10 +217,10 @@ export class LocalBackend {
         }
         const meshes = this.displayParts(model).filter((p) => wanted === null || wanted.has(p.id))
         const ids = meshes.map((p) => p.id).sort((a, b) => a - b)
-        const key = `${axis}:${ids.join(',')}`
+        const key = `${unit ? `dir:${unit.join(',')}` : axis}:${ids.join(',')}`
         model.projections ??= new Map()
         if (!model.projections.has(key)) {
-          model.projections.set(key, { ...projectedArea(meshes, axis), parts: ids })
+          model.projections.set(key, { ...projectedArea(meshes, axis, unit), parts: ids })
           while (model.projections.size > 8) model.projections.delete(model.projections.keys().next().value!)
         }
         return json(200, model.projections.get(key))

@@ -17,6 +17,9 @@ Creates revision_a.step and revision_b.step: two versions of one part, for 版�
 Creates undercut_block.step: a block with a side hole, a pocket from the top and
 a hook, for アンダーカットの候補 (see make_undercut_block).
 
+Creates tilted_block.step: a block turned 30° about X, for a 型開き方向 picked
+from its top face (see make_tilted_block).
+
 Usage: backend/.venv/bin/python testdata/make_step_assembly.py
 """
 import math
@@ -100,6 +103,7 @@ def main() -> None:
     make_named_parts()
     make_revisions()
     make_undercut_block()
+    make_tilted_block()
 
 
 def make_named_parts() -> None:
@@ -287,6 +291,26 @@ def make_undercut_block() -> None:
     writer.Transfer(solid, STEPControl_AsIs)
     assert writer.Write(str(OUT / "undercut_block.step")) == IFSelect_RetDone
     print(f"wrote {OUT / 'undercut_block.step'}")
+
+
+
+def make_tilted_block() -> None:
+    """tilted_block.step: a block of 40 x 30 x 10 (x, y, z) at the origin, turned
+    30° about the X axis (y toward z). Its top's normal is (0, -sin 30°, cos 30°)
+    = (0, -0.5, 0.866); its +Y side's (0, cos 30°, sin 30°) = (0, 0.866, 0.5).
+    Along its top's normal its shadow is 40 x 30 = 1200 mm²; along Z it is
+    40 x 30 cos 30° + 40 x 10 sin 30° = 1239.2 mm²."""
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Ax1
+    from OCP.STEPControl import STEPControl_Writer
+
+    turn = gp_Trsf()
+    turn.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), math.radians(30))
+    solid = BRepBuilderAPI_Transform(BRepPrimAPI_MakeBox(40, 30, 10).Shape(), turn, True).Shape()
+    writer = STEPControl_Writer()
+    writer.Transfer(solid, STEPControl_AsIs)
+    assert writer.Write(str(OUT / "tilted_block.step")) == IFSelect_RetDone
+    print(f"wrote {OUT / 'tilted_block.step'}")
 
 
 if __name__ == "__main__":

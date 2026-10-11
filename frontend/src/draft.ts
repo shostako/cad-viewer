@@ -44,6 +44,9 @@ export const PULL_DIR_OPTIONS: Record<string, PullDir> = Object.fromEntries(
 
 export const DRAFT_MAX_DEG = 10
 
+/** a direction picked from a face or an edge (frame.ts startPull), as the legends and the 記録 name it */
+export const pickedLabel = (d: readonly number[]) => `選んだ向き (${d.map((v) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3)).join(', ')})`
+
 export type DraftClass = 'ok' | 'short' | 'opposite'
 
 /**
@@ -240,14 +243,14 @@ function classColours(): Record<DraftClass, THREE.Color> {
  */
 export function renderDraftLegend(
   el: HTMLElement,
-  dir: PullDir,
+  dirLabel: string,
   requiredDeg: number,
   unorientedParts = 0,
 ): void {
   const r = requiredDeg.toFixed(1)
   const title = document.createElement('div')
   title.className = 'draft-title'
-  title.textContent = `抜き勾配（型開き ${PULL_DIR_LABELS[dir]}、必要 ${r}°）`
+  title.textContent = `抜き勾配（型開き ${dirLabel}、必要 ${r}°）`
   // At 0° a vertical wall (exactly 0°) already counts as enough. Blue says
   // nothing about the parting line: a face on the far side of it releases in
   // the other half, a wall on the pull side leaning the wrong way is a reverse

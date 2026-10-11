@@ -1,4 +1,5 @@
-"""Projected area along an axis (issue #47 item 4: the clamping-force estimate).
+"""Projected area along an axis, or a direction of its own (issue #47 item 4: the
+clamping-force estimate; #59 P2: a direction picked from a face or an edge).
 
 Expected areas come from how the shapes were built (box sides, where the
 parts sit), never from the code under test.
@@ -129,9 +130,36 @@ def test_mesh_format(client):
     assert _area(client, meta["id"], "Z")["area"] == pytest.approx(200.0, rel=REL)
 
 
+def test_any_direction(client):
+    """A convex body's shadow along a unit direction d is half the sum of its faces'
+    areas times |n·d|: a 10 x 20 x 30 box, along (1, 1, 0), (600 + 300) / √2; along
+    (1, 2, 3), (600 + 2·300 + 3·200) / √14. Either way round the same; along an
+    axis, the axis's own answer to the last digit."""
+    buf = io.BytesIO()
+    trimesh.creation.box(extents=(10, 20, 30)).export(buf, file_type="stl")
+    mid = _upload(client, "box.stl", buf.getvalue())["id"]
+
+    def along(d):
+        r = client.get(f"/api/models/{mid}/projected_area?dir={d}")
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    r = along("1,1,0")
+    assert r["axis"] == "dir" and r["dir"] == pytest.approx([2**-0.5, 2**-0.5, 0])
+    assert r["area"] == pytest.approx(900 / 2**0.5, rel=REL)
+    assert along("1,2,3")["area"] == pytest.approx(1800 / 14**0.5, rel=REL)
+    # (the other way round, the shadow is mirrored: its pixels may round differently)
+    assert along("-2,-4,-6")["area"] == pytest.approx(1800 / 14**0.5, rel=REL)
+    assert along("0,0,5")["area"] == _area(client, mid, "Z")["area"]
+    assert along("0,-1,0")["area"] == _area(client, mid, "Y")["area"]
+
+
 def test_rejects(client):
     meta = _upload(client, "mini_mold.step", STEP.read_bytes())
     assert client.get(f"/api/models/{meta['id']}/projected_area?axis=W").status_code == 422
+    for bad in ("1,2", "0,0,0", "a,b,c", "1,,2", "1,2,3,4", "nan,0,1"):
+        r = client.get(f"/api/models/{meta['id']}/projected_area?dir={bad}")
+        assert r.status_code == 422 and r.json()["detail"] == "dir must be three numbers, not all 0", (bad, r.text)
     assert client.get(f"/api/models/{meta['id']}/projected_area?parts=a,b").status_code == 422
     assert client.get("/api/models/nope/projected_area").status_code == 404
     drawing = _upload(client, "plate_drawing.dxf", DXF.read_bytes())

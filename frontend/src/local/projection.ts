@@ -1,5 +1,5 @@
 /**
- * Projected area along an axis in the Web version (backend/app/projection.py):
+ * Projected area along an axis, or any direction, in the Web version (backend/app/projection.py):
  * the union of the display mesh's projected triangles on a bitmap of the same
  * pixel size as the backend's finer one.
  *
@@ -14,22 +14,66 @@ const MAX_SIDE = 1 << 17
 
 export interface ProjectedArea {
   axis: string
+  /** the unit direction, when one was asked for instead of an axis */
+  dir?: number[]
   area: number
   pixel: number | null
 }
 
-export function projectedArea(parts: { positions: ArrayLike<number>; indices: ArrayLike<number> }[], axis: string): ProjectedArea {
+type Xyz = [number, number, number]
+
+/** the direction made a unit vector; null when it is not three finite numbers, not all 0 (projection.py unit_direction) */
+export function unitDirection(d: readonly number[]): Xyz | null {
+  if (d.length !== 3 || !d.every(Number.isFinite)) return null
+  const n = Math.hypot(d[0], d[1], d[2])
+  return n > 0 ? [d[0] / n, d[1] / n, d[2] / n] : null
+}
+
+/** the axis a unit direction lies along, to the last bit (its sign aside); null for any other */
+function axisOf(d: Xyz): string | null {
+  for (const [name, k] of Object.entries(AXES)) if (Math.abs(d[k]) === 1 && [0, 1, 2].every((i) => i === k || d[i] === 0)) return name
+  return null
+}
+
+/** two unit vectors square to d and to each other (projection.py basis: the same pair) */
+function basis(d: Xyz): [Xyz, Xyz] {
+  let k = 0
+  for (const i of [1, 2]) if (Math.abs(d[i]) < Math.abs(d[k])) k = i
+  const e: Xyz = [0, 0, 0]
+  e[k] = 1
+  const cross = (a: Xyz, b: Xyz): Xyz => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+  const c = cross(d, e)
+  const n = Math.hypot(c[0], c[1], c[2])
+  const u: Xyz = [c[0] / n, c[1] / n, c[2] / n]
+  return [u, cross(d, u)]
+}
+
+export function projectedArea(
+  parts: { positions: ArrayLike<number>; indices: ArrayLike<number> }[],
+  axis: string,
+  direction: Xyz | null = null,
+): ProjectedArea {
+  let head: { axis: string; dir?: number[] } = { axis }
+  let uv: [Xyz, Xyz] | null = null
+  if (direction) {
+    head = { axis: 'dir', dir: [...direction] }
+    const along = axisOf(direction)
+    if (along) axis = along // the axis's own way: the same answer as asking for the axis
+    else uv = basis(direction)
+  }
   const k = AXES[axis]
   const [u, v] = [0, 1, 2].filter((i) => i !== k)
   // the 2D triangles, slivers (walls along the axis) dropped
   const tris: number[] = []
+  const at = (p: ArrayLike<number>, a: number, w: Xyz) => p[a] * w[0] + p[a + 1] * w[1] + p[a + 2] * w[2]
   for (const { positions: p, indices: f } of parts) {
     for (let t = 0; t < f.length; t += 3) {
       const a = 3 * f[t], b = 3 * f[t + 1], c = 3 * f[t + 2]
-      tris.push(p[a + u], p[a + v], p[b + u], p[b + v], p[c + u], p[c + v])
+      if (uv) tris.push(at(p, a, uv[0]), at(p, a, uv[1]), at(p, b, uv[0]), at(p, b, uv[1]), at(p, c, uv[0]), at(p, c, uv[1]))
+      else tris.push(p[a + u], p[a + v], p[b + u], p[b + v], p[c + u], p[c + v])
     }
   }
-  if (!tris.length) return { axis, area: 0, pixel: null }
+  if (!tris.length) return { ...head, area: 0, pixel: null }
   let lox = Infinity, loy = Infinity, hix = -Infinity, hiy = -Infinity
   for (let i = 0; i < tris.length; i += 2) (lox = Math.min(lox, tris[i])), (hix = Math.max(hix, tris[i])), (loy = Math.min(loy, tris[i + 1])), (hiy = Math.max(hiy, tris[i + 1]))
   const scale = Math.max(hix - lox, hiy - loy)
@@ -38,7 +82,7 @@ export function projectedArea(parts: { positions: ArrayLike<number>; indices: Ar
     const twice = Math.abs((tris[i + 2] - tris[i]) * (tris[i + 5] - tris[i + 1]) - (tris[i + 3] - tris[i + 1]) * (tris[i + 4] - tris[i]))
     if (twice > (scale * 1e-9) ** 2) kept.push(...tris.slice(i, i + 6))
   }
-  if (!kept.length) return { axis, area: 0, pixel: null }
+  if (!kept.length) return { ...head, area: 0, pixel: null }
   lox = loy = Infinity
   hix = hiy = -Infinity
   for (let i = 0; i < kept.length; i += 2) (lox = Math.min(lox, kept[i])), (hix = Math.max(hix, kept[i])), (loy = Math.min(loy, kept[i + 1])), (hiy = Math.max(hiy, kept[i + 1]))
@@ -55,7 +99,7 @@ export function projectedArea(parts: { positions: ArrayLike<number>; indices: Ar
     x = (x & 0x33333333) + ((x >>> 2) & 0x33333333)
     count += (((x + (x >>> 4)) & 0x0f0f0f0f) * 0x01010101) >>> 24
   }
-  return { axis, area: count * h * h, pixel: h }
+  return { ...head, area: count * h * h, pixel: h }
 }
 
 /** set the pixels whose centres are in the triangle (rows by their centre line, x half-open) */

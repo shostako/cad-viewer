@@ -15,7 +15,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
@@ -480,8 +480,17 @@ def _projection_gate(entry: ModelEntry) -> _ProjectionGate:
 
 
 @app.get("/api/models/{model_id}/projected_area")
-def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None, client: str | None = None) -> dict:
+def get_projected_area(
+    model_id: str,
+    axis: str = "Z",
+    direction: str | None = Query(None, alias="dir"),
+    parts: str | None = None,
+    client: str | None = None,
+) -> dict:
     """The model's shadow along an axis (X / Y / Z), for a clamping-force estimate.
+
+    dir: "x,y,z", a direction of its own instead (one picked from a face or an
+    edge); the answer says "axis": "dir" and the unit direction.
 
     parts: comma-separated part ids to include (the visible ones); omitted for
     every part, empty for none. client: the asking page's id; a request of its
@@ -490,7 +499,15 @@ def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None,
     (projection.py): an estimate, like the wall thickness. "pixel" is the
     finer bitmap's pixel (mm).
     """
-    if axis not in projection.AXES:
+    unit = None
+    if direction is not None:
+        try:
+            unit = projection.unit_direction([float(x) for x in direction.split(",")])
+        except ValueError:
+            unit = None
+        if unit is None:
+            raise HTTPException(422, "dir must be three numbers, not all 0")
+    elif axis not in projection.AXES:
         raise HTTPException(422, "axis must be X, Y or Z")
     entry = store.get(model_id)
     if entry is None:
@@ -507,7 +524,8 @@ def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None,
 
     meshes = [p for p in unpack_parts(entry.mesh_blob)[1] if wanted is None or p["id"] in wanted]
     ids = sorted(p["id"] for p in meshes)
-    key = f"projection:{axis}:{','.join(map(str, ids))}"
+    along = axis if unit is None else "dir:" + ",".join(repr(float(x)) for x in unit)
+    key = f"projection:{along}:{','.join(map(str, ids))}"
     # The ticket first, even for an answer already known: the page's asking
     # again must count, or a request of its still waiting would compute an
     # answer the page has moved on from (hide a part, then show it again).
@@ -524,7 +542,7 @@ def get_projected_area(model_id: str, axis: str = "Z", parts: str | None = None,
         if gate.superseded(client, ticket):
             raise HTTPException(409, "superseded by a newer request from the same page")
         result = {
-            **projection.projected_area([(p["positions"], p["indices"]) for p in meshes], axis),
+            **projection.projected_area([(p["positions"], p["indices"]) for p in meshes], axis, unit),
             "parts": ids,
         }
         keys = [k for k in list(entry.extra) if k.startswith("projection:")]
