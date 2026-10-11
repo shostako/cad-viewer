@@ -16,13 +16,17 @@
 import * as THREE from 'three'
 import { fmtThin } from './materials'
 
-export type ThicknessMethod = 'ray' | 'ball' | 'face'
+export type ThicknessMethod = 'ray' | 'ball' | 'face' | 'ratio'
 
 export const METHOD_NAMES: Record<ThicknessMethod, string> = {
   ray: 'レイ法',
   ball: 'ローリングボール法',
   face: '面ごと',
+  ratio: '一般部との比',
 }
+
+/** the values a method paints: 一般部との比 is 面ごと's, compared with each part's general wall */
+export const methodValues = (m: ThicknessMethod): 'ray' | 'ball' | 'face' => (m === 'ratio' ? 'face' : m)
 
 type RGB = readonly [number, number, number]
 
@@ -107,6 +111,85 @@ export function thicknessAt(
 /** the text of the value under the cursor: 「1.20 mm」, or that there is none */
 export function thicknessTipText(v: number | null): string {
   return v === null ? 'データなし' : `${v.toFixed(2)} mm`
+}
+
+// ---- 一般部との比 (the thickness transitions' view, as Moldflow's Design
+// Adviser shows them): each face against its part's general wall, in five bands
+
+/** the bands' edges, % off the general wall (Moldflow's own: 20 and 50) */
+export interface DeviationBands {
+  small: number
+  large: number
+}
+
+/** the five bands, thin to thick: the wall's thin side warm (as 薄肉), the thick side purple (as 厚肉) */
+const DEVIATION: readonly RGB[] = [
+  RED, // more than large % thinner
+  ORANGE, // small to large % thinner
+  [0.25, 0.5, 0.27], // within small %: the general wall (a green)
+  [0.5, 0.33, 0.78], // small to large % thicker (a light purple)
+  THICK_PURPLE, // more than large % thicker
+]
+
+/** the band (0..4) of thickness v against `nominal`; -1: no value */
+export function deviationBand(v: number, nominal: number, bands: DeviationBands): number {
+  if (!(v > 0) || !(nominal > 0)) return -1
+  const d = (v / nominal - 1) * 100
+  if (d < -bands.large) return 0
+  if (d < -bands.small) return 1
+  if (d <= bands.small) return 2
+  if (d <= bands.large) return 3
+  return 4
+}
+
+/** deviationBand's colour for every value (no value, or no general wall: データなし) */
+export function deviationColors(values: ArrayLike<number>, nominal: number | null, bands: DeviationBands, out: Float32Array): void {
+  const n = Math.min(values.length, Math.floor(out.length / 3))
+  for (let i = 0; i < n; i++) {
+    const b = nominal === null ? -1 : deviationBand(values[i], nominal, bands)
+    const c = b < 0 ? NO_DATA : DEVIATION[b]
+    put(out, i * 3, c, c, 0)
+  }
+}
+
+/** 「2.95 mm（一般部の +48 %）」 */
+export function deviationTipText(v: number | null, nominal: number | null): string {
+  if (v === null) return 'データなし'
+  if (!nominal) return `${v.toFixed(2)} mm`
+  const d = Math.round((v / nominal - 1) * 100)
+  return `${v.toFixed(2)} mm（一般部の ${d > 0 ? '+' : d < 0 ? '−' : '±'}${Math.abs(d)} %）`
+}
+
+/** the legend of 一般部との比: its five bands, the general wall (`wall`: 「部品ごと」 or a length) */
+export function renderDeviationLegend(el: HTMLElement, bands: DeviationBands, wall: string): void {
+  const title = document.createElement('div')
+  title.className = 'thick-title'
+  title.textContent = `肉厚（一般部との比、面ごと。一般部 ${wall}）`
+  const { small: s, large: l } = bands
+  const labels = [`−${l} % より薄い`, `−${l}〜−${s} %`, `±${s} %（一般部）`, `+${s}〜+${l} %`, `+${l} % より厚い`]
+  const rows: HTMLElement[] = [title]
+  labels.forEach((text, i) => {
+    const row = document.createElement('div')
+    row.className = 'draft-row deviation-band'
+    row.dataset.band = String(i)
+    const sw = document.createElement('span')
+    sw.className = 'draft-swatch'
+    sw.style.background = css(DEVIATION[i])
+    const label = document.createElement('span')
+    label.textContent = text
+    row.append(sw, label)
+    rows.push(row)
+  })
+  const none = document.createElement('div')
+  none.className = 'draft-row'
+  const sw = document.createElement('span')
+  sw.className = 'draft-swatch'
+  sw.style.background = css(NO_DATA)
+  const label = document.createElement('span')
+  label.textContent = 'データなし（測れない小さな面・判定できない部品）'
+  none.append(sw, label)
+  rows.push(none)
+  el.replaceChildren(...rows)
 }
 
 /** a length on the legend: the threshold moves in 0.01 mm steps (1.5, 0.64; twice them 3.0, 1.28) */
