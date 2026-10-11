@@ -585,7 +585,8 @@ export class Viewer {
   }
 
   /** Thickness heatmap (thickness.ts): red to orange below the threshold, grey-blue to blue at and above it. */
-  setThicknessColors(thickness: Map<number, Float32Array>, threshold: number): void {
+  /** `thick`: each part's 厚肉 limit (mm; absent: none), purple at and over it (thickness.ts) */
+  setThicknessColors(thickness: Map<number, Float32Array>, threshold: number, thick: ReadonlyMap<number, number> | null = null): void {
     this.wake()
     for (const [partId, t] of thickness) {
       const mesh = this.partMeshes.get(partId)
@@ -596,7 +597,7 @@ export class Viewer {
         console.warn(`thickness length mismatch for part ${partId} — skipped`)
         continue
       }
-      this.applyVertexColors(mesh, (colors) => thicknessColors(t, threshold, colors))
+      this.applyVertexColors(mesh, (colors) => thicknessColors(t, threshold, colors, thick?.get(partId) ?? null))
     }
   }
 

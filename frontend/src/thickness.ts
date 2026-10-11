@@ -16,11 +16,12 @@
 import * as THREE from 'three'
 import { fmtThin } from './materials'
 
-export type ThicknessMethod = 'ray' | 'ball'
+export type ThicknessMethod = 'ray' | 'ball' | 'face'
 
 export const METHOD_NAMES: Record<ThicknessMethod, string> = {
   ray: 'レイ法',
   ball: 'ローリングボール法',
+  face: '面ごと',
 }
 
 type RGB = readonly [number, number, number]
@@ -44,11 +45,20 @@ const GREY_BLUE: RGB = [0.66, 0.64, 0.9]
 const THICK_BLUE: RGB = [0.35, 0.55, 0.8]
 /** a vertex without a value */
 const NO_DATA: RGB = [0.55, 0.62, 0.75]
+/**
+ * 厚肉 (面ごと): at the 厚肉 limit (ratio x the general wall) and beyond, the
+ * 厚肉 sphere's purple (checklist.ts KIND_COLOR thick, #9b4dca in sRGB)
+ */
+const THICK_PURPLE: RGB = [0.331, 0.074, 0.591]
 
-/** Write the colour of thickness v (mm) under `threshold` (mm) to out[o], out[o + 1], out[o + 2]. */
-export function thicknessColor(v: number, threshold: number, out: Float32Array | number[], o = 0): void {
+/**
+ * Write the colour of thickness v (mm) under `threshold` (mm) to out[o],
+ * out[o + 1], out[o + 2]; at `thick` (mm, the 厚肉 limit) and over, purple.
+ */
+export function thicknessColor(v: number, threshold: number, out: Float32Array | number[], o = 0, thick: number | null = null): void {
   // `v > 0` is false for NaN too
   if (!(v > 0)) put(out, o, NO_DATA, NO_DATA, 0)
+  else if (thick !== null && v >= thick) put(out, o, THICK_PURPLE, THICK_PURPLE, 0)
   else rampColor(threshold > 0 ? v / threshold : Infinity, out, o)
 }
 
@@ -67,9 +77,9 @@ function put(out: Float32Array | number[], o: number, a: RGB, b: RGB, k: number)
 }
 
 /** thicknessColor for every value: `out` holds 3 floats per value */
-export function thicknessColors(values: ArrayLike<number>, threshold: number, out: Float32Array): void {
+export function thicknessColors(values: ArrayLike<number>, threshold: number, out: Float32Array, thick: number | null = null): void {
   const n = Math.min(values.length, Math.floor(out.length / 3))
-  for (let i = 0; i < n; i++) thicknessColor(values[i], threshold, out, i * 3)
+  for (let i = 0; i < n; i++) thicknessColor(values[i], threshold, out, i * 3, thick)
 }
 
 /**
@@ -135,7 +145,16 @@ function barGradient(): string {
  * Legend: the method and the threshold, the colour bar with mm ticks at 0, the
  * threshold and twice the threshold, and the colour of a point without a value.
  */
-export function renderThicknessLegend(el: HTMLElement, threshold: number, method: ThicknessMethod): void {
+/**
+ * the legend; with 面ごと, `thick` says the 厚肉 band (its ratio and the
+ * general wall it is of: 「部品ごと」 or a length)
+ */
+export function renderThicknessLegend(
+  el: HTMLElement,
+  threshold: number,
+  method: ThicknessMethod,
+  thick: { ratio: number; wall: string } | null = null,
+): void {
   const title = document.createElement('div')
   title.className = 'thick-title'
   title.textContent = `肉厚（${METHOD_NAMES[method]}、閾値 ${mm(threshold)} mm 未満が赤・橙）`
@@ -163,7 +182,20 @@ export function renderThicknessLegend(el: HTMLElement, threshold: number, method
   swatch.className = 'draft-swatch'
   swatch.style.background = css(NO_DATA)
   const label = document.createElement('span')
-  label.textContent = 'データなし（光線が抜けた点・角）'
+  label.textContent = method === 'face' ? 'データなし（測れない小さな面・判定できない部品）' : 'データなし（光線が抜けた点・角）'
   none.append(swatch, label)
-  el.replaceChildren(title, bar, ticks, none)
+  const rows: HTMLElement[] = [title, bar, ticks]
+  if (thick) {
+    const t = document.createElement('div')
+    t.className = 'draft-row thick-band'
+    const sw = document.createElement('span')
+    sw.className = 'draft-swatch'
+    sw.style.background = css(THICK_PURPLE)
+    const tl = document.createElement('span')
+    tl.textContent = `厚肉: 一般部（${thick.wall}）の ${String(Number(thick.ratio.toFixed(2)))} 倍以上`
+    t.append(sw, tl)
+    rows.push(t)
+  }
+  rows.push(none)
+  el.replaceChildren(...rows)
 }

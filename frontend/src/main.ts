@@ -1209,6 +1209,25 @@ function basisLeft(): void {
 const thicknessCache = new Map<string, Map<number, Float32Array>>()
 /** the 厚肉 answers for the model on screen, by ratio and general wall (dropped with the model, as thicknessCache) */
 const thickCache = new Map<string, Map<number, ThickPart>>()
+/** the 厚肉 answer for the ratio and the general wall set now (the cached one, else asked) */
+async function thickNow(): Promise<Map<number, ThickPart>> {
+  const nominal = thickState.nominal > 0 ? thickState.nominal : null
+  const key = `${thickState.ratio}:${nominal ?? 'auto'}`
+  const known = thickCache.get(key)
+  if (known) return known
+  const model = currentModelId!
+  const nominals = new Map<number, number>()
+  if (nominal !== null) for (const id of viewer.getPartMeshes().keys()) nominals.set(id, nominal)
+  const got = new Map((await fetchThick(model, thickState.ratio, nominals)).map((p) => [p.id, p]))
+  if (model === currentModelId) thickCache.set(key, got)
+  return got
+}
+/** each judged part's 厚肉 limit (mm): the ratio x its general wall */
+async function thickLimits(): Promise<Map<number, number>> {
+  const out = new Map<number, number>()
+  for (const [id, p] of await thickNow()) if (p.status === 'ok' && p.nominal) out.set(id, thickState.ratio * p.nominal)
+  return out
+}
 /** the values the heatmap on screen was painted from (part id -> one per display vertex) */
 let shownThickness: Map<number, Float32Array> | null = null
 const HEATMAP_HUD = '肉厚ヒートマップ表示中'
@@ -1309,7 +1328,9 @@ async function updateThickness(): Promise<void> {
   try {
     let data = thicknessCache.get(requestedMethod)
     if (!data) {
-      setThicknessHud(requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : '肉厚計算中...')
+      setThicknessHud(
+        requestedMethod === 'ball' ? '肉厚計算中（ボール法、少し待て）...' : requestedMethod === 'face' ? '肉厚計算中（形の中の格子、少し待て）...' : '肉厚計算中...',
+      )
       data = await thicknessFor(requestedMethod) // the problem list's ask may be on its way already
       if (
         requestedGen !== loadGen ||
@@ -1320,12 +1341,20 @@ async function updateThickness(): Promise<void> {
         return // superseded: don't cache, don't recolor, don't touch the HUD
       thicknessCache.set(requestedMethod, data)
     }
-    viewer.setThicknessColors(data, thicknessState.threshold)
+    // 面ごと: the 厚肉 band too (射出成形's), each part's limit from its general wall
+    const thick = requestedMethod === 'face' && materialStore.use === 'molding' ? await thickLimits() : null
+    if (requestedGen !== loadGen || requestedId !== currentModelId || requestedMethod !== thicknessState.method || !thicknessState.enabled) return
+    viewer.setThicknessColors(data, thicknessState.threshold, thick)
     colorOwner = 'thickness'
     shownThickness = data
     // the method named is thicknessState.method, equal to requestedMethod here
     // (a fetch that a method change overtook returned above)
-    renderThicknessLegend(thicknessLegend, thicknessState.threshold, thicknessState.method)
+    renderThicknessLegend(
+      thicknessLegend,
+      thicknessState.threshold,
+      thicknessState.method,
+      thick ? { ratio: thickState.ratio, wall: thickState.nominal > 0 ? `${fmtThin(thickState.nominal)} mm` : '部品ごと' } : null,
+    )
     spotNav.decorateThickness(thicknessLegend)
     thicknessLegend.classList.remove('hidden')
     setThicknessHud(heatmapHud())
@@ -1360,7 +1389,7 @@ thicknessFolder
     void updateThickness()
   })
 thicknessFolder
-  .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball' })
+  .add(thicknessState, 'method', { レイ法: 'ray', 'ローリングボール法': 'ball', '面ごと（形の中から）': 'face' })
   .name('方式')
   .onChange(() => {
     void updateThickness()
@@ -1381,6 +1410,7 @@ const thickRatioCtl = thicknessFolder
   .onChange(() => {
     basisLeft()
     scheduleChecks()
+    if (thicknessState.enabled && thicknessState.method === 'face') void updateThickness() // its 厚肉 band
   })
 thickRatioCtl.domElement.title = 'この倍率以上の球が入る所を、問題の一覧に厚肉（ヒケ・ボイドの心配な所）として出す'
 const thickNominalCtl = thicknessFolder
@@ -1395,6 +1425,7 @@ const thickNominalCtl = thicknessFolder
       thickNominalCtl.updateDisplay()
     }
     scheduleChecks()
+    if (thicknessState.enabled && thicknessState.method === 'face') void updateThickness() // its 厚肉 band
   })
 thickNominalCtl.domElement.title = '厚肉の倍率の元になる一般部の肉厚。0 なら部品ごとに、面の肉厚のいちばん多い値を使う'
 
@@ -1549,15 +1580,12 @@ async function updateChecks(): Promise<void> {
       layoutCorner()
       const model = currentModelId
       try {
-        const nominals = new Map<number, number>()
-        if (conditions.thick.nominal !== null) for (const id of viewer.getPartMeshes().keys()) nominals.set(id, conditions.thick.nominal)
-        thick = new Map((await fetchThick(model, conditions.thick.ratio, nominals)).map((p) => [p.id, p]))
+        thick = await thickNow() // the conditions' are the folder's (thickState): the same key
       } catch (e) {
         if (gen === checkGen && model === currentModelId) checkPanel.showBusy(`厚肉を計算できなかった（${e instanceof Error ? e.message : e}）`)
         return
       }
       if (gen !== checkGen || model !== currentModelId) return
-      thickCache.set(key, thick)
     }
   }
   checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values, thick), conditions)
@@ -2242,6 +2270,8 @@ function applyMaterial(): void {
  */
 function applyUse(): void {
   applyUseVisibility()
+  // 面ごと's 厚肉 band is the moulding's: on or off with the 用途
+  if (thicknessState.enabled && thicknessState.method === 'face') void updateThickness()
   if (materialStore.use === 'general') {
     if (draftState.enabled) {
       draftState.enabled = false
