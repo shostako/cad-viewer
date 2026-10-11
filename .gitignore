@@ -19,3 +19,8 @@ testdata/*.dwg
 *.log
 backend/.cache/
 backend/.sidecars/
+
+# the Windows build (packaging/windows): PyInstaller's and Inno Setup's output, the drawn icon
+/build/
+/dist/
+packaging/windows/cad-viewer.ico

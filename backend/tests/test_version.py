@@ -67,7 +67,7 @@ def test_health_and_openapi_report_the_version():
     client = TestClient(app)
     r = client.get("/api/health")
     assert r.status_code == 200
-    assert r.json() == {"status": "ok", "version": __version__}
+    assert r.json() == {"status": "ok", "app": "cad-viewer", "version": __version__}
     assert client.get("/openapi.json").json()["info"]["version"] == __version__
 
 

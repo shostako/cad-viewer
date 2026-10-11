@@ -12,7 +12,9 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-CACHE_DIR = Path(__file__).resolve().parent.parent / ".cache"
+from . import paths
+
+CACHE_DIR = paths.data_dir("cache")  # backend/.cache, or the installed app's
 # bump when the binary protocol OR the tessellated output changes: the lazy
 # B-rep re-parse must number parts / faces exactly like the cached mesh
 CACHE_VERSION = 4  # 3: loose IGES faces are sewn into solids; 4: the meta says the file's unit
@@ -29,7 +31,7 @@ def get(key: str) -> tuple[bytes, dict[str, Any]] | None:
     blob_path = CACHE_DIR / f"{key}.bin"
     meta_path = CACHE_DIR / f"{key}.json"
     try:
-        meta = json.loads(meta_path.read_text())
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
         blob = blob_path.read_bytes()
         return blob, meta
     except (OSError, json.JSONDecodeError):

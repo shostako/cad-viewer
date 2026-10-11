@@ -51,7 +51,14 @@ for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do
 done
 ```
 
-CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
+CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す（Windows のインストール版は別の `windows.yml`、下の節）。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
+
+### Windows のインストール版
+
+- 入口は `backend/app/desktop.py`。:8018 で立て（8008 は WSL の start.sh の分）、データは `%LOCALAPPDATA%\cad-viewer`（`app/paths.py` が `CAD_VIEWER_DATA_DIR` と `CAD_VIEWER_DIST` を読む）、通知領域にアイコン（pystray）。2 つ目の起動はブラウザを開くだけ。
+- 固め方は `packaging/windows/`（PyInstaller の spec と取り込みの hooks、Inno Setup の台本、`smoke.py`）。`.github/workflows/windows.yml` が、それを触る PR で作って試し、版のタグで GitHub の Releases に載せる。
+- 手元で固めるには Windows 側の Python 3.12 が要る。WSL のツリーは C: 側にコピーしてから回す（UNC の上では回さない）。exe の確かめは `smoke.py <exe>`（自己点検 `--self-check`、STEP・肉厚・厚肉・サイドカー・DXF、2 つ目の起動、ポートが埋まっているとき）。
+- 依存を足したら Windows の exe でも試す。delvewheel の DLL の置き場（`*.libs`）や、`importlib.metadata` で自分の版を読むパッケージは、hooks が要ることがある（embreex がそうだった）。
 
 ### 手元（WSL2 ＋ Windows）だけのもの
 
@@ -87,13 +94,14 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 ## 版と変更履歴
 
 - 変更履歴は `CHANGELOG.md`（Keep a Changelog 1.1.0 の日本語版、セマンティック バージョニング、0.x 系）。利用者向けに、画面や振る舞いで何が変わったかを平易な日本語で書く。各版の先頭に要点を太字で 1 文、分類は 追加／変更／修正／削除、1 つの変更は 1〜2 行で PR の番号を付ける。関数名などの内部の話は書かない。
-- 版の番号は、CHANGELOG の一番上の版、`backend/app/__init__.py` の `__version__`、`backend/pyproject.toml`、`frontend/package.json` と `package-lock.json`（先頭と `packages[""]`）でそろえる。`backend/tests/test_version.py` が確かめる。`GET /api/health` は `{"status": "ok", "version": …}` を返す。
+- 版の番号は、CHANGELOG の一番上の版、`backend/app/__init__.py` の `__version__`、`backend/pyproject.toml`、`frontend/package.json` と `package-lock.json`（先頭と `packages[""]`）でそろえる。`backend/tests/test_version.py` が確かめる。`GET /api/health` は `{"status": "ok", "app": "cad-viewer", "version": …}` を返す（`app` はインストール版の 2 回目の起動が 1 回目を見分ける印）。
 - **機能の PR は CHANGELOG に触らない。** 並行の PR が同じ所に書いて衝突し、そのたびに CI をやり直すことになるため。
 - **版を出すとき** は、版の PR（枝 `release/vX.Y.Z`）で次をする。
   - 前のタグから後にマージされた PR（`git log vPREV..origin/master --oneline`）を元に、CHANGELOG の先頭に `## [X.Y.Z] — yyyy-MM-dd`（出した日、東京時間）の節を書き、末尾に比較のリンクを足す。新しい機能があればマイナー、直しだけならパッチを上げる。
   - 版の番号を上げる。frontend の 2 つは `(cd frontend && npm version X.Y.Z --no-git-tag-version)` でそろう。
   - マージの直前に master が進んでいたら、載せ直して、増えた PR を節に足す（タグに入る変更と節をそろえる）。
   - マージしたら、ほかの PR をマージする前に、その squash のコミットに注釈付きタグを打って push する（`git tag -a vX.Y.Z <sha> -m "vX.Y.Z" && git push origin vX.Y.Z`）。先にほかの PR が入ると master の先頭が版のコミットでなくなり、先頭にタグを打つ取り違えが起きやすい（タグは必ず版の squash のコミットに打つ）。
+  - タグを push すると `windows.yml` が Windows のインストーラーを作り、その版の Release（無ければ CHANGELOG の節から作る）に載せる。終わったら Release に `cad-viewer-setup-X.Y.Z.exe` が付いたかを確かめる。
 
 ## アーキテクチャ
 
@@ -109,6 +117,8 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 
 ### backend（`backend/app/`）
 
+- `paths.py` — データ（`.cache`・`.sidecars`）と frontend の置き場所。手元のツリーではリポの中、インストール版では環境変数で指された所
+- `desktop.py` — Windows のインストール版の入口（上の「Windows のインストール版」）
 - `main.py` — 全 API ルート。`frontend/dist` があれば `/` に配信する（`/api/*` が優先）。B-rep は、ディスクキャッシュから復元したモデルでは初めての計測のときに読み直す（`_brep_meshes`）
 - `loaders.py` → `tessellation.py` → `meshpack.py` — 形式ごとの読み込み → ID 付きのテッセレーション → バイナリ化
   - `tessellation.merge_loose_shapes` — 最上位のバラバラの面（IGES に多い）を縫い合わせて 1 つの形にし、閉じればソリッドにする。バラバラの曲線は「曲線（N 本）」の 1 部品にまとめる

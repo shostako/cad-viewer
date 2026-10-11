@@ -1,0 +1,132 @@
+name: windows
+
+# The installed app for Windows (packaging/windows, backend/app/desktop.py):
+# bundled with PyInstaller, made an installer with Inno Setup, both smoke-tested
+# (the bundle fully, the installed copy briefly, then uninstalled).
+# - on a PR that touches it (or the backend): built and tested, the installer kept
+#   as the run's artifact;
+# - on a version's tag (vX.Y.Z): the same, then attached to the GitHub release of
+#   that tag (made with the version's CHANGELOG section when it is not there).
+# Unsigned: Windows SmartScreen warns on the first start (README says how to go on).
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths:
+      # the backend too: a new library may need a hook to be bundled
+      - 'packaging/**'
+      - 'backend/**'
+      - '.github/workflows/windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: '1'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.lock
+            packaging/windows/requirements.txt
+
+      - name: Version
+        id: version
+        run: |
+          v=$(cd backend && python -c "import app; print(app.__version__)")
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "${GITHUB_REF_NAME#v}" != "$v" ]]; then
+            echo "the tag $GITHUB_REF_NAME is not the app's version $v"; exit 1
+          fi
+
+      - name: Frontend
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Dependencies
+        run: python -m pip install -q -r backend/requirements.lock -r packaging/windows/requirements.txt
+
+      - name: Test data
+        run: |
+          for g in make_testdata make_step_assembly make_dxf make_iges_loose; do
+            python "testdata/$g.py"
+          done
+
+      - name: Bundle
+        run: |
+          python packaging/windows/make_icon.py
+          pyinstaller --noconfirm --clean packaging/windows/cad-viewer.spec
+          du -sh dist/cad-viewer
+
+      - name: Smoke test (the bundle)
+        run: python packaging/windows/smoke.py dist/cad-viewer/cad-viewer.exe
+
+      - name: Installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          }
+          & $iscc /Q "/DAppVersion=${{ steps.version.outputs.version }}" packaging\windows\cad-viewer.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Item dist\cad-viewer-setup-*.exe | Format-Table Name, Length
+
+      - name: Smoke test (installed, then uninstalled)
+        shell: pwsh
+        run: |
+          $setup = "dist\cad-viewer-setup-${{ steps.version.outputs.version }}.exe"
+          $p = Start-Process $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/LOG=install.log' -Wait -PassThru
+          if ($p.ExitCode) { Get-Content install.log -Tail 30; exit $p.ExitCode }
+          $dir = "$env:LOCALAPPDATA\Programs\cad-viewer"
+          python packaging/windows/smoke.py "$dir\cad-viewer.exe" --quick
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Start-Process "$dir\unins000.exe" -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES' -Wait
+          # the uninstaller finishes from a copy of itself: wait for the files to go
+          for ($i = 0; $i -lt 60 -and (Test-Path "$dir\cad-viewer.exe"); $i++) { Start-Sleep 1 }
+          if (Test-Path "$dir\cad-viewer.exe") { 'the uninstaller left the app'; exit 1 }
+          'installed, ran, uninstalled'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cad-viewer-setup-${{ steps.version.outputs.version }}
+          path: dist/cad-viewer-setup-*.exe
+          retention-days: 14
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v=${{ steps.version.outputs.version }}
+          setup="dist/cad-viewer-setup-$v.exe"
+          if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" "$setup" --clobber
+          else
+            python packaging/windows/release_notes.py "$v" > notes.md
+            gh release create "$GITHUB_REF_NAME" "$setup" --title "cad-viewer $v" --notes-file notes.md --verify-tag
+          fi
