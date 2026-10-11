@@ -46,7 +46,8 @@ GRID_MAX = 12_000_000
 """grid points of one part at most (memory: ~100 MB while it is computed)"""
 MODEL_GRID_MAX = 24_000_000
 """grid points of a whole model at most (the grids are kept: ~100 MB), shared
-by the parts in proportion to their boxes' volumes (each GRID_MIN at least)"""
+by the parts in proportion to their boxes' volumes (each GRID_MIN at least,
+less when the parts are many: the sum stays under this)"""
 GRID_MIN = 500_000
 STEPS_PER_WALL = 16
 """grid steps across the first guess of the wall"""
@@ -118,7 +119,9 @@ def _first_guess(m: trimesh.Trimesh) -> float:
     return float(d[order][np.searchsorted(cw, cw[-1] / 2)])
 
 
-def _grid(m: trimesh.Trimesh, guess: float, grid_max: int = GRID_MAX) -> tuple[np.ndarray, float, np.ndarray]:
+def _grid(
+    m: trimesh.Trimesh, guess: float, grid_max: int = GRID_MAX, bodies: list[tuple[trimesh.Trimesh, int]] | None = None
+) -> tuple[np.ndarray, float, np.ndarray]:
     lo, hi = m.bounds
     size = hi - lo
     h = guess / STEPS_PER_WALL
@@ -130,7 +133,7 @@ def _grid(m: trimesh.Trimesh, guess: float, grid_max: int = GRID_MAX) -> tuple[n
     # off the model's round coordinates by an odd fraction of a step: no grid
     # line runs along a face or through an edge (a ray there would graze it)
     origin = lo - 2 * h + h * GRID_SHIFT
-    inside = _inside(m, origin, h, shape)
+    inside = _inside(m, origin, h, shape, bodies)
     d = ndimage.distance_transform_edt(inside, sampling=h).astype(np.float32)
     # to the nearest grid point outside, less half a step: about to the surface
     radius = np.where(inside, np.maximum(d - h / 2, 0), 0).astype(np.float32)
@@ -182,7 +185,9 @@ def _outside_faces(m: trimesh.Trimesh, bodies: list[tuple[trimesh.Trimesh, int]]
     return trimesh.Trimesh(m.vertices, m.faces[keep], process=False)
 
 
-def _inside(m: trimesh.Trimesh, origin: np.ndarray, h: float, shape: np.ndarray) -> np.ndarray:
+def _inside(
+    m: trimesh.Trimesh, origin: np.ndarray, h: float, shape: np.ndarray, bodies: list[tuple[trimesh.Trimesh, int]] | None = None
+) -> np.ndarray:
     """the grid points inside the part's material.
 
     A part of one body, or one whose bodies are not each closed (a B-rep
@@ -193,7 +198,6 @@ def _inside(m: trimesh.Trimesh, origin: np.ndarray, h: float, shape: np.ndarray)
     touch are their union; the crossings of both together would make a void of
     the overlap), a cavity is taken away, an island in it added back. The
     largest first, so a body's parent is decided before it."""
-    bodies = _bodies(m)
     if bodies is None:
         return _inside_crossings(m, origin, h, shape)
     out = np.zeros(tuple(int(v) for v in shape), dtype=bool)
@@ -344,7 +348,7 @@ def part_field(
     m = _solid(positions, indices, trusted_closed)
     bodies = _bodies(m)
     guess = _first_guess(m)
-    origin, h, radius = _grid(m, guess, grid_max)
+    origin, h, radius = _grid(m, guess, grid_max, bodies)
     # samples on the display triangles (not the merged mesh's: the face ids are the display's)
     disp = trimesh.Trimesh(np.asarray(positions, dtype=np.float64), np.asarray(indices, dtype=np.int64), process=False)
     if m.volume > 0 and disp.volume < 0:
@@ -411,11 +415,19 @@ def _deepest(pq: trimesh.proximity.ProximityQuery, field: PartField, c: np.ndarr
 
 
 def grid_budgets(boxes: dict[int, float]) -> dict[int, int]:
-    """each part's share of MODEL_GRID_MAX by its box's volume (GRID_MIN to GRID_MAX)"""
+    """each part's share of MODEL_GRID_MAX by its box's volume (GRID_MIN to
+    GRID_MAX); the shares together never over MODEL_GRID_MAX (with many parts
+    the least share goes down, and all are scaled down to fit)"""
+    if not boxes:
+        return {}
+    least = min(GRID_MIN, MODEL_GRID_MAX // len(boxes))
     total = sum(max(v, 0.0) for v in boxes.values())
     if total <= 0:
-        return {k: GRID_MAX for k in boxes}
-    return {k: int(min(GRID_MAX, max(GRID_MIN, MODEL_GRID_MAX * max(v, 0.0) / total))) for k, v in boxes.items()}
+        share = {k: min(GRID_MAX, MODEL_GRID_MAX // len(boxes)) for k in boxes}
+    else:
+        share = {k: min(GRID_MAX, max(least, MODEL_GRID_MAX * max(v, 0.0) / total)) for k, v in boxes.items()}
+    over = sum(share.values()) / MODEL_GRID_MAX
+    return {k: int(v / over) if over > 1 else int(v) for k, v in share.items()}
 
 
 def spots(field: PartField, nominal: float, ratio: float) -> list[dict[str, Any]]:

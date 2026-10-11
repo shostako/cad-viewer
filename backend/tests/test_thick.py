@@ -218,8 +218,11 @@ def test_the_model_grid_budget():
     b = grid_budgets({0: 1000.0, 1: 3000.0, 2: 0.0})
     assert b[1] == min(GRID_MAX, int(MODEL_GRID_MAX * 0.75)) and b[0] == min(GRID_MAX, int(MODEL_GRID_MAX * 0.25)), b
     assert b[2] == GRID_MIN
+    # many parts: the least share goes down, the sum stays under the model's
     many = grid_budgets({k: 1.0 for k in range(100)})
-    assert all(v == max(GRID_MIN, MODEL_GRID_MAX // 100) for v in many.values()), set(many.values())
+    assert sum(many.values()) <= MODEL_GRID_MAX and len(set(many.values())) == 1, (sum(many.values()), set(many.values()))
+    lopsided = grid_budgets({0: 1e9, **{k: 1e-3 for k in range(1, 200)}})
+    assert sum(lopsided.values()) <= MODEL_GRID_MAX and lopsided[0] <= GRID_MAX, sum(lopsided.values())
 
 
 def test_the_model_budget_coarsens_the_grids(client, monkeypatch):
