@@ -124,3 +124,76 @@ test('B-rep volumes, known values (no backend needed): turned over, open, two bo
   // faces only: none (curves or points only)
   assert.equal(brepPartProperties(oc, new oc.BRepBuilderAPI_MakeVertex(new oc.gp_Pnt(1, 2, 3)).Vertex()).reason, 'no_faces')
 })
+
+/**
+ * the OCCT objects a calculation gets hold of, for the leak check: oc wrapped,
+ * every object that comes out of a constructor or a call recorded (what the
+ * model keeps is wrapped by own(), and not recorded). The calculation sees
+ * wrappers; OCCT sees the objects themselves.
+ */
+function tracer(oc: any) {
+  const made: any[] = []
+  const raw = new WeakMap<object, any>()
+  const unwrap = (v: any) => (v !== null && typeof v === 'object' && raw.has(v) ? raw.get(v) : v)
+  const wrapObject = (t: any, record: boolean): any => {
+    if (record) made.push(t)
+    const px = new Proxy(t, {
+      get(target, prop) {
+        const v = target[prop]
+        if (typeof v !== 'function') return v
+        if (prop === 'delete' || prop === 'isDeleted') return v.bind(target)
+        return (...args: any[]) => out(v.apply(target, args.map(unwrap)))
+      },
+    })
+    raw.set(px, t)
+    return px
+  }
+  const out = (v: any) => (v !== null && typeof v === 'object' && typeof v.delete === 'function' ? wrapObject(v, true) : v)
+  const wrapFunction = (f: any): any =>
+    new Proxy(f, {
+      construct: (target, args) => out(new target(...args.map(unwrap))),
+      apply: (target, self, args) => out(target.apply(self, args.map(unwrap))),
+      get: (target, prop) => (typeof target[prop] === 'function' ? wrapFunction(target[prop]) : target[prop]),
+    })
+  const wrapped = new Proxy(oc, { get: (target, prop) => (typeof target[prop] === 'function' ? wrapFunction(target[prop]) : target[prop]) })
+  return { oc: wrapped, own: (t: any) => wrapObject(t, false), made }
+}
+
+for (const file of FILES.filter((f) => !f.endsWith('.igs'))) {
+  test(`${path.basename(file)}: each measurement and the properties leave no OCCT object behind`, { skip: !ready && 'no backend venv or testdata' }, async () => {
+    const { loadBrep } = await import('../src/local/brep.ts')
+    const { Measurer, MeasureError } = await import('../src/local/measure.ts')
+    const { brepPartProperties } = await import('../src/local/brepprops.ts')
+    const oc: any = await createInstance()
+    const { meshes } = loadBrep(oc, new Uint8Array(fs.readFileSync(file)), path.basename(file))
+    const T = tracer(oc)
+    const own = meshes.map((m) => ({
+      ...m,
+      part: { ...m.part, shape: T.own(m.part.shape) },
+      faceMap: T.own(m.faceMap),
+      edgeMap: T.own(m.edgeMap),
+      vertexMap: T.own(m.vertexMap),
+    }))
+    const measurer = new Measurer(T.oc, own)
+    const check = (what: string) => {
+      const left = T.made.filter((o) => !o.isDeleted())
+      assert.equal(left.length, 0, `${what}: ${left.length} of ${T.made.length} OCCT objects left: ${[...new Set(left.map((o) => o.constructor?.name))].join(', ')}`)
+      T.made.length = 0
+    }
+    let seen = 0
+    for (const { request } of golden[file].measures) {
+      try {
+        measurer.run(request)
+      } catch (e) {
+        if (!(e instanceof MeasureError)) throw e
+      }
+      seen += T.made.length
+      check(JSON.stringify(request))
+    }
+    assert.ok(seen > 1000, `the tracer saw ${seen} objects: it must see what the measurements make`)
+    for (const m of own) {
+      brepPartProperties(T.oc, m.part.shape)
+      check(`properties of part ${m.part.id}`)
+    }
+  })
+}
