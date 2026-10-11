@@ -305,6 +305,24 @@ body,
   display: none;
 }
 
+/* 版の比較's legend (compareview.ts): its bar and ticks as the thickness legend's */
+#compare-legend {
+  margin: 2px 0 4px;
+  font-size: var(--cv-fs-sm);
+  width: 26em;
+  max-width: 100%;
+}
+
+#compare-legend.hidden {
+  display: none;
+}
+
+.compare-note {
+  margin-top: 2px;
+  max-width: 34em;
+  color: var(--cv-text-2);
+}
+
 .thick-title {
   color: var(--cv-text-2);
   margin-bottom: 3px;

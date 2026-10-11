@@ -42,6 +42,12 @@ export interface Palette {
   marker2d: string
   halo2d: string
   /**
+   * 版の比較 (compareview.ts): added, removed, unchanged. They are on lit faces
+   * with no edge lines, so in the light theme each is darker, at 3:1 against
+   * its background at least (the dark theme's are 2.4:1 to 1.8:1 on it)
+   */
+  compare: { added: number; removed: number; same: number }
+  /**
    * In 半透明 / ワイヤーフレーム the dark edge lines would vanish on the dark
    * background: they are lifted to a lighter shade of the part's colour. On
    * the light background the dark lines are what shows.
@@ -63,6 +69,7 @@ export const PALETTES: Record<Theme, Palette> = {
     dim2d: '#ffd060',
     marker2d: '#ffb020',
     halo2d: '#1d2126',
+    compare: { added: 0x00a88f, removed: 0xe8590c, same: 0xa7adb4 },
     liftSeeThroughEdges: true,
   },
   // every colour at least 3:1 against the light background #e4e8ed (lines and
@@ -80,6 +87,7 @@ export const PALETTES: Record<Theme, Palette> = {
     dim2d: '#9a6a00',
     marker2d: '#c05f00',
     halo2d: '#ffffff',
+    compare: { added: 0x008c76, removed: 0xd9480f, same: 0x7a8189 },
     liftSeeThroughEdges: false,
   },
 }

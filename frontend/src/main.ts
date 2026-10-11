@@ -40,6 +40,8 @@ import { InfoCache, Preselect } from './preselect'
 import { PropertiesPanel, REASON_TEXT, fmtDensity } from './properties'
 import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
+import { CompareView, renderCompareLegend, runCompare, signed, startTolerance, type CompareRole, type CompareShow } from './compareview'
+import type { Surface } from './compare'
 import { SpotNav } from './spotnav'
 import {
   METALS,
@@ -128,6 +130,7 @@ app.innerHTML = `
   </div>
   <div id="triad" class="hidden"></div>
   <div id="hud">
+    <div id="compare-legend" class="hidden"></div>
     <div id="draft-legend" class="hidden"></div>
     <div id="thickness-legend" class="hidden"></div>
     <div id="hud-line">
@@ -142,6 +145,7 @@ app.innerHTML = `
     <button id="undo-btn" type="button">元に戻す</button>
   </div>
   <input type="file" id="file-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.dxf,.dwg" hidden />
+  <input type="file" id="compare-input" accept=".step,.stp,.iges,.igs,.stl,.3mf,.obj,.ply,.off" hidden />
 `
 
 const viewport = document.querySelector<HTMLDivElement>('#viewport')!
@@ -150,6 +154,8 @@ const hud = document.querySelector<HTMLDivElement>('#hud')!
 const hudInfo = document.querySelector<HTMLDivElement>('#hud-info')!
 const draftLegend = document.querySelector<HTMLDivElement>('#draft-legend')!
 const thicknessLegend = document.querySelector<HTMLDivElement>('#thickness-legend')!
+const compareLegend = document.querySelector<HTMLDivElement>('#compare-legend')!
+const compareInput = document.querySelector<HTMLInputElement>('#compare-input')!
 const fileInput = document.querySelector<HTMLInputElement>('#file-input')!
 const treePanel = document.querySelector<HTMLDivElement>('#tree-panel')!
 const toolbarEl = document.querySelector<HTMLDivElement>('#toolbar')!
@@ -304,7 +310,7 @@ function applyEmptyPanel(empty: boolean): void {
   for (const c of [modeCtl, clearCtl, exportBgCtl, reportCtl]) c.show(!empty)
   if (empty) showReportPop(false)
   showDistanceCtl()
-  for (const f of [frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]) f.show(!empty && !is2D)
+  for (const f of [frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, compareFolder, propsFolder]) f.show(!empty && !is2D)
   applyUseVisibility()
 }
 
@@ -369,6 +375,8 @@ const modeCtl = gui
   .add(state, 'mode', ['なし', '計測', '注記'])
   .name('モード')
   .onChange((mode: string) => {
+    // the clicks measure the open model, which the comparison hides
+    if (mode !== 'なし') stopCompare()
     // a mode chosen: the clicks are for it now, not for a frame being chosen
     frameTool.stop()
     if (mode !== '計測') measureTool.cancelPending()
@@ -1152,7 +1160,7 @@ function dropThicknessHud(): void {
  * Which feature's colours are on the meshes. Turning one feature off (or
  * changing its parameters while it is off) must not wipe the other's colours.
  */
-type ColorOwner = 'none' | 'thickness' | 'draft'
+type ColorOwner = 'none' | 'thickness' | 'draft' | 'compare'
 let colorOwner: ColorOwner = 'none'
 function releaseColors(owner: ColorOwner): void {
   if (colorOwner === owner) {
@@ -1419,6 +1427,7 @@ thicknessFolder
   .name('ヒートマップ')
   .listen() // reset programmatically on errors / model switch / 抜き勾配 taking over
   .onChange((on: boolean) => {
+    if (on) stopCompare() // the heatmap is on the open model's faces, which the comparison hides
     // one vertex-colour feature at a time: the heatmap takes over from the draft
     if (on && draftState.enabled) {
       draftState.enabled = false
@@ -1537,6 +1546,7 @@ draftFolder
   .name('色分け')
   .listen() // reset programmatically on model switch / heatmap taking over
   .onChange((on: boolean) => {
+    if (on) stopCompare() // the colouring is on the open model's faces, which the comparison hides
     if (on && thicknessState.enabled) {
       // The draft takes over. An in-flight thickness fetch sees enabled=false
       // and is dropped. Clearing first keeps the meshes plain if the box snaps
@@ -1667,6 +1677,7 @@ function scheduleChecks(): void {
 }
 /** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
 async function colourFor(kind: CheckRow['kind']): Promise<void> {
+  stopCompare() // the place is on the open model
   if (kind === 'thick') return // its sphere says it (viewer.goToSpot): whatever colours are up stay
   if (kind === 'thin') {
     if (!(thicknessState.enabled && colorOwner === 'thickness')) {
@@ -1723,6 +1734,172 @@ const basisCtl = checkFolder
   })
 const basisActions = { edit: () => showMaterialPop(!materialPop.shown, basisEditCtl.domElement) }
 const basisEditCtl = checkFolder.add(basisActions, 'edit').name('基準を編集…')
+
+// ---- 版の比較 (docs/designs/compare.md) -------------------------------------
+// Another version of the open model, its surfaces against this one's: what was
+// added and what was removed, in colour (compareview.ts; computed in a Worker,
+// compare.ts, the same in both versions of the app).
+const compareState = { name: '', role: 'previous' as CompareRole, show: 'overlay' as CompareShow, tolerance: 0.1 }
+let compareView: CompareView | null = null
+let compareRun: { cancel(): void } | null = null
+/** counts the comparisons asked for: a late answer for an older one is dropped */
+let compareGen = 0
+let compareNames = { a: '', b: '' }
+let compareNote = ''
+/** the open model's display mesh deflection (mesh.bin's header; 0 for a mesh file) */
+let shownDeflection = 0
+let compareHud = ''
+const compareFolder = gui.addFolder('版の比較')
+compareFolder.close()
+const compareActions = {
+  open: () => {
+    if (!contentShown || is2D) return
+    compareInput.value = '' // the same file again is a change too
+    compareInput.click()
+  },
+  stop: () => stopCompare(),
+}
+compareFolder.add(compareActions, 'open').name('別の版と比べる…')
+const compareNameCtl = compareFolder.add(compareState, 'name').name('比べる版').disable()
+compareFolder
+  .add(compareState, 'role', { 開いている版: 'previous', 比べる版: 'next' })
+  .name('新しいのは')
+  .onChange(() => redrawCompare())
+compareFolder
+  .add(compareState, 'show', { '重ねる（変わった所）': 'overlay', 新しい版だけ: 'new', 前の版だけ: 'old' })
+  .name('見せ方')
+  .onChange(() => redrawCompare())
+const compareTolCtl = compareFolder
+  .add(compareState, 'tolerance', 0.001, 10, 0.001)
+  .name('許容 (mm)')
+  .onChange(() => redrawCompare())
+compareTolCtl.domElement.title = 'この差より小さい所は「変わっていない」（灰色）にする'
+const compareStopCtl = compareFolder.add(compareActions, 'stop').name('比較をやめる')
+function showCompareCtls(): void {
+  compareNameCtl.show(compareState.name !== '')
+  compareStopCtl.show(compareView !== null || compareRun !== null)
+}
+showCompareCtls()
+// the comparison's colours are the theme's (theme.ts): made again in the new one
+onTheme(() => redrawCompare())
+compareInput.addEventListener('change', () => {
+  const file = compareInput.files?.[0]
+  if (file) void compareWith(file)
+})
+function setCompareHud(text: string): void {
+  compareHud = text
+  hudInfo.textContent = text
+}
+/**
+ * The open model's surfaces: every part with faces, hidden ones too. The
+ * compared file has no tree to hide the same parts in, so only all of both
+ * compare alike (a part hidden on one side only would come out as removed)
+ */
+function openSurfaces(): Surface[] {
+  const out: Surface[] = []
+  for (const mesh of viewer.getPartMeshes().values()) {
+    if (!mesh.geometry.index?.count) continue
+    out.push({
+      positions: mesh.geometry.getAttribute('position').array,
+      normals: mesh.geometry.getAttribute('normal').array,
+      indices: mesh.geometry.index.array,
+    })
+  }
+  return out
+}
+/** read another version and compare the open model with it */
+async function compareWith(file: File): Promise<void> {
+  if (!contentShown || is2D) return
+  stopCompare()
+  const gen = ++compareGen
+  const modelGen = viewer.modelGen
+  compareState.name = file.name
+  compareNameCtl.updateDisplay()
+  compareFolder.open()
+  setCompareHud(`版の比較: ${file.name} を読み込み中...`)
+  try {
+    const meta = await uploadModel(file, () => undefined)
+    if (gen !== compareGen || modelGen !== viewer.modelGen) return
+    if (meta.format === 'drawing') throw new Error('図面（2D）とは比べられない')
+    const pack = await fetchMesh(meta.id)
+    if (gen !== compareGen || modelGen !== viewer.modelGen) return
+    const other = toModelData(pack)
+    const b: Surface[] = other.parts.filter((p) => p.indices.length).map((p) => ({ positions: p.positions, normals: p.normals, indices: p.indices }))
+    const a = openSurfaces()
+    if (!a.length || !b.length) throw new Error('面の無いモデルとは比べられない')
+    setCompareHud(`版の比較: ${file.name} と比べている...`)
+    const run = runCompare(a, b)
+    compareRun = run
+    showCompareCtls()
+    const result = await run.promise
+    if (gen !== compareGen || modelGen !== viewer.modelGen) return
+    compareRun = null
+    // the comparison's colours take over: the heatmap and the draft go
+    if (thicknessState.enabled) {
+      thicknessState.enabled = false
+      clearThickness()
+    }
+    if (draftState.enabled) {
+      draftState.enabled = false
+      updateDraft()
+    }
+    viewer.clearVertexColors()
+    colorOwner = 'compare'
+    setMode('なし')
+    const deflB = Number(pack.header.deflection ?? 0)
+    compareState.tolerance = startTolerance(shownDeflection, deflB)
+    compareTolCtl.updateDisplay()
+    compareNames = { a: shownFileName, b: file.name }
+    compareNote =
+      shownDeflection + deflB > 0
+        ? `表示用の形の上の目安。曲面は、形の粗さ（${Number((shownDeflection + deflB).toPrecision(2))} mm）より小さい差を見分けられない`
+        : '表示用の形の上の目安'
+    compareView = new CompareView(result, compareState.tolerance)
+    redrawCompare()
+  } catch (e) {
+    if (gen !== compareGen) return
+    compareRun = null
+    compareState.name = ''
+    compareNameCtl.updateDisplay()
+    showCompareCtls()
+    setCompareHud(`版の比較: ${file.name} と比べられなかった — ${e instanceof Error ? e.message : e}`)
+  }
+}
+/** the comparison's meshes, legend and line for the role, show and tolerance now */
+function redrawCompare(): void {
+  if (!compareView) return
+  compareView.role = compareState.role
+  compareView.show = compareState.show
+  compareView.tolerance = compareState.tolerance
+  viewer.setComparison(compareView.build())
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote)
+  compareLegend.classList.remove('hidden')
+  const s = compareView.stats()
+  setCompareHud(`版の比較: 足された 最大 ${signed(s.added)} mm、削られた 最大 ${signed(s.removed)} mm`)
+  showCompareCtls()
+  probe.refresh()
+}
+/** the comparison ends: the open model as it was */
+function stopCompare(): void {
+  compareGen++
+  compareRun?.cancel()
+  compareRun = null
+  if (compareView) {
+    viewer.setComparison(null)
+    compareView.dispose()
+    compareView = null
+  }
+  releaseColors('compare')
+  compareLegend.classList.add('hidden')
+  if (compareState.name) {
+    compareState.name = ''
+    compareNameCtl.updateDisplay()
+  }
+  if (compareHud && hudInfo.textContent === compareHud) hudInfo.textContent = modelSummary
+  compareHud = ''
+  showCompareCtls()
+}
+
 /** while 判定の基準 follows the material: its threshold and draft (their own onChange recomputes) */
 function applyBasis(): void {
   if (materialStore.follow) {
@@ -1796,6 +1973,13 @@ probe.onStop(() => {
   partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
+  if (compareView && viewer.comparing && !is2D) {
+    // 版の比較: the change where the cursor is (the open model is hidden)
+    preselect.hide()
+    infoCache.rest(null)
+    partTree.markFrom3D(null)
+    return compareView.valueAt(toNdc(clientX, clientY), viewer.camera)
+  }
   if ((state.mode !== 'なし' || frameTool.active) && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
     if (picked !== null) {
@@ -2232,7 +2416,7 @@ panelsShow.addEventListener('click', () => setPanelsHidden(false))
 const propsFolder = gui.addFolder('体積・重量')
 propsFolder.close()
 /** folders that only make sense for a 3D model (hidden on 2D drawings) */
-const folders3D = [viewFolder, frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, propsFolder]
+const folders3D = [viewFolder, frameFolder, sectionFolder, thicknessFolder, draftFolder, checkFolder, compareFolder, propsFolder]
 // The material's gravity, or one typed here for it (手入力: the material and
 // its 判定の基準 stay; another material chosen drops it). Typing the
 // material's own value back is the material's again. min without max: lil-gui
@@ -2486,7 +2670,7 @@ refreshToolbar()
 
 // every folder exists now: remember these, folded on the empty screen we start on
 folderDefaults = new Map(
-  [viewFolder, presetFolder, sectionFolder, thicknessFolder, draftFolder, propsFolder].map((f) => [f, !f._closed]),
+  [viewFolder, presetFolder, sectionFolder, thicknessFolder, draftFolder, compareFolder, propsFolder].map((f) => [f, !f._closed]),
 )
 applyFolders(!contentShown)
 applyEmptyPanel(!contentShown)
@@ -3156,6 +3340,7 @@ async function loadFile(file: File): Promise<void> {
     try {
       currentModelId = meta.id
       measureTool.clearAll()
+      stopCompare() // it was the old model's
       thicknessCache.clear()
       thickCache.clear()
       thicknessInFlight.clear()
@@ -3232,6 +3417,7 @@ async function loadFile(file: File): Promise<void> {
       })
       const pack = await fetchMesh(meta.id)
       if (gen !== loadGen) return
+      shownDeflection = Number(pack.header.deflection ?? 0)
       const sidecar = await sidecarReq
       if (gen !== loadGen) return
       const props = await within(propsReq, propsWaitMs - (performance.now() - propsStart))
