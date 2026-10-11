@@ -14,6 +14,9 @@ Creates named_parts.step: an instance's own name and colour (see make_named_part
 Creates revision_a.step and revision_b.step: two versions of one part, for 版の
 比較 (see make_revisions).
 
+Creates undercut_block.step: a block with a side hole, a pocket from the top and
+a hook, for アンダーカットの候補 (see make_undercut_block).
+
 Usage: backend/.venv/bin/python testdata/make_step_assembly.py
 """
 import math
@@ -96,6 +99,7 @@ def main() -> None:
     make_inch_block()
     make_named_parts()
     make_revisions()
+    make_undercut_block()
 
 
 def make_named_parts() -> None:
@@ -247,6 +251,42 @@ def make_revisions() -> None:
         writer.Transfer(shape, STEPControl_AsIs)
         assert writer.Write(str(OUT / name)) == IFSelect_RetDone
         print(f"wrote {OUT / name}")
+
+
+
+def make_undercut_block() -> None:
+    """undercut_block.step, one solid: a block of 40 x 30 x 20 (z 0 to 20) with
+    - a side hole of R3 through it along y, its axis at x 10, z 10
+    - a pocket of R3 from the top at (30, 8), 10 deep (to z 10)
+    - a hook on the top: a post x 24..26, y 18..28 to z 30, and a lip from it
+      over the top, x 26..32, y 18..28, z 27..30 (7 over the block's top)
+    """
+    from OCP.STEPControl import STEPControl_Writer
+
+    solid = BRepPrimAPI_MakeBox(40, 30, 20).Shape()
+
+    def cut(tool):
+        nonlocal solid
+        op = BRepAlgoAPI_Cut(solid, tool)
+        op.Build()
+        assert op.IsDone()
+        solid = op.Shape()
+
+    def fuse(tool):
+        nonlocal solid
+        op = BRepAlgoAPI_Fuse(solid, tool)
+        op.Build()
+        assert op.IsDone()
+        solid = op.Shape()
+
+    cut(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10, -1, 10), gp_Dir(0, 1, 0)), 3, 32).Shape())
+    cut(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(30, 8, 10), gp_Dir(0, 0, 1)), 3, 11).Shape())
+    fuse(BRepPrimAPI_MakeBox(gp_Pnt(24, 18, 20), gp_Pnt(26, 28, 30)).Shape())
+    fuse(BRepPrimAPI_MakeBox(gp_Pnt(26, 18, 27), gp_Pnt(32, 28, 30)).Shape())
+    writer = STEPControl_Writer()
+    writer.Transfer(solid, STEPControl_AsIs)
+    assert writer.Write(str(OUT / "undercut_block.step")) == IFSelect_RetDone
+    print(f"wrote {OUT / 'undercut_block.step'}")
 
 
 if __name__ == "__main__":

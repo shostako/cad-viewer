@@ -44,7 +44,7 @@ export interface Sampled {
 export interface Comparison {
   a: Sampled
   b: Sampled
-  /** the edge length the triangles were cut to */
+  /** the longest edge length a part's triangles were cut to */
   edge: number
 }
 
@@ -74,14 +74,14 @@ function edgeOf(p: ArrayLike<number>, i: number, j: number): number {
   return Math.hypot(p[3 * j] - p[3 * i], p[3 * j + 1] - p[3 * i + 1], p[3 * j + 2] - p[3 * i + 2])
 }
 
-/** how many pieces each triangle's edges are cut into for an edge length L */
-function cuts(parts: Surface[], L: number): number[][] {
-  return parts.map((s) => {
+/** how many pieces each triangle's edges are cut into for each part's edge length */
+function cuts(parts: Surface[], L: readonly number[]): number[][] {
+  return parts.map((s, pi) => {
     const out: number[] = []
     const ix = s.indices, p = s.positions
     for (let t = 0; t < ix.length; t += 3) {
       const e = Math.max(edgeOf(p, ix[t], ix[t + 1]), edgeOf(p, ix[t + 1], ix[t + 2]), edgeOf(p, ix[t + 2], ix[t]))
-      out.push(Math.max(1, Math.ceil(e / L)))
+      out.push(Math.max(1, Math.ceil(e / L[pi])))
     }
     return out
   })
@@ -100,20 +100,27 @@ function finerVertices(parts: Surface[], ns: number[][]): number {
 }
 
 /**
- * The edge length to cut both versions to: the size over EDGE_DIVISOR, longer
- * when that would make more than `budget` vertices for a version.
+ * Each part's edge length to cut it to: its own size over EDGE_DIVISOR (a
+ * small part beside a large one, or far from it, keeps its own resolution:
+ * Codex on #102), all longer by one factor when that would make more than
+ * `budget` vertices for the parts together.
  */
-export function chooseEdge(a: Surface[], b: Surface[], budget = SAMPLE_BUDGET): number {
-  const diag = diagonalOf(a, b)
-  if (diag === 0) return 1
-  let L = diag / EDGE_DIVISOR
+export function partEdges(parts: Surface[], budget = SAMPLE_BUDGET): number[] {
+  const L = parts.map((s) => {
+    const d = diagonalOf([s])
+    return d > 0 ? d / EDGE_DIVISOR : 1
+  })
   for (let k = 0; k < 20; k++) {
-    const count = Math.max(...[a, b].map((side) => finerVertices(side, cuts(side, L))))
+    const count = finerVertices(parts, cuts(parts, L))
     if (count <= budget) return L
-    L *= Math.sqrt(count / budget) * 1.05
+    const f = Math.sqrt(count / budget) * 1.05
+    for (let i = 0; i < L.length; i++) L[i] *= f
   }
   return L
 }
+
+/** the smallest distance that is not zero, for a part (its size's 1e-6) */
+export const tinyOf = (s: Surface): number => Math.max(diagonalOf([s]) * 1e-6, 1e-9)
 
 /**
  * The parts' triangles cut into n x n smaller ones each (n from the longest
@@ -123,8 +130,10 @@ export function chooseEdge(a: Surface[], b: Surface[], budget = SAMPLE_BUDGET): 
  * the same segment, cut alike or not: no gap in the surface). Normals are the
  * display normals blended across each triangle.
  */
-export function subdivide(parts: Surface[], L: number): Omit<Sampled, 'offset'> {
-  const ns = cuts(parts, L)
+export function subdivide(parts: Surface[], L: number | readonly number[]): Omit<Sampled, 'offset'> & { starts: number[] } {
+  const ns = cuts(parts, typeof L === 'number' ? parts.map(() => L) : L)
+  /** where each part's vertices start (they run together, a part after the other) */
+  const starts: number[] = []
   const nv = finerVertices(parts, ns)
   let nt = 0
   for (const list of ns) for (const n of list) nt += n * n
@@ -146,6 +155,7 @@ export function subdivide(parts: Surface[], L: number): Omit<Sampled, 'offset'> 
     const ix = s.indices, P = s.positions, N = s.normals
     // the part's own vertices first, at base + their index
     const base = v
+    starts.push(v)
     for (let i = 0; i < P.length / 3; i++) put(P[3 * i], P[3 * i + 1], P[3 * i + 2], N[3 * i], N[3 * i + 1], N[3 * i + 2])
     ns[pi].forEach((n, k) => {
       const a = ix[3 * k], b = ix[3 * k + 1], c = ix[3 * k + 2]
@@ -182,7 +192,7 @@ export function subdivide(parts: Surface[], L: number): Omit<Sampled, 'offset'> 
       }
     })
   })
-  return { positions, normals, indices }
+  return { positions, normals, indices, starts }
 }
 
 /** one BVH over all of a version's parts (their triangles in order) */
@@ -275,13 +285,28 @@ function angleAt(t: Triangle, c: Vector3, tiny: number, e1: Vector3, e2: Vector3
   return 2 * Math.PI
 }
 
+/**
+ * a version's finer mesh measured against the other's surface, each part with
+ * its own smallest distance (tinyOf: not the assembly's, Codex on #102)
+ */
+function measured(parts: Surface[], edges: number[], other: Surface[]): Sampled {
+  const f = subdivide(parts, edges)
+  const n = f.positions.length / 3
+  const offset = new Float32Array(n)
+  if (!other.some((s) => s.indices.length)) offset.fill(NaN)
+  else {
+    const bvh = bvhOfParts(other)
+    parts.forEach((s, k) => {
+      const from = f.starts[k], to = k + 1 < parts.length ? f.starts[k + 1] : n
+      offset.set(signedDistances(f.positions.subarray(3 * from, 3 * to), bvh, tinyOf(s)), from)
+    })
+  }
+  return { positions: f.positions, normals: f.normals, indices: f.indices, offset }
+}
+
 /** both versions cut finer and measured against each other */
 export function compare(a: Surface[], b: Surface[], budget = SAMPLE_BUDGET): Comparison {
-  const edge = chooseEdge(a, b, budget)
-  const tiny = Math.max(diagonalOf(a, b) * 1e-6, 1e-9)
-  const fa = subdivide(a, edge)
-  const fb = subdivide(b, edge)
-  const offA = b.some((s) => s.indices.length) ? signedDistances(fa.positions, bvhOfParts(b), tiny) : new Float32Array(fa.positions.length / 3).fill(NaN)
-  const offB = a.some((s) => s.indices.length) ? signedDistances(fb.positions, bvhOfParts(a), tiny) : new Float32Array(fb.positions.length / 3).fill(NaN)
-  return { a: { ...fa, offset: offA }, b: { ...fb, offset: offB }, edge }
+  const ea = partEdges(a, budget)
+  const eb = partEdges(b, budget)
+  return { a: measured(a, ea, b), b: measured(b, eb, a), edge: Math.max(0, ...ea, ...eb) }
 }

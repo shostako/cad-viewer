@@ -317,6 +317,16 @@ body,
   display: none;
 }
 
+/* アンダーカットの候補's legend (undercutview.ts): rows as the draft legend's */
+#undercut-legend {
+  margin: 2px 0 4px;
+  font-size: var(--cv-fs-sm);
+}
+
+#undercut-legend.hidden {
+  display: none;
+}
+
 .compare-note {
   margin-top: 2px;
   max-width: 34em;

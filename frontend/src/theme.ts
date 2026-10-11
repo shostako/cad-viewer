@@ -48,6 +48,12 @@ export interface Palette {
    */
   compare: { added: number; removed: number; same: number }
   /**
+   * アンダーカットの候補 (undercutview.ts): the candidates, the upper half's,
+   * the lower half's, both halves'. As compare: lit faces, in the light theme
+   * at 3:1 against its background at least
+   */
+  undercut: { candidate: number; up: number; down: number; both: number }
+  /**
    * In 半透明 / ワイヤーフレーム the dark edge lines would vanish on the dark
    * background: they are lifted to a lighter shade of the part's colour. On
    * the light background the dark lines are what shows.
@@ -70,6 +76,7 @@ export const PALETTES: Record<Theme, Palette> = {
     marker2d: '#ffb020',
     halo2d: '#1d2126',
     compare: { added: 0x00a88f, removed: 0xe8590c, same: 0xa7adb4 },
+    undercut: { candidate: 0xd6336c, up: 0x9fdcac, down: 0xa3bdf5, both: 0xa7adb4 },
     liftSeeThroughEdges: true,
   },
   // every colour at least 3:1 against the light background #e4e8ed (lines and
@@ -88,6 +95,7 @@ export const PALETTES: Record<Theme, Palette> = {
     marker2d: '#c05f00',
     halo2d: '#ffffff',
     compare: { added: 0x008c76, removed: 0xd9480f, same: 0x7a8189 },
+    undercut: { candidate: 0xc2255c, up: 0x2f8f3f, down: 0x3d6ad6, both: 0x7a8189 },
     liftSeeThroughEdges: false,
   },
 }
@@ -124,7 +132,8 @@ function saveThemeChoice(choice: ThemeChoice): void {
 
 let choice: ThemeChoice = loadThemeChoice()
 let theme: Theme = resolveTheme(choice)
-document.documentElement.dataset.theme = theme
+// (no document under Node: tests/*.test.ts import modules that read the palette)
+if (typeof document !== 'undefined') document.documentElement.dataset.theme = theme
 const listeners: ((p: Palette, t: Theme) => void)[] = []
 
 export const currentTheme = (): Theme => theme

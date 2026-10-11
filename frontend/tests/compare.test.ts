@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { bvhOfParts, chooseEdge, compare, diagonalOf, signedDistances, subdivide, type Surface } from '../src/compare.ts'
+import { bvhOfParts, compare, diagonalOf, partEdges, signedDistances, subdivide, type Surface } from '../src/compare.ts'
 
 type V = [number, number, number]
 
@@ -152,9 +152,24 @@ test('the finer mesh: the same surface, no edge longer than asked', () => {
 
 test('the edge grows to keep under the budget', () => {
   const s = [box([0, 0, 0], [100, 100, 100])]
-  assert.equal(chooseEdge(s, s), diagonalOf(s) / 150)
-  const L = chooseEdge(s, s, 5000)
+  assert.deepEqual(partEdges(s), [diagonalOf(s) / 150])
+  const L = partEdges(s, 5000)
   const f = subdivide(s, L)
   assert.ok(f.positions.length / 3 <= 5000, `${f.positions.length / 3} vertices`)
   assert.ok(f.positions.length / 3 > 1000, 'not far under it either')
+})
+
+test('a small part beside a large one, far off, keeps its own resolution (Codex on #102)', () => {
+  // the notch filled, at a 1/10 scale, and a 1 m box 10 m away in both versions
+  const scale = (s: Surface, k: number): Surface => ({ ...s, positions: s.positions.map((v) => v * k) })
+  const L: [number, number][] = [[0, 0], [10, 0], [10, 4], [4, 4], [4, 10], [0, 10]]
+  const big = box([10000, 0, 0], [11000, 1000, 1000])
+  const a = [scale(prism(L, 2), 0.1), big]
+  const b = [scale(box([0, 0, 0], [10, 10, 2]), 0.1), big]
+  const edges = partEdges(a)
+  assert.ok(Math.abs(edges[0] - diagonalOf([a[0]]) / 150) < 1e-12, `the small part's own: ${edges}`)
+  const { a: sa } = compare(a, b)
+  const walls = [...vertices(sa)].filter(([x, y, z]) => z > 0.001 && z < 0.199 && ((Math.abs(x - 0.4) < 1e-6 && y > 0.4) || (Math.abs(y - 0.4) < 1e-6 && x > 0.4)))
+  assert.ok(walls.length > 20, `${walls.length} points on the notch's walls`)
+  for (const [x, y, z, o] of walls) assert.ok(Math.abs(o + Math.min(z, 0.2 - z, x, 1 - x, y, 1 - y)) < 1e-4, `wall ${[x, y, z]}: ${o}`)
 })
