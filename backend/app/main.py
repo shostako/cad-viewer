@@ -34,7 +34,8 @@ SIDECAR_DIR = paths.data_dir("sidecars")  # backend/.sidecars, or the installed 
 
 @app.get("/api/health")
 def health() -> dict:
-    return {"status": "ok", "version": __version__}
+    # "app": the installed app's second start knows its first one by it (desktop.py)
+    return {"status": "ok", "app": "cad-viewer", "version": __version__}
 
 
 @app.get("/api/models")

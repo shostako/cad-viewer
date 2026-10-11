@@ -11,6 +11,7 @@ the folders are fresh, so what lands in them is the app's doing.
 """
 from __future__ import annotations
 
+import gc
 import http.server
 import json
 import os
@@ -22,6 +23,7 @@ import threading
 import time
 import urllib.request
 import uuid
+import warnings
 
 import pytest
 
@@ -47,8 +49,10 @@ def serve(handler, port: int = 0):
 
 
 class Ours(http.server.BaseHTTPRequestHandler):
+    body = {"status": "ok", "app": "cad-viewer", "version": "0.0.0"}
+
     def do_GET(self):  # noqa: N802
-        body = json.dumps({"status": "ok", "version": "0.0.0"}).encode()
+        body = json.dumps(self.body).encode()
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
@@ -56,6 +60,12 @@ class Ours(http.server.BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+
+class LooksAlike(Ours):
+    """another program's health check, with the common answer"""
+
+    body = {"status": "ok", "version": "1.2.3"}
 
 
 class Other(http.server.BaseHTTPRequestHandler):
@@ -94,14 +104,27 @@ def test_paths(monkeypatch, tmp_path):
 
 
 def test_answer():
-    ours, other = serve(Ours), serve(Other)
+    ours, other, alike = serve(Ours), serve(Other), serve(LooksAlike)
     try:
         assert desktop.answer(ours.server_address[1]) == "ours"
         assert desktop.answer(other.server_address[1]) == "other"
+        assert desktop.answer(alike.server_address[1]) == "other", "status ok and a version are not cad-viewer's"
         assert desktop.answer(free_port(), timeout=1) == "none"
     finally:
         ours.shutdown()
         other.shutdown()
+        alike.shutdown()
+
+
+def free_pair() -> int:
+    """a port p with p + 1 free too"""
+    for _ in range(50):
+        p = free_port()
+        s = desktop.claim(p + 1)
+        if s is not None:
+            s.close()
+            return p
+    raise AssertionError("no free pair")
 
 
 def test_find_port():
@@ -116,6 +139,20 @@ def test_find_port():
     ours = serve(Ours)
     try:
         assert desktop.find_port(ours.server_address[1], tries=1) == (ours.server_address[1], None)
+    finally:
+        ours.shutdown()
+    # an earlier start on the next port (the first was taken then, free now): found, not a second server
+    p = free_pair()
+    ours = serve(Ours, p + 1)
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            assert desktop.find_port(p, tries=2) == (p + 1, None)
+            gc.collect()
+        assert not [w for w in caught if issubclass(w.category, ResourceWarning)], "the free port's socket closed, not left to the GC"
+        s = desktop.claim(p)
+        assert s is not None, "the free first port not left claimed"
+        s.close()
     finally:
         ours.shutdown()
     # another program's (answering, not as cad-viewer): the next port at once

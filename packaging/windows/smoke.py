@@ -173,6 +173,18 @@ def main() -> None:
     try:
         health = wait_up(f"http://127.0.0.1:{PORT + 1}", proc)
         print("port taken: on", PORT + 1, health)
+        # the other program gone, its port free: a new start still finds this one
+        other.shutdown()
+        other.server_close()
+        again = start(exe, work / "data2", PORT)
+        try:
+            rc = again.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            again.terminate()
+            fail("a start with the first port free again did not find the one on the next")
+        if rc != 0:
+            fail(f"the start with the first port free again ({rc})")
+        print("first port free again: found the one on", PORT + 1)
     finally:
         proc.terminate()
         proc.wait(timeout=30)

@@ -90,8 +90,8 @@ def claim(port: int) -> socket.socket | None:
 
 
 def answer(port: int, timeout: float = 2.0) -> str:
-    """what is on 127.0.0.1:port: "ours" (cad-viewer's /api/health answers),
-    "other" (something else answers), "none" (nothing answers in time)"""
+    """what is on 127.0.0.1:port: "ours" (cad-viewer's /api/health answers, with
+    its "app"), "other" (something else answers), "none" (nothing answers in time)"""
     url = f"http://127.0.0.1:{port}/api/health"
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -100,29 +100,41 @@ def answer(port: int, timeout: float = 2.0) -> str:
         return "other"
     except (OSError, urllib.error.URLError):
         return "none"
-    ok = isinstance(body, dict) and body.get("status") == "ok" and "version" in body
+    ok = isinstance(body, dict) and body.get("status") == "ok" and body.get("app") == APP
     return "ours" if ok else "other"
 
 
 def find_port(first: int, tries: int = PORT_TRIES, wait: float = 20.0) -> tuple[int, socket.socket | None]:
-    """the first of first..first+tries-1 that is free (its socket, claimed) or
-    already ours (None: open the browser there). A port taken but not answering
-    yet may be ours starting up (two starts at once): waited for up to `wait`
-    seconds before the next one."""
+    """where to be: a port of first..first+tries-1 already ours (None: open the
+    browser there), else the first free one (its socket, claimed).
+
+    Every port is looked at before starting: an earlier start may be on a later
+    one (8018 was another program's then, and is free now). A port taken but not
+    answering yet may be ours starting up (two starts at once): waited for up to
+    `wait` seconds while no port is claimed yet, briefly after."""
+    free: tuple[int, socket.socket] | None = None
     for port in range(first, first + tries):
         s = claim(port)
         if s is not None:
-            return port, s
-        deadline = time.monotonic() + wait
+            if free is None:
+                free = (port, s)
+            else:
+                s.close()  # free: nobody there
+            continue
+        deadline = time.monotonic() + (wait if free is None else 0.0)
         while True:
             what = answer(port)
             if what == "ours":
+                if free is not None:
+                    free[1].close()
                 return port, None
             if what == "other" or time.monotonic() > deadline:
-                log.warning("port %d is another program's; trying the next", port)
+                log.info("port %d is another program's", port)
                 break
             time.sleep(0.5)
-    raise RuntimeError(f"no port free in {first}..{first + tries - 1}")
+    if free is None:
+        raise RuntimeError(f"no port free in {first}..{first + tries - 1}")
+    return free
 
 
 # --- logging ----------------------------------------------------------------
