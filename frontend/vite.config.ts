@@ -46,8 +46,9 @@ function serviceWorker(): Plugin {
       }
       hash.update(readFileSync('web-public/manifest.webmanifest'))
       const source = readFileSync('scripts/sw.js', 'utf-8')
-        .replace('__VERSION__', JSON.stringify(hash.digest('hex').slice(0, 16)))
-        .replace('__SHELL__', JSON.stringify(shell))
+        // functions: a string replacement would read $& and $' in it as patterns
+        .replace('__VERSION__', () => JSON.stringify(hash.digest('hex').slice(0, 16)))
+        .replace('__SHELL__', () => JSON.stringify(shell))
       this.emitFile({ type: 'asset', fileName: 'sw.js', source })
     },
   }

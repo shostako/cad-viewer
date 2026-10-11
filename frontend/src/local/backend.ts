@@ -484,7 +484,7 @@ export class LocalBackend {
   private async uploadBrep(name: string, hash: string, bytes: Uint8Array): Promise<Answer> {
     if (!this.occtProvider) return notYet('STEP/IGES を開く')
     // the load cache: the same file again, its display mesh at once (OpenCASCADE not needed yet)
-    const key = this.cache ? await cacheKey(bytes, this.version) : ''
+    const key = this.cache ? await cacheKey(hash, this.version) : ''
     const hit = this.cache ? await this.cache.get(key).catch(() => null) : null
     if (hit) {
       const model: Model = { id: newId(), name, format: 'brep', hash, meta: hit.meta, blob: hit.blob, raw: bytes }

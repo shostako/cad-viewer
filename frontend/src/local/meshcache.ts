@@ -6,17 +6,17 @@
  * measurement or the volume needs the B-rep (backend.ts reads it then, as the
  * backend does after a cache hit).
  *
- * The key changes with what the load makes: the file's bytes, the meshing's
- * parameters, CACHE_VERSION (the backend's, which a change to the parts' or the
- * faces' numbering bumps) and the app's version (a release reads every file
- * again once).
+ * The key changes with what the load makes: the file's content (its sha256, the
+ * hash the sidecars go by), the meshing's parameters, CACHE_VERSION (the
+ * backend's, which a change to the parts' or the faces' numbering bumps) and the
+ * app's version (a release reads every file again once).
  */
 
 /** backend/app/cache.py's CACHE_VERSION (frontend/tests/local_cache.test.ts checks they agree) */
 export const CACHE_VERSION = 4
 /** the meshing's parameters, as the backend writes them into its key */
 export const CACHE_PARAMS = 'defl_rel=1e-3;ang=0.35'
-/** the cache keeps this many files (the ones written last) */
+/** the cache keeps this many files: the ones written last (by when they were written, not opened) */
 export const CACHE_MAX = 40
 
 export interface CachedLoad {
@@ -29,13 +29,12 @@ export interface MeshCache {
   put(key: string, load: CachedLoad): Promise<void>
 }
 
-/** the key of a file's load (hex, as the backend's: its 32 first digits) */
-export async function cacheKey(bytes: Uint8Array, appVersion: string): Promise<string> {
-  const tail = new TextEncoder().encode(`|v${CACHE_VERSION}|${CACHE_PARAMS}|web ${appVersion}`)
-  const all = new Uint8Array(bytes.byteLength + tail.byteLength)
-  all.set(bytes)
-  all.set(tail, bytes.byteLength)
-  const digest = await crypto.subtle.digest('SHA-256', all)
+/**
+ * the key of a file's load (hex, as the backend's: its 32 first digits). hash:
+ * the file's content hash (backend.ts's sha256Hex32): the file is not hashed again
+ */
+export async function cacheKey(hash: string, appVersion: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${hash}|v${CACHE_VERSION}|${CACHE_PARAMS}|web ${appVersion}`))
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('').slice(0, 32)
 }
 
@@ -66,12 +65,19 @@ export function opfsCache(folder = 'load-cache'): MeshCache {
   }
   return {
     async get(key) {
+      let d: FileSystemDirectoryHandle
+      let meta: Record<string, unknown>
       try {
-        const d = await dir()
-        const meta = JSON.parse(await (await (await d.getFileHandle(`${key}.json`)).getFile()).text())
-        const blob = await (await (await d.getFileHandle(`${key}.bin`)).getFile()).arrayBuffer()
-        return { blob, meta }
+        d = await dir()
+        meta = JSON.parse(await (await (await d.getFileHandle(`${key}.json`)).getFile()).text())
       } catch {
+        return null
+      }
+      try {
+        return { blob: await (await (await d.getFileHandle(`${key}.bin`)).getFile()).arrayBuffer(), meta }
+      } catch {
+        // an answer without its mesh (a write cut short): gone, not counted among the kept
+        await d.removeEntry(`${key}.json`).catch(() => {})
         return null
       }
     },

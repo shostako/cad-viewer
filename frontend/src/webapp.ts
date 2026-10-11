@@ -28,6 +28,7 @@ export function startWebApp(open: (handle: FileSystemFileHandle) => void): void 
   })
   if (isLocal && import.meta.env.PROD && 'serviceWorker' in navigator) {
     // next to the page (GitHub Pages serves the app from /cad-viewer/)
-    navigator.serviceWorker.register('./sw.js').catch(() => undefined) // no offline then; the page works as before
+    // no offline then (a file of the page not kept, say); the page works as before
+    navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('cad-viewer: no service worker (no offline):', e))
   }
 }

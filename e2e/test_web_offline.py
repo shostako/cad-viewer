@@ -158,9 +158,12 @@ with sync_playwright() as p:
     )
     status_has(page, STL.name)
     status_has(page, "三角形")
-    page.wait_for_timeout(300)  # the list is written after the open
     page.locator("#toolbar button[data-action='recent']").click()
     page.wait_for_selector("#recent-pop:not(.hidden)")
+    # the list is written after the open (and drawn again when it is)
+    page.wait_for_function(
+        "n => document.querySelector('#recent-pop-list .recent-name')?.textContent === n", arg=STL.name, timeout=10000
+    )
     rows = page.locator("#recent-pop-list .recent-name").all_text_contents()
     assert rows and rows[0] == STL.name, ("opened from the PC: on the recent list", rows)
     print("4 a file from the PC: opened, listed")

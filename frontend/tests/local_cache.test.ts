@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url'
 
 import { createInstance } from 'libcascade/single/init'
 
-import { LocalBackend, memoryStore } from '../src/local/backend.ts'
+import { LocalBackend, memoryStore, sha256Hex32 } from '../src/local/backend.ts'
 import { CACHE_VERSION, cacheKey, memoryCache } from '../src/local/meshcache.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -75,7 +75,7 @@ for (const file of FILES) {
 }
 
 test('the cache key: the file and the app version in it', async () => {
-  const one = new TextEncoder().encode('one'), two = new TextEncoder().encode('two')
+  const one = await sha256Hex32(new TextEncoder().encode('one')), two = await sha256Hex32(new TextEncoder().encode('two'))
   const k = await cacheKey(one, '1.0.0')
   assert.match(k, /^[0-9a-f]{32}$/)
   assert.equal(await cacheKey(one, '1.0.0'), k, 'the same file and version: the same key')
