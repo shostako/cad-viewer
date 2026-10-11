@@ -6,3 +6,20 @@
 # W2: mesh formats
 test_stl_view.py
 test_mesh_annotation.py
+
+# W3: STEP/IGES (OpenCASCADE in WebAssembly): view, tree, sections, notes
+test_iges_sewing.py
+test_lighting.py
+test_nav_fit_shape.py
+test_nav_pivot.py
+test_nav_wheel.py
+test_ortho_pan.py
+test_part_tree.py
+test_section_annotation.py
+test_section_mm.py
+test_sidecar_flush.py
+test_sidecar_flush_inflight.py
+test_sidecar_isolation.py
+test_step_view.py
+test_view_controls.py
+test_view_motion.py

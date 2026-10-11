@@ -26,9 +26,11 @@ NOTE = f"inflight検証{int(time.time())}"
 
 def load(page):
     page.set_input_files("#file-input", STEP)
+    # 90 s: the Web version's first STEP loads OpenCASCADE (43 MB of WebAssembly)
+    # first, past 15 s on a slow runner
     page.wait_for_function(
         "document.querySelector('#hud-info').textContent.includes('三角形')",
-        timeout=15000,
+        timeout=90000,
     )
 
 

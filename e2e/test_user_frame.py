@@ -28,6 +28,8 @@ from pathlib import Path
 
 import gui_common
 from nav_common import BASE_URL, TESTDATA, empty_sidecar, nav_session
+from engine_net import Net
+import engine_net
 
 tmp = tempfile.mkdtemp(prefix="cad_frame_")
 mold = Path(tmp) / "mini_mold.step"
@@ -50,11 +52,7 @@ DELTA = [b - a for a, b in zip((0, 0, 15), RIM)]  # the model's own ΔX ΔY ΔZ
 
 
 def model_id(page, path):
-    r = page.request.post(
-        f"{BASE_URL}/api/models",
-        multipart={"file": {"name": Path(path).name, "mimeType": "application/octet-stream", "buffer": Path(path).read_bytes()}},
-        timeout=120000,
-    )
+    r = engine_net.upload(page, path)
     assert r.ok
     return r.json()["id"]
 
@@ -62,7 +60,7 @@ def model_id(page, path):
 with nav_session() as n:
     page = n.page
     puts = []
-    page.on("request", lambda r: puts.append(r.url) if r.method == "PUT" and r.url.endswith("/sidecar") else None)
+    Net.of(page).on_request(lambda r: puts.append(r.url) if r.method == "PUT" and r.url.endswith("/sidecar") else None)
 
     def hud():
         return page.inner_text("#hud-info")
@@ -187,7 +185,7 @@ with nav_session() as n:
 
     # ---- nothing saved changes; the 記録 keeps the model's own
     page.wait_for_timeout(1500)
-    saved = page.request.get(f"{BASE_URL}/api/models/{model_id(page, mold)}/sidecar").json()
+    saved = engine_net.api(page, "GET", f"/api/models/{model_id(page, mold)}/sidecar").json()
     dist = next(e for e in saved["entries"] if "delta" in e)
     assert all(abs(a - b) < 1e-9 for a, b in zip(dist["delta"], DELTA)), ("the saved Δ: the model's own", dist["delta"], DELTA)
     gui_common.set_mode(page, "なし")

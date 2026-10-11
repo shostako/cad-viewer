@@ -34,6 +34,7 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 import gui_common
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
@@ -467,7 +468,7 @@ try:
         )
 
         # ---- (b2) the choice survives a reload; empty the private sidecar --------
-        with page.expect_response(
+        with Net.of(page).expect_response(
             lambda r: "/sidecar" in r.url and r.request.method == "PUT", timeout=10000
         ):
             ctl("計測クリア").locator("button").click()
@@ -641,10 +642,10 @@ try:
         check_name(name, "colours_drawing", before, after)
 
         # ---- (e2) a load that fails after the teardown disables the button again --
-        page.route("**/mesh.bin", lambda route: route.abort())
+        Net.of(page).route("**/mesh.bin", lambda route: route.abort())
         page.set_input_files("#file-input", STL)
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
-        page.unroute("**/mesh.bin")
+        Net.of(page).unroute("**/mesh.bin")
         assert save_btn.is_disabled(), "nothing on screen after a failed load: the button must be disabled"
 
         n = len(downloads)

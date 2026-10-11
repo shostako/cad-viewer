@@ -15,6 +15,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 import gui_common
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -182,12 +183,12 @@ with sync_playwright() as p:
     #    did not arrive) leaves an empty screen: the card must come back
     load(STEP)
     assert not visible("#empty-hint")
-    page.route("**/mesh.bin", lambda route: route.abort())
+    Net.of(page).route("**/mesh.bin", lambda route: route.abort())
     try:
         page.set_input_files("#file-input", STL)
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
     finally:
-        page.unroute("**/mesh.bin")
+        Net.of(page).unroute("**/mesh.bin")
     failed_card("受け取れなかった")
     assert visible("#empty-hint"), "the old model is gone and nothing replaced it: the card must come back"
     load(STEP)
@@ -199,12 +200,12 @@ with sync_playwright() as p:
     load(DXF, wait_text="2D 図面")
     # the drawing; its measurement layer (another svg over it) goes with it below
     assert page.locator("#viewport2d > svg:not(.overlay2d-layer)").count() == 1
-    page.route("**/drawing.svg", lambda route: route.abort())
+    Net.of(page).route("**/drawing.svg", lambda route: route.abort())
     try:
         page.set_input_files("#file-input", DXF)
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
     finally:
-        page.unroute("**/drawing.svg")
+        Net.of(page).unroute("**/drawing.svg")
     failed_card("受け取れなかった")
     assert visible("#empty-hint"), "nothing is shown any more: the card must come back"
     assert page.locator("#viewport2d svg").count() == 0, "the old drawing is still in the 2D viewer"

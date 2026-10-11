@@ -34,6 +34,8 @@ from pathlib import Path
 
 import gui_common
 from nav_common import BASE_URL, TESTDATA, classic_basis, nav_session
+from engine_net import Net
+import engine_net
 
 TOL = 1e-3
 PINS = ((25, 30), (75, 30))
@@ -153,13 +155,9 @@ def open_box_stl(path):
 
 def no_value_count(page, path):
     """(vertices without a thickness, vertices) of the one part of a file, from the backend (レイ法)"""
-    r = page.request.post(
-        f"{BASE_URL}/api/models",
-        multipart={"file": {"name": Path(path).name, "mimeType": "application/octet-stream", "buffer": Path(path).read_bytes()}},
-        timeout=120000,
-    )
+    r = engine_net.upload(page, path)
     assert r.ok, r.status
-    blob = page.request.get(f"{BASE_URL}/api/models/{r.json()['id']}/thickness.bin?method=ray", timeout=600000).body()
+    blob = engine_net.api(page, "GET", f"/api/models/{r.json()['id']}/thickness.bin?method=ray", timeout=600000).body()
     (hl,) = struct.unpack_from("<I", blob, 0)
     head = json.loads(blob[4 : 4 + hl])
     bufs = head["buffers"].items() if isinstance(head["buffers"], dict) else [(b["name"], b) for b in head["buffers"]]
@@ -373,13 +371,13 @@ with nav_session() as n:
     print("9 an open box: 閉じていない", lines[1][3])
 
     # ================= /properties fails: said, not waited for ==========================
-    page.route("**/properties", lambda r: r.fulfill(status=500, body="no"))
+    Net.of(page).route("**/properties", lambda r: r.fulfill(status=500, body="no"))
     n.load(TESTDATA / "ribbed_plate.stl", props="unheld", box=RIBBED)
     set_box("一覧を出す", True)
     page.wait_for_function(
         "document.querySelector('#check-panel')?.textContent.includes('部品が閉じているかを調べられなかった')", timeout=30000
     )
-    page.unroute("**/properties")
+    Net.of(page).unroute("**/properties")
     # the 500 asked for here logs "Failed to load resource": expected here only
     n.errors[:] = [e for e in n.errors if "status of 500" not in e]
     print("10 no properties: said")

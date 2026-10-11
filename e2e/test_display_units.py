@@ -31,6 +31,8 @@ from pathlib import Path
 
 import gui_common
 from nav_common import BASE_URL, TESTDATA, empty_sidecar, nav_session, put_sidecar
+from engine_net import Net
+import engine_net
 
 IN = 25.4
 # the plate's corner to the second pin's top: the rim's point toward the corner
@@ -47,11 +49,7 @@ INCH_BLOCK = TESTDATA / "inch_block.step"
 
 def model_id(page, path):
     """the backend's id of these bytes under this name (the app's: the same entry is used again)"""
-    r = page.request.post(
-        f"{BASE_URL}/api/models",
-        multipart={"file": {"name": Path(path).name, "mimeType": "application/octet-stream", "buffer": Path(path).read_bytes()}},
-        timeout=120000,
-    )
+    r = engine_net.upload(page, path)
     assert r.ok, r.status
     return r.json()["id"]
 
@@ -60,7 +58,7 @@ with nav_session() as n:
     page = n.page
     page.context.grant_permissions(["clipboard-read", "clipboard-write"])
     puts = []
-    page.on("request", lambda r: puts.append(r.url) if r.method == "PUT" and r.url.endswith("/sidecar") else None)
+    Net.of(page).on_request(lambda r: puts.append(r.url) if r.method == "PUT" and r.url.endswith("/sidecar") else None)
 
     def rows():
         return page.evaluate(
@@ -87,7 +85,7 @@ with nav_session() as n:
         n.settle()
 
     def sidecar(path):
-        r = page.request.get(f"{BASE_URL}/api/models/{model_id(page, path)}/sidecar")
+        r = engine_net.api(page, "GET", f"/api/models/{model_id(page, path)}/sidecar")
         assert r.ok
         return r.json()
 

@@ -147,7 +147,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `materials.ts` / `materialpop.ts` — 材料と用途（射出成形／一般）。材料ごとの一般的な基準（比重・肉厚の下限・勾配と根拠。出典は `docs/material-basis.md`）、直した値の保存、材料の基準のカード。判定の基準の初めは材料に合わせる（PMMA 0.64 mm・0.5°）。1.5 mm・1.0° を前提に書いた E2E は `nav_common.classic_basis` で「手で決める」を明示してから始める
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
 - `engine.ts` — 計算をどこでするか（Web 版の境目、`docs/designs/web-version.md`）。`api.ts` はここを通してだけ backend の道（`/api/...`）を呼ぶ。HttpEngine（fetch と、送った量の分かる XMLHttpRequest）と、Web 版の LocalEngine（`local/`）。どちらかはビルドで決まる（`VITE_CAD_ENGINE=local`、`npm run build:web`）。`api.ts` に `fetch` を直に書き足さない
-- `local/` — Web 版の計算（Worker の中の backend）。`backend.ts` が backend と同じ道・状態コード・本文で答える。まだ無い道は 501 と「Web 版ではまだ使えない」。backend の Python を写したもの（`meshload.ts`＝loaders、`smooth.ts`＝trimesh の smooth_shade、`meshprops.ts`＝properties のメッシュの分）なので、**backend の計算を変えたら、ここも同じに変える**。`frontend/tests/*.test.ts`（`npm test`）が、同じファイルを `scripts/engine_golden.py`（backend の手続き）と突き合わせる。Node が TS をそのまま走らせるので、`local/` の中の import には `.ts` を付ける
+- `local/` — Web 版の計算（Worker の中の backend）。`backend.ts` が backend と同じ道・状態コード・本文で答える。まだ無い道は 501 と「Web 版ではまだ使えない」。backend の Python を写したもの（`meshload.ts`＝loaders、`smooth.ts`＝trimesh の smooth_shade、`meshprops.ts`＝properties のメッシュの分、`brep.ts`＝tessellation。STEP/IGES は libcascade 3.0.2（OCCT 8.0.1 の WASM、版は固定、初めの STEP/IGES のときに 43 MB（gzip 12 MB）を読む）なので、**backend の計算を変えたら、ここも同じに変える**（部品や面の番号を変えたら `brep.ts` も。CACHE_VERSION と同じ理由）。libcascade の作法: 列挙は名前の文字列（`'GeomAbs_Circle'`）、数の出力の引数は結果のオブジェクトで返る（`LowerDistanceParameters()` は `{U, V}`）、オブジェクトの出力の引数はその場で埋まる、同じ引数の数の多重定義は思った方が選ばれないことがある（`GCPnts_TangentialDeflection` は 3 引数で呼ぶ）、テンプレートの別名は長い名前でしか無いことがある（`Extrema_ExtPC`）。`frontend/tests/*.test.ts`（`npm test`）が、同じファイルを `scripts/engine_golden.py`（backend の手続き）と突き合わせる。Node が TS をそのまま走らせるので、`local/` の中の import には `.ts` を付ける
 
 ## 既知の罠（変更時に壊しやすい）
 
@@ -159,4 +159,6 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - **テストは本番のデータ置き場に書かない。** pytest は `backend/tests/conftest.py` がセッション単位で `.sidecars` と `.cache` を一時ディレクトリに差し替えている。E2E は実際のサーバーを使うので `backend/.sidecars/` に書く。そこには手元で開いた実データの計測・注記も入るので、後片付けはテストデータの分だけにする（上の「コマンド」の手順。ファイル名は中身の sha256 の先頭 32 文字）。多くの E2E は自分専用のコピー（末尾に改行を足したもの）か `page.route` で共有のサイドカーを避けている
 - ヘッドレス Chromium（SwiftShader）の写真で、操作パネルの近くや右下に白い四角が出るのは WebGL の合成の副作用で、実ブラウザでは出ない。絵文字が豆腐になるのもヘッドレスだけ。どちらもバグではない
 - シェルで `cd dir && nohup cmd &` と書くと `&` が列全体にかかり、`$!` が cmd でなく中継のサブシェルの pid になる。`(cd dir || exit; nohup cmd & echo $!)` と分ける
+- **E2E は、アプリの道（`/api/...`）を `page.route`・`page.on("request")`・`page.request` で直に触らない。** `e2e/engine_net.py`（`Net.of(page).route` など、`engine_net.api`・`upload`）を使う。Web 版（`CAD_VIEWER_ENGINE=local`）には HTTP が無く、ページの中の Engine の前で同じことをする。手元の版では `page.route` などそのまま
+- **`vite preview` は `server.proxy` を受け継ぐ。** Web 版（mode web）は proxy を空にしてある。外すと、Web 版の E2E の補助が手元で動いている backend（:8008）に届き、本番のサイドカーの置き場にテストの分を書く（一度やった）
 - パイプは終了コードを飲む（pipefail は既定で off）。`cmd | tail && git commit` は cmd が失敗しても進む。終了コードは変数に取る

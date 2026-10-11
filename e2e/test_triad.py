@@ -23,6 +23,7 @@ import numpy as np
 from PIL import Image
 
 from nav_common import DXF, STEP_SRC, add, close, mul, nav_session
+from engine_net import Net
 
 # the shared mini_mold.step: this script keeps sidecars in the page (stub_sidecar)
 STEP = str(STEP_SRC)
@@ -111,12 +112,12 @@ with nav_session() as n:
     assert not triad_visible() and box("#hud")["x"] == 12, "hidden on a drawing"
     load(STEP)
     assert triad_visible()
-    page.route("**/mesh.bin", lambda r: r.abort())
+    Net.of(page).route("**/mesh.bin", lambda r: r.abort())
     try:
         page.set_input_files("#file-input", STEP)
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('エラー')", timeout=30000)
     finally:
-        page.unroute("**/mesh.bin")
+        Net.of(page).unroute("**/mesh.bin")
     assert not triad_visible() and box("#hud")["x"] == 12, "hidden after a failed load"
     load(STEP)
     assert triad_visible()

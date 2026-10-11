@@ -20,6 +20,7 @@ import json
 import math
 
 from nav_common import SURFACE, nav_session
+from engine_net import Net
 
 BLOCK_TOP = (50, 30, 35)
 
@@ -34,7 +35,7 @@ with nav_session() as n:
         else:
             route.fulfill(json={"version": 1, "entries": []})
 
-    page.route("**/sidecar", sidecar)
+    Net.of(page).route("**/sidecar", sidecar)
     n.load(n.paths["step"])
     n.set_mode("計測")
 

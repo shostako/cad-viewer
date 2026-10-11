@@ -49,7 +49,7 @@
 |---|---|---|
 | W1（#85） | `Engine` の境目を切る（HttpEngine だけ。13 の関数が全部 `Engine` を通る） | 今と同じ（全部の E2E が通る） |
 | W2 | LocalEngine の土台（Worker、`src/local/`）、メッシュの形式（STL/OBJ/PLY/OFF/3MF：読み込み、30° で頂点を分けるなめらかな陰影、体積・重心）、サイドカーを IndexedDB に。Web 版のビルド（`npm run build:web`）と GitHub Pages への配信（`pages.yml`）。CI に Web 版の E2E のジョブと、backend との突き合わせ（`npm test`） | URL で開いて、STL を見る・断面・注記・体積 |
-| W3 | STEP/IGES（libcascade）。XCAF の名前・色・階層、ID 付きのテッセレーション、バラバラの面の縫い合わせ、単位、曲線の部品。E2E の差し替え（`page.route` の代わりに、道で止める・答える仕組みを両方の版で）。W2 では、Web 版で通る E2E が STL の 2 本だけで差し替えの要る本が無かったので、STEP の本が通り始めるここに回した | STEP/IGES を見る・部品ツリー |
+| W3 | STEP/IGES（libcascade）。XCAF の名前・色・階層、ID 付きのテッセレーション、バラバラの面の縫い合わせ、単位、曲線の部品。E2E の差し替え（`e2e/engine_net.py`：`page.route`・`page.request` の代わりに、道で止める・答える・見張る・API を呼ぶを両方の版で） | STEP/IGES を見る・部品ツリー |
 | W4 | 計測（`measure.py`：距離 3 種、エッジ・面・頂点の情報）と、B-rep の体積・重心（`properties.py`） | 真値の計測、体積・重量 |
 | W5 | 肉厚（レイ法・ボール法）、厚肉（`thick.py`：格子、距離変換、面ごとの肉厚、一般部、肉だまり）、投影面積 | 肉厚のヒートマップ、問題の一覧、型締力の目安 |
 | W6 | DXF（Pyodide＋ezdxf、フォントの同梱） | 2D 図面 |
@@ -60,7 +60,7 @@
 ## 確かめ方
 
 - **同じ E2E を 2 つの版に流す。** E2E は Playwright で画面を操作して、画面への投影・ピック・画素・既知の寸法で合否を決めている。backend の作りには頼っていないので、そのまま Web 版にも流せる。
-  - backend の API に直に触る所（サイドカーの差し替え、計測などを止める `page.route`、`put_sidecar`）は、W3 で、道で止める・答える共通の補助（`nav_common.py`）に移す。HttpEngine では `page.route` のまま、LocalEngine ではページの中の Engine の前で同じことをする（Playwright の `expose_binding` で Python の手続きを呼ぶ）。
+  - backend の API に直に触る所（サイドカーの差し替え、計測などを止める `page.route`、`put_sidecar`）は、W3 で `e2e/engine_net.py` の補助に移した。HttpEngine では `page.route` のまま、LocalEngine ではページの中の Engine の前で同じことをする（Playwright の `expose_binding` で Python の手続きを呼ぶ）。
   - Web 版のジョブは CI の `e2e (web)`。Web 版を `vite preview` で配り、backend を立てずに、`e2e/web_scripts.txt` に並べた本を流す。段ごとに、この一覧を増やしていく。
 - **2 つの計算を突き合わせる。** testdata の各ファイルについて、backend（Python＋OCP 7.9.3）と LocalEngine（TS＋libcascade、OCCT 8.0.1）の答えを並べる。比べるのは、部品・面・エッジの数、計測の値、体積、肉厚、厚肉。
   - `frontend/tests/*.test.ts`（`npm test`、Node の組み込みの test）が、同じファイルを `scripts/engine_golden.py`（backend のルートと同じ手続き）と LocalEngine の両方に読ませて比べる。

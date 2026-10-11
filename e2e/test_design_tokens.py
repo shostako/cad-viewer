@@ -22,6 +22,7 @@ import os
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -46,7 +47,7 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
     # sidecars stay in the page: a restored list would not change these rules,
     # but nothing reaches the shared backend's files
-    page.route(
+    Net.of(page).route(
         "**/sidecar",
         lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
     )

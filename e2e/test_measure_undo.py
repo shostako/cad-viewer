@@ -25,6 +25,7 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 import gui_common
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -51,7 +52,7 @@ with sync_playwright() as p:
             puts.append(json.loads(route.request.post_data or "{}"))
             route.fulfill(json={"saved": True})
 
-    page.route("**/sidecar", sidecar)
+    Net.of(page).route("**/sidecar", sidecar)
     page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
 
@@ -278,7 +279,7 @@ with sync_playwright() as p:
     # model it was clicked on (saved before the switch)
     load(STEP)
     held = []
-    page.route("**/api/models", lambda r: held.append(r) if r.request.method == "POST" else r.continue_())
+    Net.of(page).route("**/api/models", lambda r: held.append(r) if r.request.method == "POST" else r.continue_())
     page.set_input_files("#file-input", STL)
     for _ in range(100):
         if held:
@@ -290,7 +291,7 @@ with sync_playwright() as p:
     page.wait_for_selector(".note-input", timeout=5000)
     page.keyboard.type("アップロード中の注記")
     saved_before = len(puts)
-    page.unroute("**/api/models")
+    Net.of(page).unroute("**/api/models")
     held[0].continue_()
     page.wait_for_function(
         "document.querySelector('#hud-info').textContent.includes('三角形')"
@@ -383,7 +384,7 @@ with sync_playwright() as p:
     ctl("計測クリア").locator("button").click()
     assert dims() == [] and toast_shown()
     t0 = time.monotonic()
-    with page.expect_response(lambda r: r.url.endswith("/api/models") and r.request.method == "POST"):
+    with Net.of(page).expect_response(lambda r: r.url.endswith("/api/models") and r.request.method == "POST"):
         page.set_input_files("#file-input", DXF)
     page.wait_for_function("document.querySelector('#undo-toast').classList.contains('hidden')", timeout=5000)
     # well inside the toast's time: the reload ended the undo, not its timer

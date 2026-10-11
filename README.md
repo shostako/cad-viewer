@@ -55,7 +55,8 @@ WSL も Python も無い Windows の PC で使うためのもの。GitHub の [R
 
 ブラウザだけで動く版。backend が無く、開いたファイルはブラウザのタブの中で読む。どこにも送らない。計画は `docs/designs/web-version.md`。
 
-- 開ける形式は STL・OBJ・PLY・OFF・3MF。STEP/IGES・計測・肉厚・2D 図面は、計画の段取りに沿って足していく。
+- 開ける形式は STEP・IGES・STL・OBJ・PLY・OFF・3MF。計測・肉厚・2D 図面は、計画の段取りに沿って足していく。
+- STEP/IGES は、ブラウザの中の OpenCASCADE（WebAssembly）で開く。初めて STEP/IGES を開くときに、その部品（12 MB ほど）を読み込む。2 回目からはブラウザが覚えている。
 - 計測・注記はブラウザの中（IndexedDB）に、ファイルの中身ごとに保存する。手元の版のサイドカーとは別。
 - ヘルプ（?）の下に「Web 版」と出る。
 - 作り方: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき、静的なファイルとしてどこからでも配れる。手元で開くには `npm run dev:web`。
