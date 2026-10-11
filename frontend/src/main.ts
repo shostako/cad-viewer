@@ -1597,8 +1597,17 @@ const pullDirCtl = draftFolder
       startPullPick()
       return
     }
+    stopPullPick()
     pullChanged()
   })
+/** a pick of the direction under way is given up (a direction chosen otherwise: the next click is not a pick, Codex on #105) */
+function stopPullPick(): void {
+  if (frameTool.choosing !== 'pull') return
+  frameTool.stop()
+  forgetHoverPick()
+  showModeHint() // the prompt goes
+  probe.refresh()
+}
 /** everything that follows the pull direction, after it changed */
 function pullChanged(): void {
   saveDraftPrefs()
@@ -1637,6 +1646,7 @@ const pullActions = {
   pick: () => startPullPick(),
   /** the other way: one of the six to its opposite, the picked one turned over */
   flip: () => {
+    stopPullPick()
     if (draftState.dir === 'picked' && pickedDir) pickedDir = [0 - pickedDir[0], 0 - pickedDir[1], 0 - pickedDir[2]]
     else {
       const d = draftState.dir === 'picked' ? lastPreset : draftState.dir

@@ -25,8 +25,12 @@ type Xyz = [number, number, number]
 /** the direction made a unit vector; null when it is not three finite numbers, not all 0 (projection.py unit_direction) */
 export function unitDirection(d: readonly number[]): Xyz | null {
   if (d.length !== 3 || !d.every(Number.isFinite)) return null
-  const n = Math.hypot(d[0], d[1], d[2])
-  return n > 0 ? [d[0] / n, d[1] / n, d[2] / n] : null
+  // by the largest first, as projection.py (the same unit vector in both)
+  const m = Math.max(Math.abs(d[0]), Math.abs(d[1]), Math.abs(d[2]))
+  if (m === 0) return null
+  const s: Xyz = [d[0] / m, d[1] / m, d[2] / m]
+  const n = Math.hypot(s[0], s[1], s[2])
+  return [s[0] / n, s[1] / n, s[2] / n]
 }
 
 /** the axis a unit direction lies along, to the last bit (its sign aside); null for any other */

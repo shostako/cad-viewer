@@ -54,8 +54,12 @@ def unit_direction(direction: Sequence[float]) -> np.ndarray | None:
     d = np.asarray(direction, dtype=np.float64)
     if d.shape != (3,) or not np.isfinite(d).all():
         return None
-    n = float(np.linalg.norm(d))
-    return d / n if n > 0 else None
+    # by the largest first: the length of 1e308 x 3 would overflow, of 1e-300 underflow (Codex on #105)
+    m = float(np.max(np.abs(d)))
+    if m == 0:
+        return None
+    d = d / m
+    return d / float(np.linalg.norm(d))
 
 
 def axis_of(d: np.ndarray) -> str | None:

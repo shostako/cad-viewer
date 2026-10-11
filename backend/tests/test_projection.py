@@ -151,13 +151,16 @@ def test_any_direction(client):
     # (the other way round, the shadow is mirrored: its pixels may round differently)
     assert along("-2,-4,-6")["area"] == pytest.approx(1800 / 14**0.5, rel=REL)
     assert along("0,0,5")["area"] == _area(client, mid, "Z")["area"]
+    # any size: neither the length's overflow nor its underflow (Codex on #105)
+    assert along("1e308,1e308,0")["area"] == along("1,1,0")["area"]
+    assert along("1e-300,0,0")["area"] == _area(client, mid, "X")["area"]
     assert along("0,-1,0")["area"] == _area(client, mid, "Y")["area"]
 
 
 def test_rejects(client):
     meta = _upload(client, "mini_mold.step", STEP.read_bytes())
     assert client.get(f"/api/models/{meta['id']}/projected_area?axis=W").status_code == 422
-    for bad in ("1,2", "0,0,0", "a,b,c", "1,,2", "1,2,3,4", "nan,0,1"):
+    for bad in ("1,2", "0,0,0", "a,b,c", "1,,2", "1,2,3,4", "nan,0,1", "2e308,0,0"):
         r = client.get(f"/api/models/{meta['id']}/projected_area?dir={bad}")
         assert r.status_code == 422 and r.json()["detail"] == "dir must be three numbers, not all 0", (bad, r.text)
     assert client.get(f"/api/models/{meta['id']}/projected_area?parts=a,b").status_code == 422

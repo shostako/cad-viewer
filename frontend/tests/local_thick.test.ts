@@ -174,6 +174,11 @@ for (const file of MESH) {
       assert.ok(Math.abs(got.area - exp.area) <= tol, `dir: ${got.area} vs ${exp.area} (within ${tol})`)
       // along an axis given as a direction: the axis's own answer
       assert.equal((await js('projected_area?dir=0,0,2')).area, (await js('projected_area?axis=Z')).area)
+      // any size (projection.py's unit_direction, by the largest first)
+      // (1, 2, 3) as large as a double goes (2e308 would be past it, and refused)
+      const huge = (await js('projected_area?dir=0.5e308,1e308,1.5e308')).area
+      assert.ok(Math.abs(huge - got.area) <= 1e-6 * got.area, `${huge} vs ${got.area}`)
+      assert.equal((await js('projected_area?dir=1e-300,0,0')).area, (await js('projected_area?axis=X')).area)
     }
     // the shadows known exactly: the thin sheet's 50 x 0.002, 100 x 0.002, 100 x 50;
     // ribbed_plate's from above, its plate's 80 x 50 (the ribs and bosses inside it)
@@ -248,6 +253,7 @@ test('the routes\' errors as the backend words them', async () => {
     ['projected_area?dir=0,0,0', 422, 'dir must be three numbers, not all 0'],
     ['projected_area?dir=1,,2', 422, 'dir must be three numbers, not all 0'],
     ['projected_area?dir=nan,0,1', 422, 'dir must be three numbers, not all 0'],
+    ['projected_area?dir=2e308,0,0', 422, 'dir must be three numbers, not all 0'],
   ] as const) {
     const r = await be.handle('GET', `/api/models/${id}/${p}`)
     assert.equal(r.status, status, p)

@@ -135,6 +135,24 @@ with nav_session(boxes=("tiny",)) as nav:
     pick_at(SIDE)  # a click now picks nothing
     assert f"型開き {label}" in legend()
 
+    # ---- a pick under way, then one of the six chosen: the pick is given up (the next
+    # click on the model does not change the direction: Codex on #105)
+    nav.ctl("面・稜線から選ぶ").locator("button").click()
+    dir_select().select_option(label="+Z")
+    nav.settle()
+    assert not hud().startswith("型開き方向: 平らな面"), hud()
+    pick_at(TOP)
+    assert dir_text() == "+Z" and "型開き +Z" in legend(), (dir_text(), legend())
+    # and the same with 向きを反転
+    nav.ctl("面・稜線から選ぶ").locator("button").click()
+    nav.ctl("向きを反転").locator("button").click()
+    nav.settle()
+    pick_at(TOP)
+    assert dir_text() == "−Z", dir_text()
+    nav.ctl("向きを反転").locator("button").click()
+    dir_select().select_option(label="選んだ向き")
+    nav.settle()
+
     # ---- an edge: its direction (X, either way) -------------------------------------------
     nav.ctl("面・稜線から選ぶ").locator("button").click()
     pick_at(EDGE)
