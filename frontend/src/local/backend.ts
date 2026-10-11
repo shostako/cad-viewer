@@ -3,14 +3,17 @@
  * answered in the page's Worker (worker.ts) with the same paths, statuses and
  * bodies, so api.ts reads them the one way (../engine.ts).
  *
- * So far (docs/designs/web-version.md, W2–W3): mesh formats (STL, OBJ, PLY,
+ * So far (docs/designs/web-version.md, W2–W4): mesh formats (STL, OBJ, PLY,
  * OFF, 3MF: the display mesh, volume and area), STEP/IGES (OpenCASCADE in
  * WebAssembly, brep.ts: parts, tree, colours, the display mesh with its B-rep
- * face / edge / vertex IDs), the sidecars (kept in IndexedDB, by the file's
+ * face / edge / vertex IDs; the exact measurements, volume and centre of mass:
+ * measure.ts, brepprops.ts), the sidecars (kept in IndexedDB, by the file's
  * content hash as the backend names its files). The rest answers 501 with what
  * is not there yet in the Web version.
  */
 import { BrepLoadError, loadBrep, type PartMesh } from './brep.ts'
+import { brepPartProperties } from './brepprops.ts'
+import { MeasureError, Measurer } from './measure.ts'
 import { MESH_EXTS, loadMesh, MeshLoadError } from './meshload.ts'
 import { meshPartProperties, modelProps, type ModelProps } from './meshprops.ts'
 import { packBuffers, packParts } from './pack.ts'
@@ -119,14 +122,29 @@ export class LocalBackend {
         await this.sidecars.put(model.hash, body)
         return json(200, { saved: true })
       case 'GET properties':
-        if (model.format === 'brep') return notYet('STEP/IGES の体積・重量')
+        if (model.format === 'brep') {
+          const oc = await this.occt!
+          model.properties ??= modelProps(
+            'brep',
+            model.brep!.map((m) => ({ id: m.part.id, name: m.part.name, ...brepPartProperties(oc, m.part.shape) })),
+          )
+          return json(200, model.properties)
+        }
         model.properties ??= modelProps('mesh', [
           { id: 0, name: model.name, ...meshPartProperties(model.mesh!.positions, model.mesh!.indices) },
         ])
         return json(200, model.properties)
-      case 'POST measure':
-        if (model.format === 'brep') return notYet('計測')
-        return detail(422, 'measurement requires a B-rep model (STEP/IGES)')
+      case 'POST measure': {
+        if (model.format !== 'brep') return detail(422, 'measurement requires a B-rep model (STEP/IGES)')
+        const oc = await this.occt!
+        try {
+          return json(200, new Measurer(oc, model.brep!).run(body))
+        } catch (e) {
+          if (e instanceof MeasureError) return detail(422, e.message)
+          // OCCT's own exceptions arrive as numbers (a C++ exception's address)
+          return detail(500, `計測の誤り: ${e instanceof Error ? e.message : 'OpenCASCADE の例外'}`)
+        }
+      }
       case 'GET drawing.svg':
         return detail(422, 'not a drawing')
       case 'GET thickness.bin':

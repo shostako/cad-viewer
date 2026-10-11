@@ -98,7 +98,8 @@ def make_named_parts() -> None:
     """named_parts.step: an assembly "frame" of two instances of one uncoloured
     box (10 mm): "left" at the origin, with the instance's own name and colour
     (green: the box it refers to takes it), and an unnamed one at x 20 (the
-    box's name, "brick", and no colour)."""
+    box's name, "brick", and no colour). Two pins, one along z ("pin_z") and one
+    along x ("pin_x"): their axes cross."""
     doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
     st = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     ct = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
@@ -106,6 +107,11 @@ def make_named_parts() -> None:
     frame = named(st, st.NewShape(), "frame")
     left = named(st, st.AddComponent(frame, brick, loc(0, 0, 0)), "left")
     st.AddComponent(frame, brick, loc(20, 0, 0))
+    # two pins, one along z and one along x: their axes cross (no centre distance)
+    pin_z = named(st, st.AddShape(BRepPrimAPI_MakeCylinder(1.5, 8).Shape(), False), "pin_z")
+    pin_x = named(st, st.AddShape(BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(0, 0, 0), gp_Dir(1, 0, 0)), 2, 10).Shape(), False), "pin_x")
+    st.AddComponent(frame, pin_z, loc(50, 10, 0))
+    st.AddComponent(frame, pin_x, loc(40, 0, 5))
     st.UpdateAssemblies()
     green = Quantity_Color(0.2, 0.7, 0.3, Quantity_TOC_RGB)
     ct.SetColor(left, green, XCAFDoc_ColorType.XCAFDoc_ColorGen)

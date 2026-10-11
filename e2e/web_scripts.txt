@@ -23,3 +23,23 @@ test_sidecar_isolation.py
 test_step_view.py
 test_view_controls.py
 test_view_motion.py
+
+# W4: the exact measurements, volumes; the scripts' hold-and-answer (engine_net)
+test_design_tokens.py
+test_display_units.py
+test_draft_angle.py
+test_label_spread.py
+test_load_card.py
+test_measure.py
+test_measure_angle.py
+test_measure_area.py
+test_measure_axes.py
+test_measure_cancel_busy.py
+test_measure_line.py
+test_measure_radius.py
+test_measure_record.py
+test_nav_fit_panels.py
+test_ortho_nav.py
+test_panel_column.py
+test_pick_filter.py
+test_recent.py

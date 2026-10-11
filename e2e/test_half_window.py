@@ -33,6 +33,7 @@ from playwright.sync_api import sync_playwright
 
 import gui_common
 from engine_net import Net
+import engine_net
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTDATA = ROOT / "testdata"
@@ -163,7 +164,9 @@ with sync_playwright() as p:
         " [r.querySelector('.help-what').textContent, [...r.querySelectorAll('kbd')].map(k => k.textContent)])"
     )
     assert ["拡大・縮小（カーソルの位置へ）", ["ホイール"]] in rows and ["拡大・縮小（回転の中心へ）", ["+", "−"]] in rows, rows
-    assert page.inner_text("#help-foot") == f"cad-viewer {VERSION}", page.inner_text("#help-foot")
+    # the Web version says so (help.ts)
+    foot = f"cad-viewer {VERSION}" + ("（Web 版：計算はこのページの中）" if engine_net.LOCAL else "")
+    assert page.inner_text("#help-foot") == foot, page.inner_text("#help-foot")
     page.keyboard.press("?")
     assert not help_shown() and page.get_attribute("#help-open", "aria-expanded") == "false", "2 ? closes"
     page.keyboard.press("?")

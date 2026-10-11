@@ -73,9 +73,11 @@ jobs:
         working-directory: frontend
         run: npm test
 
-  # The Web version (npm run build:web: the engine in the page, no backend):
-  # the E2E scripts listed in e2e/web_scripts.txt, those whose features the
-  # Web version has so far (docs/designs/web-version.md). No backend runs here.
+  # The Web version (the engine in the page, no backend): the E2E scripts
+  # listed in e2e/web_scripts.txt, those whose features the Web version has so
+  # far (docs/designs/web-version.md). No backend runs here. Served by Vite's
+  # dev server in web mode, as the checkout's E2E are (some scripts import the
+  # app's modules from /src); the unit job builds the Web version.
   e2e-web:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -108,11 +110,9 @@ jobs:
             backend/.venv/bin/python "testdata/$g.py"
           done
 
-      - name: Build the Web version
+      - name: Frontend dependencies
         working-directory: frontend
-        run: |
-          npm ci
-          npm run build:web
+        run: npm ci
 
       - name: E2E (web)
         env:
@@ -121,7 +121,7 @@ jobs:
           E2E_SCRIPT_TIMEOUT: 600
           PYTHONUNBUFFERED: '1'
         run: |
-          (cd frontend && nohup npx vite preview --mode web --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
+          (cd frontend && nohup npx vite --mode web --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
           for _ in $(seq 1 60); do curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break; sleep 1; done
           mapfile -t scripts < <(grep -v '^\s*\(#\|$\)' e2e/web_scripts.txt)
           passed=0
@@ -129,13 +129,16 @@ jobs:
             echo "::group::$t"
             start=$(date +%s)
             # Playwright's calls logged (pw:api) to a file, shown when the script fails:
-            # where it stood when it stopped
-            if DEBUG=pw:api timeout "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "e2e/$t" 2>/tmp/pw-api.log; then
+            # where it stood when it stopped. Stopped at the limit by SIGINT, a script
+            # prints where it was and the error it was handling (a failure inside
+            # sync_playwright()'s "with" is printed only after its exit has closed the
+            # browser: were that to hang, nothing would show)
+            if DEBUG=pw:api timeout -s INT -k 30 "$E2E_SCRIPT_TIMEOUT" backend/.venv/bin/python "e2e/$t" 2>/tmp/pw-api.log; then
               passed=$((passed + 1))
             else
               rc=$?
               echo "::error title=E2E (web) failed::$t (exit $rc)"
-              tail -n 60 /tmp/pw-api.log
+              tail -n 120 /tmp/pw-api.log
             fi
             echo "$t took $(( $(date +%s) - start )) s"
             echo "::endgroup::"
