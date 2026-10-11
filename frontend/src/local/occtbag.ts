@@ -12,7 +12,8 @@
  *       return xyz(k(k(surf.Plane()).Axis()).Direction())   // numbers out
  *     })
  *
- * What the model keeps (its shapes and maps) does not go in a bag.
+ * What the model keeps (its shapes and maps) does not go in a bag, or is
+ * taken out of it (bag.spare) before the bag is emptied.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -26,6 +27,11 @@ export class Bag {
   readonly k: Keep = (o) => {
     if (o !== null && typeof o === 'object' && typeof (o as any).delete === 'function') this.all.add(o)
     return o
+  }
+
+  /** takes objects out of the bag: what the calculation hands on to be kept (a model's shapes and maps) */
+  spare(...objects: unknown[]): void {
+    for (const o of objects) this.all.delete(o)
   }
 
   /** deletes them all, the last made first (one that will not go does not keep the rest, or the answer, from going) */

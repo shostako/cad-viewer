@@ -20,6 +20,8 @@ import { createInstance } from 'libcascade/single/init'
 
 import { LocalBackend, memoryStore } from '../src/local/backend.ts'
 import { parseMeshPack } from '../src/meshpack.ts'
+import { loadBrep } from '../src/local/brep.ts'
+import { tracer } from './occt_tracer.ts'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..', '..')
@@ -121,3 +123,18 @@ test('a STEP that is not one', async () => {
   const up = await backend.handle('POST', '/api/models', { name: 'bad.step', bytes: new TextEncoder().encode('not a step file').buffer })
   assert.equal(up.status, 422, JSON.stringify(up.body))
 })
+
+for (const file of FILES) {
+  test(`${path.basename(file)}: a load leaves no OCCT object behind but the model's own`, { skip: !fs.existsSync(file) && 'no testdata' }, async () => {
+    const T = tracer(await createInstance())
+    const { meshes } = loadBrep(T.oc, new Uint8Array(fs.readFileSync(file)), path.basename(file))
+    // the model's own: each part's shape and its face, edge and vertex maps
+    const own = new Set(meshes.flatMap((m) => [m.part.shape, m.faceMap, m.edgeMap, m.vertexMap].map(T.raw)))
+    assert.equal(own.size, 4 * meshes.length)
+    const left = T.made.filter((o) => !o.isDeleted() && !own.has(o))
+    assert.ok(T.made.length > 100, `the tracer saw ${T.made.length} objects: it must see what a load makes`)
+    assert.equal(left.length, 0, `${left.length} of ${T.made.length} OCCT objects left: ${[...new Set(left.map((o) => o.constructor?.name))].join(', ')}`)
+    // and the model's own alive (measurements use them)
+    for (const o of own) assert.ok(!o.isDeleted(), `the model's ${o.constructor?.name} deleted`)
+  })
+}
