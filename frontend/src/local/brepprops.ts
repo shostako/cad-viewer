@@ -56,9 +56,9 @@ function cavityFacingOut(oc: OC, k: Keep, shells: any[]): boolean {
   if (shells.length < 2) return false
   const signed = shells.map((s) => volume(oc, k, s)[0])
   let outer = 0
-  for (let k = 1; k < signed.length; k++) if (Math.abs(signed[k]) > Math.abs(signed[outer])) outer = k
+  for (let i = 1; i < signed.length; i++) if (Math.abs(signed[i]) > Math.abs(signed[outer])) outer = i
   const tiny = Math.abs(signed[outer]) * 1e-9
-  return signed.some((v, k) => k !== outer && Math.abs(v) > tiny && v * signed[outer] > 0)
+  return signed.some((v, i) => i !== outer && Math.abs(v) > tiny && v * signed[outer] > 0)
 }
 
 function part(closed: boolean, vol: number | null, area: number | null, com: Vec3 | null, reason: PartProps['reason']): PartProps {

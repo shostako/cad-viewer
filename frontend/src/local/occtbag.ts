@@ -28,11 +28,17 @@ export class Bag {
     return o
   }
 
-  /** deletes them all, the last made first */
+  /** deletes them all, the last made first (one that will not go does not keep the rest, or the answer, from going) */
   free(): void {
     const all = [...this.all].reverse()
     this.all.clear()
-    for (const o of all) if (!o.isDeleted?.()) o.delete()
+    for (const o of all) {
+      try {
+        if (!o.isDeleted?.()) o.delete()
+      } catch {
+        // gone already, or not to be deleted: nothing more to do with it
+      }
+    }
   }
 }
 

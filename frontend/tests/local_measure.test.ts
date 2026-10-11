@@ -159,7 +159,7 @@ function tracer(oc: any) {
   return { oc: wrapped, own: (t: any) => wrapObject(t, false), made }
 }
 
-for (const file of FILES.filter((f) => !f.endsWith('.igs'))) {
+for (const file of FILES) {
   test(`${path.basename(file)}: each measurement and the properties leave no OCCT object behind`, { skip: !ready && 'no backend venv or testdata' }, async () => {
     const { loadBrep } = await import('../src/local/brep.ts')
     const { Measurer, MeasureError } = await import('../src/local/measure.ts')

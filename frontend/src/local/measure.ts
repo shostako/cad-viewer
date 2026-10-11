@@ -263,8 +263,8 @@ export class Measurer {
   private centreDistance(sa: any, sb: any, nearA: Xyz | null): Answer {
     const oc = this.oc, k = this.k
     const [ka, ca] = this.centre(sa), [kb, cb] = this.centre(sb)
-    for (const [k, c, which] of [[ka, ca, '1 点目'], [kb, cb, '2 点目']] as const) {
-      if (k === 'none') return unavailable('centre', `${which}: ${c}`)
+    for (const [kind, c, which] of [[ka, ca, '1 点目'], [kb, cb, '2 点目']] as const) {
+      if (kind === 'none') return unavailable('centre', `${which}: ${c}`)
     }
     let pa: any, pb: any
     if (ka === 'point' && kb === 'point') (pa = ca), (pb = cb)
@@ -306,7 +306,7 @@ export class Measurer {
   }
 
   private climb(ca: any, cb: any, pa: any, pb: any): [any, any] {
-    for (let k = 0; k < 100; k++) {
+    for (let step = 0; step < 100; step++) {
       const qb = this.farthestOn(cb, pa)
       const qa = this.farthestOn(ca, qb)
       const gain = qa.Distance(qb) - pa.Distance(pb)
@@ -343,7 +343,7 @@ export class Measurer {
     const n = ptsA.length, m = ptsB.length
     const d2 = ptsA.map((p) => ptsB.map((q) => p.SquareDistance(q)))
     const peak = (i: number, j: number) => {
-      for (let k = i - 1; k <= i + 1; k++) for (let l = j - 1; l <= j + 1; l++) if (k >= 0 && k < n && l >= 0 && l < m && d2[k][l] > d2[i][j]) return false
+      for (let a = i - 1; a <= i + 1; a++) for (let b = j - 1; b <= j + 1; b++) if (a >= 0 && a < n && b >= 0 && b < m && d2[a][b] > d2[i][j]) return false
       return true
     }
     // Python sorts (d2, i, j) tuples ascending and keeps the last MAX_STARTS
