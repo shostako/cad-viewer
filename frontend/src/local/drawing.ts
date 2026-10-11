@@ -6,7 +6,9 @@
  *
  * Pyodide and the packages are served with the page (web-public/py/, from
  * scripts/web-assets.mjs) and loaded on the first drawing (about 20 MB, cached
- * by the browser after).
+ * by the browser after). The Japanese font (Noto Sans JP, 4.5 MB; drawing.py
+ * draws a drawing's Japanese with it, issue #90) only for a drawing that may
+ * have Japanese in it.
  */
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -25,7 +27,22 @@ interface Manifest {
   packages: string[]
   wheel: string
   font: string
+  /** the font for Japanese (drawing.py's CJK_FONTS' first) */
+  japaneseFont?: string
   module: string
+}
+
+/**
+ * a drawing that may have Japanese in it: a byte past ASCII (UTF-8, Shift_JIS,
+ * a binary DXF), or DXF's escapes for one (\U+30C6, \M+18341)
+ */
+export function mayHaveJapanese(bytes: Uint8Array): boolean {
+  for (let i = 0; i < bytes.length; i++) {
+    const b = bytes[i]
+    if (b >= 0x80) return true
+    if (b === 0x5c && i + 2 < bytes.length && (bytes[i + 1] === 0x55 || bytes[i + 1] === 0x4d) && bytes[i + 2] === 0x2b) return true
+  }
+  return false
 }
 
 /**
@@ -35,8 +52,10 @@ interface Manifest {
  */
 export function pyodideRenderer(base: string, loadPyodide: (opts: any) => Promise<any>, read: (name: string) => Promise<Uint8Array>): DrawingRenderer {
   let ready: Promise<any> | null = null
+  let manifest: Manifest | null = null
+  let japanese: Promise<void> | null = null
   const start = async () => {
-    const manifest: Manifest = JSON.parse(new TextDecoder().decode(await read('manifest.json')))
+    manifest = JSON.parse(new TextDecoder().decode(await read('manifest.json'))) as Manifest
     const py = await loadPyodide({ indexURL: base, packageCacheDir: base, lockFileURL: `${base}pyodide-lock.json` })
     await py.loadPackage(manifest.packages)
     py.unpackArchive(await read(manifest.wheel), 'wheel')
@@ -61,11 +80,24 @@ def _render(data, name):
 `)
     return py
   }
+  /** the Japanese font among the fonts (once): ezdxf's list of them made again */
+  const addJapanese = (py: any) =>
+    (japanese ??= (async () => {
+      const name = manifest?.japaneseFont
+      if (!name) return
+      py.FS.writeFile(`/fonts/${name}`, await read(name))
+      // drawing.py forgets what ezdxf remembered of the lookups before it (a family not found)
+      py.runPython("_ff.font_manager.build(['/fonts'], support_dirs=False); drawing.forget_font_lookups()")
+    })().catch((e) => {
+      japanese = null // try again next time
+      throw e
+    }))
   return async (bytes, filename) => {
     const py = await (ready ??= start().catch((e) => {
       ready = null // try again next time
       throw e
     }))
+    if (mayHaveJapanese(bytes)) await addJapanese(py)
     const render = py.globals.get('_render')
     const data = py.toPy(bytes)
     try {

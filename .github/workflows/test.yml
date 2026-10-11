@@ -56,10 +56,6 @@ jobs:
             backend/.venv/bin/python "testdata/$g.py"
           done
 
-      - name: Backend tests
-        working-directory: backend
-        run: .venv/bin/pytest -q -p no:cacheprovider
-
       - name: Frontend type check and build
         working-directory: frontend
         run: |
@@ -73,6 +69,12 @@ jobs:
       - name: Web engine tests
         working-directory: frontend
         run: npm test
+
+      # after the build: build:web puts the Web version's Japanese font in
+      # frontend/web-public/py, which tests/test_drawing_japanese.py draws with
+      - name: Backend tests
+        working-directory: backend
+        run: .venv/bin/pytest -q -p no:cacheprovider
 
   # The Web version (the engine in the page, no backend): the E2E scripts
   # listed in e2e/web_scripts.txt, those whose features the Web version has so
