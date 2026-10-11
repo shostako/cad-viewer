@@ -215,7 +215,7 @@ class Net:
                     pending.append(Request(ev["url"], ev["method"]))
         elif ev.get("status") is None:
             for fn in self._observers:
-                fn(Request(ev["url"], ev["method"]))
+                fn(Request(ev["url"], ev["method"], ev.get("postData")))
         else:
             for pending in self._responses:
                 pending.append(Response(ev["url"], ev["method"], ev["status"]))

@@ -45,29 +45,34 @@ type Decision = { action: 'continue' } | { action: 'abort' } | { action: 'fulfil
 
 interface Net {
   route(req: { url: string; method: string; postData: string | null }): Promise<Decision>
-  /** a request going (no status), answered (its status), or cut (failed) */
-  observe(ev: { url: string; method: string; status?: number; failed?: boolean }): void
+  /** a request going (no status; its body), answered (its status), or cut (failed) */
+  observe(ev: { url: string; method: string; postData?: string | null; status?: number; failed?: boolean }): void
 }
 
 const net = (): Net | undefined => (globalThis as { __cadEngineNet?: Net }).__cadEngineNet
 
-/** the request through the script's hook (when there is one), then the Worker */
-async function send(method: string, path: string, body: unknown, postData: string | null, transfer: Transferable[] = []): Promise<Reply | Response> {
+/**
+ * the request through the script's hook (when there is one), then the Worker.
+ * sent: once the request is taken (past the hook), as the last of an upload's
+ * bytes going out over HTTP (a cut request was never sent)
+ */
+async function send(method: string, path: string, body: unknown, postData: string | null, transfer: Transferable[] = [], sent?: () => void): Promise<Reply | Response> {
   const hook = net()
   const url = new URL(path, location.href).href
   if (hook) {
-    hook.observe({ url, method })
+    hook.observe({ url, method, postData })
     const d = await hook.route({ url, method, postData })
     if (d.action === 'abort') {
       hook.observe({ url, method, failed: true })
       throw new EngineUnreachable('the request was cut')
     }
+    sent?.()
     if (d.action === 'fulfill') {
       const res = new Response(d.body, { status: d.status, headers: { 'Content-Type': d.contentType ?? 'text/plain' } })
       hook.observe({ url, method, status: d.status })
       return res
     }
-  }
+  } else sent?.()
   const r = await ask(method, path, body, transfer)
   hook?.observe({ url, method, status: r.status })
   return r
@@ -89,8 +94,8 @@ export const localEngine: Engine = {
   },
   async upload(file, onSent): Promise<UploadAnswer> {
     const bytes = await file.arrayBuffer()
-    onSent?.(1) // nothing to send: the bytes are here already
-    const r = await send('POST', '/api/models', { name: file.name, bytes }, null, [bytes])
+    // nothing to send (the bytes are here already): all of it gone once the request is taken
+    const r = await send('POST', '/api/models', { name: file.name, bytes }, null, [bytes], () => onSent?.(1))
     if (r instanceof Response) return { status: r.status, statusText: r.statusText, body: await r.text() }
     return { status: r.status, statusText: '', body: JSON.stringify(r.body) }
   },

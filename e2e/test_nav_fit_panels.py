@@ -33,6 +33,7 @@ from pathlib import Path
 
 import gui_common
 from engine_net import Net
+import engine_net
 from nav_common import (
     LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, SURFACE, TESTDATA,
     close, empty_sidecar, free_rect, model_size, nav_session, norm, overlaps, put_sidecar, sub,
@@ -435,8 +436,9 @@ try:
         finally:
             Net.of(page).unroute("**/sidecar")
         # the browser logs the 500 itself; that line is expected, anything else is not
+        # (the Web version's engine is in the page: no network, no such line)
         new_errors = n.errors[errors_before:]
-        assert new_errors and all("status of 500" in e for e in new_errors), ("P8c console", new_errors)
+        assert (new_errors or engine_net.LOCAL) and all("status of 500" in e for e in new_errors), ("P8c console", new_errors)
         del n.errors[errors_before:]
         hud_text = page.inner_text("#hud-info")
         assert "計測・注記を読み込めなかった" in hud_text and "保存ファイルが壊れている" in hud_text, ("P8c", hud_text)

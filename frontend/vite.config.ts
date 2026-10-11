@@ -14,4 +14,7 @@ export default defineConfig(({ mode }) => ({
   worker: { format: 'es' },
   server: { proxy: mode === 'web' ? {} : backendProxy },
   preview: { proxy: mode === 'web' ? {} : backendProxy },
+  // libcascade finds its glue and wasm next to its own module (import.meta.url):
+  // not pre-bundled into Vite's cache, where they are not
+  optimizeDeps: mode === 'web' ? { exclude: ['libcascade'] } : undefined,
 }))

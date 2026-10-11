@@ -17,10 +17,91 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "backend"))
 
-from app import properties  # noqa: E402
+from OCP.Bnd import Bnd_Box  # noqa: E402
+from OCP.BRepBndLib import BRepBndLib  # noqa: E402
+
+from app import measure, properties  # noqa: E402
 from app.loaders import classify, load_mesh  # noqa: E402
 from app.meshpack import pack_parts, pack_trimesh  # noqa: E402
 from app.tessellation import load_brep  # noqa: E402
+
+
+def _centre_of(shape) -> list[float]:
+    box = Bnd_Box()
+    BRepBndLib.Add_s(shape, box)
+    x0, y0, z0, x1, y1, z1 = box.Get()
+    return [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2]
+
+
+def measures(meshes) -> list[dict]:
+    """measurement requests over the whole model and the backend's answers
+    (measure.run, as POST /measure; an error as its 422 detail)"""
+    reqs: list[dict] = []
+    for m in meshes:
+        pid = m.part.part_id
+        ref = lambda kind, i: {"partId": pid, "kind": kind, "id": i}  # noqa: E731
+        nf, ne, nv = m.face_map.Extent(), m.edge_map.Extent(), m.vertex_map.Extent()
+        for f in range(1, nf + 1):
+            reqs.append({"type": "face_info", "ref": ref("face", f), "near": _centre_of(m.face_map.FindKey(f))})
+        for e in range(1, ne + 1):
+            reqs.append({"type": "edge_info", "ref": ref("edge", e), "near": _centre_of(m.edge_map.FindKey(e))})
+        for v in range(1, nv + 1):
+            reqs.append({"type": "vertex_info", "ref": ref("vertex", v)})
+        for f in range(2, nf + 1):
+            reqs.append({"type": "distance", "a": ref("face", 1), "b": ref("face", f),
+                         "nearA": _centre_of(m.face_map.FindKey(1)), "nearB": _centre_of(m.face_map.FindKey(f))})
+            reqs.append({"type": "distance", "a": ref("face", f), "b": ref("face", 1), "mode": "centre",
+                         "nearA": _centre_of(m.face_map.FindKey(f))})
+        for a in range(1, min(ne, 5) + 1):
+            for b in range(1, min(ne, 5) + 1):
+                reqs.append({"type": "distance", "a": ref("edge", a), "b": ref("edge", b), "mode": "max"})
+                reqs.append({"type": "distance", "a": ref("edge", a), "b": ref("edge", b), "mode": "centre"})
+        for e in range(1, min(ne, 3) + 1):
+            for f in range(1, nf + 1):
+                # a straight edge and a plane: their angle (90 less the angle to the normal)
+                reqs.append({"type": "distance", "a": ref("edge", e), "b": ref("face", f),
+                             "nearA": _centre_of(m.edge_map.FindKey(e)), "nearB": _centre_of(m.face_map.FindKey(f))})
+        if nv >= 1:
+            for f in range(1, nf + 1):
+                # a point and an axis or a centre
+                reqs.append({"type": "distance", "a": ref("vertex", 1), "b": ref("face", f), "mode": "centre"})
+        if nv >= 1 and ne >= 1:
+            reqs.append({"type": "distance", "a": ref("vertex", 1), "b": ref("edge", ne), "mode": "max"})
+            reqs.append({"type": "distance", "a": ref("vertex", 1), "b": ref("edge", ne)})
+        if nf >= 1:
+            reqs.append({"type": "distance", "a": {"kind": "point", "xyz": [1.5, -2.5, 3.5]}, "b": ref("face", nf)})
+    small = [m for m in meshes if m.face_map.Extent() <= 6]
+    for i, ma in enumerate(small):
+        for mb in small[i + 1:]:
+            for fa in range(1, ma.face_map.Extent() + 1):
+                for fb in range(1, mb.face_map.Extent() + 1):
+                    # two parts' faces' centres: parallel axes, crossed ones, a point and an axis
+                    reqs.append({"type": "distance", "mode": "centre",
+                                 "a": {"partId": ma.part.part_id, "kind": "face", "id": fa},
+                                 "b": {"partId": mb.part.part_id, "kind": "face", "id": fb},
+                                 "nearA": _centre_of(ma.face_map.FindKey(fa))})
+    if len(meshes) >= 2:
+        a, b = meshes[0].part.part_id, meshes[-1].part.part_id
+        reqs.append({"type": "distance", "a": {"partId": a, "kind": "part", "id": 0}, "b": {"partId": b, "kind": "part", "id": 0}})
+        reqs.append({"type": "distance", "a": {"partId": a, "kind": "part", "id": 0}, "b": {"partId": b, "kind": "face", "id": 1}, "mode": "centre"})
+        reqs.append({"type": "distance", "a": {"partId": a, "kind": "face", "id": 1}, "b": {"partId": b, "kind": "face", "id": 1}})
+    # the errors, worded as the backend words them
+    reqs += [
+        {"type": "face_info", "ref": {"partId": 0, "kind": "face", "id": 9999}},
+        {"type": "face_info", "ref": {"partId": 99, "kind": "face", "id": 1}},
+        {"type": "face_info", "ref": {"kind": "face", "id": 1}},
+        {"type": "vertex_info", "ref": {"kind": "point", "xyz": [0, 0, 0]}},
+        {"type": "distance", "a": {"partId": 0, "kind": "face", "id": 1}, "b": {"partId": 0, "kind": "face", "id": 1}, "mode": "far"},
+        {"type": "face_info", "ref": {"partId": 0, "kind": "face", "id": 1}, "near": [0, 0]},
+        {"type": "nothing"},
+    ]
+    out = []
+    for r in reqs:
+        try:
+            out.append({"request": r, "answer": measure.run(r, meshes)})
+        except measure.MeasureError as e:
+            out.append({"request": r, "error": str(e)})
+    return out
 
 
 def brep(path: Path) -> dict:
@@ -58,6 +139,7 @@ def brep(path: Path) -> dict:
         "bbox": meta["bbox"],
         "parts": parts,
         "properties": properties.brep_properties(meshes),
+        "measures": measures(meshes),
     }
 
 
