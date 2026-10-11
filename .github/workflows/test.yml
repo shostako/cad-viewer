@@ -79,10 +79,16 @@ jobs:
   # far (docs/designs/web-version.md). No backend runs here. Served by Vite's
   # dev server in web mode, as the checkout's E2E are (some scripts import the
   # app's modules from /src); the unit job builds the Web version.
+  # In 3 parallel jobs, every third script of the list each (one job took 21 min
+  # for 45 scripts in October 2026; the list is 67 since W6).
   e2e-web:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    name: e2e (web)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    name: e2e (web ${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v6
 
@@ -125,10 +131,16 @@ jobs:
           CAD_VIEWER_ENGINE: local
           E2E_SCRIPT_TIMEOUT: 600
           PYTHONUNBUFFERED: '1'
+          SHARD: ${{ matrix.shard }}
+          SHARDS: 3
         run: |
           (cd frontend && nohup npx vite --mode web --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
           for _ in $(seq 1 60); do curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break; sleep 1; done
-          mapfile -t scripts < <(grep -v '^\s*\(#\|$\)' e2e/web_scripts.txt)
+          mapfile -t all < <(grep -v '^\s*\(#\|$\)' e2e/web_scripts.txt)
+          scripts=()
+          for i in "${!all[@]}"; do
+            if [ $((i % SHARDS)) -eq "$SHARD" ]; then scripts+=("${all[$i]}"); fi
+          done
           passed=0
           for t in "${scripts[@]}"; do
             echo "::group::$t"
@@ -148,14 +160,14 @@ jobs:
             echo "$t took $(( $(date +%s) - start )) s"
             echo "::endgroup::"
           done
-          echo "E2E (web): ${passed} / ${#scripts[@]} passed"
+          echo "E2E (web ${SHARD}/${SHARDS}): ${passed} / ${#scripts[@]} passed (of ${#all[@]} scripts)"
           [ "${#scripts[@]}" -gt 0 ] && [ "$passed" -eq "${#scripts[@]}" ]
 
       - name: Upload screenshots
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-web-artifacts
+          name: e2e-web-artifacts-shard-${{ matrix.shard }}
           path: |
             /tmp/cad_viewer_*.png
             /tmp/vite.log

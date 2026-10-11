@@ -53,7 +53,7 @@ for f in testdata/*.step testdata/*.stl testdata/*.dxf testdata/*.igs; do
 done
 ```
 
-CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す（Windows のインストール版は別の `windows.yml`、下の節）。Web 版は、`npm test` と、`e2e (web)` のジョブ（Web 版を配り、backend を立てずに `e2e/web_scripts.txt` の本を流す。段が進んだら一覧に足す）。master に入ると `pages.yml` が Web 版を GitHub Pages に配る。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
+CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド・E2E を全部回す（Windows のインストール版は別の `windows.yml`、下の節）。Web 版は、`npm test` と、`e2e (web 0)`〜`e2e (web 2)` のジョブ（Web 版を Vite の開発サーバーで配り、backend を立てずに `e2e/web_scripts.txt` の本を 3 本おきに流す。段が進んだら一覧に足す）。master に入ると `pages.yml` が Web 版を GitHub Pages に配る。E2E は 4 つの並列のジョブ（`e2e (0)`〜`e2e (3)`）に分け、名前順の一覧から 4 本おきに取る（1 つのジョブでは 40 分の打ち切りに迫った）。1 本あたりの打ち切りは 600 秒（`E2E_SCRIPT_TIMEOUT`。GitHub の実行機は速さが 2 倍ほど違い、遅い実行機では 300 秒に届く本がある）。
 
 ### Windows のインストール版
 
