@@ -44,6 +44,10 @@ log = logging.getLogger(__name__)
 
 GRID_MAX = 12_000_000
 """grid points of one part at most (memory: ~100 MB while it is computed)"""
+MODEL_GRID_MAX = 24_000_000
+"""grid points of a whole model at most (the grids are kept: ~100 MB), shared
+by the parts in proportion to their boxes' volumes (each GRID_MIN at least)"""
+GRID_MIN = 500_000
 STEPS_PER_WALL = 16
 """grid steps across the first guess of the wall"""
 SAMPLES_MAX = 400_000
@@ -67,6 +71,7 @@ class PartField:
     pitch: float
     radius: np.ndarray  # (nx, ny, nz) float32: distance to the surface, 0 outside
     mesh: trimesh.Trimesh
+    """the part's surface (a part of several bodies: their faces on the union's outside only)"""
     tri_thickness: np.ndarray  # (M,) per display triangle (the sample's; 0: none)
     face_thickness: list[tuple[int, float, float]]  # (faceId, thickness, area) for B-rep faces
     vertex_thickness: np.ndarray | None  # (N,) per display vertex, mesh parts
@@ -113,12 +118,12 @@ def _first_guess(m: trimesh.Trimesh) -> float:
     return float(d[order][np.searchsorted(cw, cw[-1] / 2)])
 
 
-def _grid(m: trimesh.Trimesh, guess: float) -> tuple[np.ndarray, float, np.ndarray]:
+def _grid(m: trimesh.Trimesh, guess: float, grid_max: int = GRID_MAX) -> tuple[np.ndarray, float, np.ndarray]:
     lo, hi = m.bounds
     size = hi - lo
     h = guess / STEPS_PER_WALL
     # coarser until the grid fits (2 points of margin all round: outside for sure)
-    while np.prod(np.ceil(size / h) + 5) > GRID_MAX:
+    while np.prod(np.ceil(size / h) + 5) > grid_max:
         h *= 1.25
     h = max(h, float(np.linalg.norm(size)) * 1e-4)
     shape = (np.ceil(size / h) + 5).astype(int)
@@ -132,19 +137,94 @@ def _grid(m: trimesh.Trimesh, guess: float) -> tuple[np.ndarray, float, np.ndarr
     return origin, h, radius
 
 
+def _bodies(m: trimesh.Trimesh) -> list[tuple[trimesh.Trimesh, int]] | None:
+    """the part's bodies with their roles (+1 material, -1 cavity), largest first,
+    when there are several and each is closed (else None: the mesh is one
+    surface). The roles as /properties takes them (properties._mesh_bodies): a
+    body nobody encloses is material; one facing its parent's way keeps the
+    parent's role (an overlap), one facing the other way flips it (a cavity in
+    material, an island in a cavity)"""
+    if m.body_count <= 1:
+        return None
+    bodies = m.split(only_watertight=False)
+    if len(bodies) < 2 or not all(b.is_watertight for b in bodies):
+        return None
+    from .properties import _inside as body_inside
+
+    signed = [float(b.volume) for b in bodies]
+    order = sorted(range(len(bodies)), key=lambda k: (-abs(signed[k]), k))
+    role: dict[int, int] = {}
+    for k in order:
+        parents = [q for q in role if body_inside(bodies[k], bodies[q])]
+        if not parents:
+            role[k] = 1
+        else:
+            p = min(parents, key=lambda q: abs(signed[q]))
+            role[k] = role[p] if signed[k] * signed[p] > 0 else -role[p]
+    return [(bodies[k], role[k]) for k in order]
+
+
+def _in_union(bodies: list[tuple[trimesh.Trimesh, int]], pts: np.ndarray) -> np.ndarray:
+    """points inside the part's material: the bodies in order, material added, cavities taken away"""
+    out = np.zeros(len(pts), dtype=bool)
+    for b, role in bodies:
+        inside = b.contains(pts)
+        out = out | inside if role > 0 else out & ~inside
+    return out
+
+
+def _outside_faces(m: trimesh.Trimesh, bodies: list[tuple[trimesh.Trimesh, int]]) -> trimesh.Trimesh:
+    """the faces of the bodies on the outside of their union: a hair off each
+    triangle's centre, outward, is not in the material (a face inside another
+    body, two faces that touch, is not the part's surface)"""
+    d = max(float(np.linalg.norm(m.extents)) * 1e-5, 1e-7)
+    keep = ~_in_union(bodies, m.triangles_center + m.face_normals * d)
+    return trimesh.Trimesh(m.vertices, m.faces[keep], process=False)
+
+
 def _inside(m: trimesh.Trimesh, origin: np.ndarray, h: float, shape: np.ndarray) -> np.ndarray:
-    """the grid points inside the part: one ray up each column of the grid, the
-    stretches between its crossings in pairs (a column whose crossings do not
-    pair up asks point by point instead)"""
+    """the grid points inside the part's material.
+
+    A part of one body, or one whose bodies are not each closed (a B-rep
+    solid's display mesh with hairline gaps along its seams): the crossings of
+    the whole mesh. A part of several closed bodies: each body's inside by its
+    own crossings, and the bodies' roles as /properties takes them
+    (properties._mesh_bodies): material bodies are added (two that overlap or
+    touch are their union; the crossings of both together would make a void of
+    the overlap), a cavity is taken away, an island in it added back. The
+    largest first, so a body's parent is decided before it."""
+    bodies = _bodies(m)
+    if bodies is None:
+        return _inside_crossings(m, origin, h, shape)
+    out = np.zeros(tuple(int(v) for v in shape), dtype=bool)
+    for b, role in bodies:
+        mask = _inside_crossings(b, origin, h, shape)
+        if role > 0:
+            out |= mask
+        else:
+            out &= ~mask
+    return out
+
+
+def _inside_crossings(m: trimesh.Trimesh, origin: np.ndarray, h: float, shape: np.ndarray) -> np.ndarray:
+    """the grid points inside a mesh by its crossings: one ray up each column of
+    the grid (those over the mesh's box), the stretches between its crossings
+    in pairs (a column whose crossings do not pair up asks point by point instead)"""
     nx, ny, nz = (int(v) for v in shape)
     xs = origin[0] + h * np.arange(nx)
     ys = origin[1] + h * np.arange(ny)
     gx, gy = np.meshgrid(xs, ys, indexing="ij")
     z0 = origin[2] - h
     starts = np.stack([gx.ravel(), gy.ravel(), np.full(gx.size, z0)], axis=1)
-    dirs = np.tile([0.0, 0.0, 1.0], (len(starts), 1))
-    loc, ray, _ = m.ray.intersects_location(starts, dirs, multiple_hits=True)
     inside = np.zeros((nx * ny, nz), dtype=bool)
+    # only the columns over the mesh's box can cross it
+    lo, hi = m.bounds
+    over = np.flatnonzero((starts[:, 0] >= lo[0]) & (starts[:, 0] <= hi[0]) & (starts[:, 1] >= lo[1]) & (starts[:, 1] <= hi[1]))
+    if not len(over):
+        return inside.reshape(nx, ny, nz)
+    dirs = np.tile([0.0, 0.0, 1.0], (len(over), 1))
+    loc, ray, _ = m.ray.intersects_location(starts[over], dirs, multiple_hits=True)
+    ray = over[ray]
     zs = origin[2] + h * np.arange(nz)
     if len(ray):
         order = np.lexsort((loc[:, 2], ray))
@@ -254,17 +334,29 @@ def nominal_of(values: np.ndarray, weights: np.ndarray) -> float | None:
 
 
 def part_field(
-    positions: np.ndarray, indices: np.ndarray, face_ranges: list[dict[str, int]], trusted_closed: bool = False
+    positions: np.ndarray,
+    indices: np.ndarray,
+    face_ranges: list[dict[str, int]],
+    trusted_closed: bool = False,
+    grid_max: int = GRID_MAX,
 ) -> PartField:
-    """the grid and the walls of one part (raises NotSolid)"""
+    """the grid and the walls of one part (raises NotSolid); its grid grid_max points at most"""
     m = _solid(positions, indices, trusted_closed)
+    bodies = _bodies(m)
     guess = _first_guess(m)
-    origin, h, radius = _grid(m, guess)
+    origin, h, radius = _grid(m, guess, grid_max)
     # samples on the display triangles (not the merged mesh's: the face ids are the display's)
     disp = trimesh.Trimesh(np.asarray(positions, dtype=np.float64), np.asarray(indices, dtype=np.int64), process=False)
     if m.volume > 0 and disp.volume < 0:
         disp.invert()
     pts, tri_of, nrm, area = _samples(disp, max(h, guess / 4))
+    if bodies is not None:
+        # a triangle inside the bodies' union (two that touch or overlap) is not the
+        # part's surface: its samples say nothing of a wall (no value, no weight)
+        d = max(float(np.linalg.norm(m.extents)) * 1e-5, 1e-7)
+        inner = _in_union(bodies, disp.triangles_center + disp.face_normals * d)
+        keep = ~inner[tri_of]
+        pts, tri_of, nrm, area = pts[keep], tri_of[keep], nrm[keep], area[keep]
     diam = _ball(origin, h, radius, pts, nrm)
     # a triangle's own value: its samples' (one sample: its own), as a face's
     tri_t, tri_w = _grouped_quantile(tri_of, diam, area, len(disp.faces), FACE_QUANTILE)
@@ -289,7 +381,8 @@ def part_field(
             np.add.at(vt, indices[:, k], tri_t * tri_w)
             np.add.at(vw, indices[:, k], tri_w * (tri_t > 0))
         vertex_t = np.where(vw > 0, vt / np.maximum(vw, 1e-30), 0.0).astype(np.float32)
-    return PartField(origin, h, radius, m, tri_t.astype(np.float32), faces, vertex_t, nominal)
+    surface = m if bodies is None else _outside_faces(m, bodies)
+    return PartField(origin, h, radius, surface, tri_t.astype(np.float32), faces, vertex_t, nominal)
 
 
 REFINE_MAX = 50
@@ -297,14 +390,16 @@ REFINE_MAX = 50
 _NEIGHBOURS = np.array([(i, j, k) for i in (-1, 0, 1) for j in (-1, 0, 1) for k in (-1, 0, 1) if (i, j, k) != (0, 0, 0)], dtype=np.float64)
 
 
-def _deepest(pq: trimesh.proximity.ProximityQuery, mesh: trimesh.Trimesh, c: np.ndarray, h: float) -> tuple[np.ndarray, float]:
+def _deepest(pq: trimesh.proximity.ProximityQuery, field: PartField, c: np.ndarray) -> tuple[np.ndarray, float]:
     """from a grid point, the point nearby farthest from the surface (exact
-    distances, a pattern search down to h / 32): the centre of the largest sphere there"""
+    distances, a pattern search down to h / 32): the centre of the largest
+    sphere there. A step stays in the material (the grid's inside)"""
+    h = field.pitch
     best = float(pq.on_surface(c[None])[1][0])
     step = h
     while step > h / 32:
         cand = c + _NEIGHBOURS * step
-        cand = cand[mesh.contains(cand)]
+        cand = cand[_radius_at(field.origin, h, field.radius, cand) > 0]
         if len(cand):
             _, d, _ = pq.on_surface(cand)
             k = int(np.argmax(d))
@@ -313,6 +408,14 @@ def _deepest(pq: trimesh.proximity.ProximityQuery, mesh: trimesh.Trimesh, c: np.
                 continue
         step /= 2
     return c, best
+
+
+def grid_budgets(boxes: dict[int, float]) -> dict[int, int]:
+    """each part's share of MODEL_GRID_MAX by its box's volume (GRID_MIN to GRID_MAX)"""
+    total = sum(max(v, 0.0) for v in boxes.values())
+    if total <= 0:
+        return {k: GRID_MAX for k in boxes}
+    return {k: int(min(GRID_MAX, max(GRID_MIN, MODEL_GRID_MAX * max(v, 0.0) / total))) for k, v in boxes.items()}
 
 
 def spots(field: PartField, nominal: float, ratio: float) -> list[dict[str, Any]]:
@@ -330,7 +433,7 @@ def spots(field: PartField, nominal: float, ratio: float) -> list[dict[str, Any]
     for rank, k in enumerate(order):
         c, r = centres[k], None
         if rank < REFINE_MAX:
-            c, r = _deepest(pq, field.mesh, c, field.pitch)
+            c, r = _deepest(pq, field, c)
         else:
             r = float(pq.on_surface(c[None])[1][0])
         d = 2 * r

@@ -107,16 +107,15 @@ with nav_session() as n:
     c = wait_list("!c.rows.some(r => r.kind === 'thick')")
     assert gui_common.ctl(page, "判定の基準").locator("select").evaluate("s => s.options[s.selectedIndex].text") == "手で決める"
     assert "厚肉 一般部の 3.5 倍以上" in conditions(), conditions()
-    # the general wall given (1 mm): the plate (2) is thick too now. The STL's
-    # bodies only touch (a box, ribs and cylinders laid together, not one
-    # solid): the bosses stay their own places. The largest first, a boss's
+    # the general wall given (1 mm): the plate (2) is thick too now, and with
+    # the bosses on it one place (the STL's bodies only touch, a box, ribs and
+    # cylinders laid together: their union is the part). Its largest is a boss's
     set_number("厚肉 (一般部の倍)", 1.5)
     set_number("一般部 (mm・0 で自動)", 1)
     c = wait_list("c.rows.some(r => r.kind === 'thick') && !!document.querySelector('#check-panel .check-conditions')?.textContent.includes('一般部 1.0 mm')")
     rows = thick_rows(c)
-    assert len(rows) >= 2 and 5.9 <= rows[0]["value"] <= 6.0 + 1e-6, rows
+    assert len(rows) == 1 and 5.9 <= rows[0]["value"] <= 6.0 + 1e-6, rows
     assert abs(rows[0]["ratio"] - rows[0]["value"]) <= 0.01, ("the ratio to 1 mm", rows[0])
-    assert all(r["value"] >= 1.5 - 1e-6 and r["value"] <= rows[0]["value"] for r in rows), rows
     set_number("一般部 (mm・0 で自動)", 0)
     wait_list("c.rows.filter(r => r.kind === 'thick').length === 2")
     print("3 the ratio and the general wall")

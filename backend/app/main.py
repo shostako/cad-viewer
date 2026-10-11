@@ -265,11 +265,19 @@ def _thick_fields(entry: ModelEntry, closed: dict[int, str | None]) -> dict[int,
     fields = entry.extra.get("thick_fields")
     if fields is not None:
         return fields
+    import numpy as np
+
     from .meshpack import unpack_parts
-    from .thick import NotSolid, part_field
+    from .thick import NotSolid, grid_budgets, part_field
 
     header, parts = unpack_parts(entry.mesh_blob)
     ranges = {int(p["id"]): p.get("faceRanges") or [] for p in header["parts"]}
+    # one budget for the model's grids (they are kept): shared by the parts' sizes
+    boxes = {}
+    for part in parts:
+        pos = part["positions"].reshape(-1, 3)
+        boxes[int(part["id"])] = float(np.prod(pos.max(axis=0) - pos.min(axis=0))) if len(pos) else 0.0
+    budget = grid_budgets(boxes)
     fields = {}
     for part in parts:
         pid = int(part["id"])
@@ -277,7 +285,9 @@ def _thick_fields(entry: ModelEntry, closed: dict[int, str | None]) -> dict[int,
             fields[pid] = closed[pid]
             continue
         try:
-            fields[pid] = part_field(part["positions"], part["indices"], ranges.get(pid, []), trusted_closed=pid in closed)
+            fields[pid] = part_field(
+                part["positions"], part["indices"], ranges.get(pid, []), trusted_closed=pid in closed, grid_max=budget[pid]
+            )
         except NotSolid as e:
             fields[pid] = e.reason
         except Exception:

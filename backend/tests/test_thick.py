@@ -162,6 +162,86 @@ def test_a_mesh_part(client):
     assert np.all(np.abs(v - 3) <= 2 * p["pitch"]), (v.min(), v.max())
 
 
+def test_overlapping_bodies_are_their_union(client):
+    """an STL of two closed boxes laid over each other (x 0..20 and 10..30, both
+    20 x 2): the part is their union, a 30 x 20 x 2 plate. Its general wall is
+    2, and with 1 mm given it is all one place, a sphere 2 across (the crossings
+    of both together would make a void of the overlap: two places)"""
+    a = trimesh.creation.box(bounds=[[0, 0, 0], [20, 20, 2]])
+    b = trimesh.creation.box(bounds=[[10, 0, 0], [30, 20, 2]])
+    stl = trimesh.util.concatenate([a, b]).export(file_type="stl")
+    mid = _upload(client, "overlap.stl", stl)
+    (p,) = _thick(client, mid, ratio=1.5)
+    assert p["status"] == "ok" and abs(p["nominalAuto"] - 2) <= p["pitch"], p
+    (p,) = _thick(client, mid, ratio=1.5, nominal="0:1")
+    # measured again to the union's outside (the faces inside it are not the surface)
+    assert len(p["spots"]) == 1 and abs(p["spots"][0]["diameter"] - 2) <= 0.02, p["spots"]
+
+
+def test_bodies_overlapping_along_the_rays(client):
+    """two closed boxes one over the other, overlapping in height (z 0..3 and
+    1..4, both 20 x 20): their union is a 4 mm slab. Paired over both, a
+    column's crossings (0, 1, 3, 4) would make 1..3 a void, two 1 mm slabs; and
+    the faces inside the union (z 1 and 3) are not its surface: the place's
+    sphere is 4 across"""
+    a = trimesh.creation.box(bounds=[[0, 0, 0], [20, 20, 3]])
+    b = trimesh.creation.box(bounds=[[0, 0, 1], [20, 20, 4]])
+    mid = _upload(client, "stacked.stl", trimesh.util.concatenate([a, b]).export(file_type="stl"))
+    (p,) = _thick(client, mid, ratio=1.5)
+    assert p["status"] == "ok" and abs(p["nominalAuto"] - 4) <= p["pitch"], p
+    (p,) = _thick(client, mid, ratio=1.5, nominal="0:1")
+    assert len(p["spots"]) == 1 and abs(p["spots"][0]["diameter"] - 4) <= 0.02, p["spots"]
+
+
+def test_a_cavity_body_is_taken_away(client):
+    """an STL box 20 x 20 x 10 with a box turned inside out within it (a closed
+    void 10 x 10 x 6 in the middle): the walls round the void are 2 (top and
+    bottom) and 5 (the sides). The largest sphere is in a corner column, against
+    the two outer walls and the void's upright edge: 2 x 5√2 / (1 + √2) = 5.86
+    across. Filled (the void not taken away), a sphere 10 across would fit"""
+    outer = trimesh.creation.box(bounds=[[0, 0, 0], [20, 20, 10]])
+    void = trimesh.creation.box(bounds=[[5, 5, 2], [15, 15, 8]])
+    void.invert()
+    stl = trimesh.util.concatenate([outer, void]).export(file_type="stl")
+    mid = _upload(client, "void.stl", stl)
+    (p,) = _thick(client, mid, ratio=1.5, nominal="0:1")
+    assert p["status"] == "ok", p
+    biggest = max(s["diameter"] for s in p["spots"])
+    corner = 2 * 5 * 2**0.5 / (1 + 2**0.5)
+    assert abs(biggest - corner) <= 0.02, (biggest, corner)
+
+
+def test_the_model_grid_budget():
+    """the parts share one budget by their boxes' volumes, each between its least and its most"""
+    from app.thick import GRID_MAX, GRID_MIN, MODEL_GRID_MAX, grid_budgets
+
+    b = grid_budgets({0: 1000.0, 1: 3000.0, 2: 0.0})
+    assert b[1] == min(GRID_MAX, int(MODEL_GRID_MAX * 0.75)) and b[0] == min(GRID_MAX, int(MODEL_GRID_MAX * 0.25)), b
+    assert b[2] == GRID_MIN
+    many = grid_budgets({k: 1.0 for k in range(100)})
+    assert all(v == max(GRID_MIN, MODEL_GRID_MAX // 100) for v in many.values()), set(many.values())
+
+
+def test_the_model_budget_coarsens_the_grids(client, monkeypatch):
+    """a model's parts share its budget: with a small one, each part's grid
+    (its box over its pitch, as thick.py lays it) fits in its share"""
+    from app import thick
+
+    monkeypatch.setattr(thick, "MODEL_GRID_MAX", 400_000)
+    monkeypatch.setattr(thick, "GRID_MIN", 10_000)
+    mid = _upload(client, "mini_mold.step", (TESTDATA / "mini_mold.step").read_bytes()[:-1] + b"\n\n")
+    parts = _thick(client, mid)
+    assert parts and all(p["status"] == "ok" for p in parts), parts
+    # the four parts' boxes (make_step_assembly.py): plate 100 x 60 x 15, pins ⌀8 x 25, block 40 x 30 x 20
+    boxes = {0: (100, 60, 15), 1: (8, 8, 25), 2: (8, 8, 25), 3: (40, 30, 20)}
+    total = sum(a * b * c for a, b, c in boxes.values())
+    for p in parts:
+        size = np.array(boxes[p["id"]], dtype=float)
+        points = np.prod(np.ceil(size / p["pitch"]) + 5)
+        share = max(10_000, 400_000 * np.prod(size) / total)
+        assert points <= share * 1.01, (p["id"], points, share)
+
+
 def test_an_open_mesh_cannot_be_judged(client):
     """a box with one face gone: open, no values"""
     m = trimesh.creation.box(extents=(10, 10, 2))
