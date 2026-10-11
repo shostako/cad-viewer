@@ -81,6 +81,7 @@ import {
 } from './thickness'
 import { RecentFiles, filePicker, renderRecentRows, reopen, type RecentEntry } from './recent'
 import { PartTree } from './tree'
+import { startWebApp } from './webapp'
 import { Toolbar, type Mode } from './toolbar'
 import { THEME_CHOICES, onTheme, setThemeChoice, themeChoice, type ThemeChoice } from './theme'
 import { AxisTriad } from './triad'
@@ -3049,6 +3050,11 @@ async function openFile(): Promise<void> {
     return
   }
   pickerRefusals = 0
+  await openHandle(handle)
+}
+
+/** a file chosen in the picker (or handed to the installed Web version by the PC: webapp.ts): read, listed, opened */
+async function openHandle(handle: FileSystemFileHandle): Promise<void> {
   let file: File
   try {
     file = await handle.getFile()
@@ -3404,3 +3410,6 @@ fileInput.addEventListener('change', () => {
   if (file) void loadFile(file)
   fileInput.value = ''
 })
+
+// the Web version: offline, and files the PC opens with the installed app
+startWebApp((handle) => void openHandle(handle))

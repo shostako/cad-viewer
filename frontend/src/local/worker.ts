@@ -10,6 +10,7 @@ import { version } from '../../package.json'
 import { LocalBackend, type Answer } from './backend.ts'
 import { pyodideRenderer, type DrawingRenderer } from './drawing.ts'
 import { idbStore } from './idb.ts'
+import { opfsCache } from './meshcache.ts'
 
 /** OpenCASCADE, loaded on the first STEP/IGES (its 43 MB wasm is fetched then, and cached by the browser) */
 const occt = async () => {
@@ -35,7 +36,8 @@ const drawing: DrawingRenderer = (bytes, name) => {
   return renderer(bytes, name)
 }
 
-const backend = new LocalBackend(idbStore(), version, occt, drawing)
+// STEP/IGES loads kept in the origin's private file system (meshcache.ts): the second time, at once
+const backend = new LocalBackend(idbStore(), version, occt, drawing, typeof navigator.storage?.getDirectory === 'function' ? opfsCache() : null)
 
 self.onmessage = async (e: MessageEvent<{ id: number; method: string; path: string; body?: unknown; init?: { pyBase: string } }>) => {
   if (e.data.init) {

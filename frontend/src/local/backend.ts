@@ -17,6 +17,7 @@ import { BrepLoadError, loadBrep, type PartMesh } from './brep.ts'
 import { DrawingLoadError, type DrawingRenderer } from './drawing.ts'
 import { brepPartProperties } from './brepprops.ts'
 import { MeasureError, Measurer } from './measure.ts'
+import { cacheKey, type MeshCache } from './meshcache.ts'
 import { MESH_EXTS, loadMesh, MeshLoadError } from './meshload.ts'
 import { meshPartProperties, modelProps, type ModelProps } from './meshprops.ts'
 import { packBuffers, packParts } from './pack.ts'
@@ -24,6 +25,7 @@ import { projectedArea } from './projection.ts'
 import { gridBudgets, NotSolid, partField, spots, type PartField } from './thick.ts'
 import { vertexThickness, vertexThicknessBall } from './thickness.ts'
 import { displayMesh, type DisplayMesh } from './smooth.ts'
+import { parseMeshPack } from '../meshpack.ts'
 
 /** an answer: JSON, bytes or text, with its HTTP status */
 export type Answer =
@@ -58,6 +60,13 @@ interface Model {
   mesh?: DisplayMesh
   /** a B-rep's parts, with their shapes and face / edge / vertex maps (for measuring) */
   brep?: PartMesh[]
+  /** a B-rep from the load cache: its bytes, read again when a measurement or the volume needs the B-rep */
+  raw?: Uint8Array
+  brepLoading?: Promise<PartMesh[]>
+  /** a B-rep from the load cache: its display mesh, from the cached mesh.bin */
+  display?: DisplayPart[]
+  /** evicted or deleted (a B-rep read again after that is freed at once) */
+  dropped?: boolean
   properties?: ModelProps
   /** thickness.bin by method, the 厚肉 grids, thick.bin, the projected areas (kept once computed) */
   thickness?: Partial<Record<'ray' | 'ball', ArrayBuffer>>
@@ -107,16 +116,19 @@ export class LocalBackend {
   private readonly occtProvider: OcctProvider | null
   private occt: Promise<unknown> | null = null
   private readonly drawing: DrawingRenderer | null
+  private readonly cache: MeshCache | null
 
   /**
    * version: the app's (package.json's), for /api/health; occt: OpenCASCADE for
-   * STEP/IGES; drawing: the DXF renderer (drawing.ts). None: not opened
+   * STEP/IGES; drawing: the DXF renderer (drawing.ts). None: not opened.
+   * cache: where STEP/IGES loads are kept (meshcache.ts; none: read each time)
    */
-  constructor(sidecars: SidecarStore, version: string, occt: OcctProvider | null = null, drawing: DrawingRenderer | null = null) {
+  constructor(sidecars: SidecarStore, version: string, occt: OcctProvider | null = null, drawing: DrawingRenderer | null = null, cache: MeshCache | null = null) {
     this.sidecars = sidecars
     this.version = version
     this.occtProvider = occt
     this.drawing = drawing
+    this.cache = cache
   }
 
   /** path: from /api (with a query); body: a PUT's JSON, or an upload's { name, bytes } */
@@ -154,9 +166,14 @@ export class LocalBackend {
         return json(200, await this.properties(model))
       case 'POST measure': {
         if (model.format !== 'brep') return detail(422, 'measurement requires a B-rep model (STEP/IGES)')
-        const oc = await this.occt!
+        let oc: unknown, meshes: PartMesh[]
         try {
-          return json(200, new Measurer(oc, model.brep!).run(body))
+          ;[oc, meshes] = [await this.ensureOcct(), await this.brepOf(model)]
+        } catch (e) {
+          return detail(503, `OpenCASCADE を読み込めなかった: ${e instanceof Error ? e.message : String(e)}`)
+        }
+        try {
+          return json(200, new Measurer(oc, meshes).run(body))
         } catch (e) {
           if (e instanceof MeasureError) return detail(422, e.message)
           // OCCT's own exceptions arrive as numbers (a C++ exception's address)
@@ -210,11 +227,10 @@ export class LocalBackend {
   /** the model's /properties (kept once computed) */
   private async properties(model: Model): Promise<ModelProps> {
     if (model.format === 'brep') {
-      const oc = await this.occt!
-      model.properties ??= modelProps(
-        'brep',
-        model.brep!.map((m) => ({ id: m.part.id, name: m.part.name, ...brepPartProperties(oc, m.part.shape) })),
-      )
+      if (!model.properties) {
+        const [oc, meshes] = [await this.ensureOcct(), await this.brepOf(model)]
+        model.properties ??= modelProps('brep', meshes.map((m) => ({ id: m.part.id, name: m.part.name, ...brepPartProperties(oc, m.part.shape) })))
+      }
     } else {
       model.properties ??= modelProps('mesh', [{ id: 0, name: model.name, ...meshPartProperties(model.mesh!.positions, model.mesh!.indices) }])
     }
@@ -224,7 +240,10 @@ export class LocalBackend {
   /** the display mesh part by part (what mesh.bin sends) */
   private displayParts(model: Model): DisplayPart[] {
     if (model.format === 'brep') {
-      return model.brep!.map((m) => ({ id: m.part.id, positions: m.positions, normals: m.normals, indices: m.indices, faceRanges: m.faceRanges }))
+      if (model.brep) return model.brep.map((m) => ({ id: m.part.id, positions: m.positions, normals: m.normals, indices: m.indices, faceRanges: m.faceRanges }))
+      // from the load cache: the mesh.bin it keeps (the B-rep is not needed for this)
+      model.display ??= displayFromPack(model.blob)
+      return model.display
     }
     return [{ id: 0, positions: model.mesh!.positions, normals: model.mesh!.normals, indices: model.mesh!.indices, faceRanges: [] }]
   }
@@ -431,13 +450,51 @@ export class LocalBackend {
     }
   }
 
+  /** OpenCASCADE, loaded on the first need (a failed load is tried again next time) */
+  private async ensureOcct(): Promise<unknown> {
+    if (!this.occtProvider) throw new Error('no OpenCASCADE here')
+    try {
+      return await (this.occt ??= this.occtProvider())
+    } catch (e) {
+      this.occt = null
+      throw e
+    }
+  }
+
+  /** a B-rep model's parts with their shapes and maps: read again from its bytes after a cache hit (main._brep_meshes) */
+  private async brepOf(model: Model): Promise<PartMesh[]> {
+    if (model.brep) return model.brep
+    model.brepLoading ??= (async () => {
+      const oc = await this.ensureOcct()
+      const { meshes } = loadBrep(oc, model.raw!, model.name)
+      if (model.dropped) {
+        // gone while it was read: nothing keeps these
+        for (const m of meshes) for (const o of [m.faceMap, m.edgeMap, m.vertexMap, m.part.shape]) o?.delete?.()
+        throw new Error('model was closed')
+      }
+      model.brep = meshes
+      model.raw = undefined
+      return meshes
+    })().finally(() => {
+      model.brepLoading = undefined
+    })
+    return model.brepLoading
+  }
+
   private async uploadBrep(name: string, hash: string, bytes: Uint8Array): Promise<Answer> {
     if (!this.occtProvider) return notYet('STEP/IGES を開く')
+    // the load cache: the same file again, its display mesh at once (OpenCASCADE not needed yet)
+    const key = this.cache ? await cacheKey(hash, this.version) : ''
+    const hit = this.cache ? await this.cache.get(key).catch(() => null) : null
+    if (hit) {
+      const model: Model = { id: newId(), name, format: 'brep', hash, meta: hit.meta, blob: hit.blob, raw: bytes }
+      this.keep(model)
+      return json(200, { id: model.id, name, format: 'brep', hash, cached: true, ...hit.meta })
+    }
     let oc: unknown
     try {
-      oc = await (this.occt ??= this.occtProvider())
+      oc = await this.ensureOcct()
     } catch (e) {
-      this.occt = null // try again next time
       return detail(503, `OpenCASCADE を読み込めなかった: ${e instanceof Error ? e.message : String(e)}`)
     }
     const info: { fileUnit?: string | null } = {}
@@ -451,6 +508,11 @@ export class LocalBackend {
     }
     const { blob, meta } = packParts(loaded.meshes, loaded.tree, loaded.deflection)
     meta.fileUnit = info.fileUnit ?? null
+    try {
+      await this.cache?.put(key, { blob: blob.slice(0), meta })
+    } catch {
+      // no cache this time: the file is read again next time
+    }
     const model: Model = { id: newId(), name, format: 'brep', hash, meta, blob, brep: loaded.meshes }
     this.keep(model)
     return json(200, { id: model.id, name, format: 'brep', hash, cached: false, ...meta })
@@ -465,9 +527,23 @@ export class LocalBackend {
   /** a model gone (evicted or deleted): its OCCT objects freed too (they live in the WebAssembly heap) */
   private drop(model: Model): void {
     this.models.delete(model.id)
+    model.dropped = true
     for (const m of model.brep ?? []) {
       for (const o of [m.faceMap, m.edgeMap, m.vertexMap, m.part.shape]) o?.delete?.()
     }
     model.brep = undefined
   }
+}
+
+/** a cached B-rep load's display mesh, part by part, from its mesh.bin (what loadBrep's meshes would give) */
+function displayFromPack(blob: ArrayBuffer): DisplayPart[] {
+  const { header, buffers } = parseMeshPack(blob)
+  const parts = header.parts as { id: number; faceRanges: DisplayPart['faceRanges'] }[]
+  return parts.map((p) => ({
+    id: p.id,
+    positions: buffers[`p${p.id}:positions`] as Float32Array,
+    normals: buffers[`p${p.id}:normals`] as Float32Array,
+    indices: buffers[`p${p.id}:indices`] as Uint32Array,
+    faceRanges: p.faceRanges,
+  }))
 }

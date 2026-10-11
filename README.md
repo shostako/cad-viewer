@@ -51,13 +51,16 @@ WSL も Python も無い Windows の PC で使うためのもの。GitHub の [R
 - DWG は、ODA File Converter を既定の場所（`C:\Program Files\ODA` の下）に入れれば開ける。
 - 作り方: `.github/workflows/windows.yml`。版のタグを push すると、Windows の実行機で固め（PyInstaller）、インストーラーにし（Inno Setup）、固めたものとインストールしたものを試してから Releases に載せる。`packaging/windows/` を触る PR でも同じものを作って試す（インストーラーは実行の Artifacts に残る）。手元で作るときの手順は `packaging/windows/cad-viewer.spec` と `cad-viewer.iss` の先頭にある。
 
-## Web 版（作っている途中）
+## Web 版
 
 ブラウザだけで動く版。backend が無く、開いたファイルはブラウザのタブの中で読む。どこにも送らない。計画は `docs/designs/web-version.md`。
 
 - 開ける形式は STEP・IGES・STL・OBJ・PLY・OFF・3MF。真値の計測（距離・稜線・面・頂点）と体積・重量、肉厚のヒートマップ・厚肉・投影面積も、手元の版と同じ計算で出す。
 - 2D 図面（DXF）は、手元の版と同じ絵で開く（backend の図面の Python をブラウザの中の Python（Pyodide）でそのまま動かす）。初めて図面を開くときに、その一式（20 MB ほど、送るときは gzip で 13 MB）を読み込む。DWG は開けない（DXF に書き出して開く）。日本語の字は、今は四角になる（#90。手元の版も、フォントが無いと同じ）。
 - STEP/IGES は、ブラウザの中の OpenCASCADE（WebAssembly）で開く。初めて STEP/IGES を開くときに、その部品（12 MB ほど）を読み込む。2 回目からはブラウザが覚えている。
+- 一度開いた STEP/IGES は、表示の形をブラウザの中（OPFS）に残す。同じファイルの 2 回目は読み直さずにすぐ出る（計測と体積は、そのとき B-rep を読み直す）。残すのは最後の 40 ファイル。
+- ネットが無くても使える。一度開いたページと、一度使った部品（OpenCASCADE、図面の Python）を、ブラウザ（Service Worker）が覚えている。
+- Chrome・Edge では、アプリとして入れられる（アドレスバーの「インストール」）。入れると、PC の STEP・IGES・STL・OBJ・3MF・PLY・OFF・DXF を「プログラムから開く」でこのアプリで開ける（最近開いたファイルにも入る）。
 - 計測・注記はブラウザの中（IndexedDB）に、ファイルの中身ごとに保存する。手元の版のサイドカーとは別。
 - ヘルプ（?）の下に「Web 版」と出る。
 - 作り方: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき（図面用の Python 一式を `frontend/web-public/py/` に取ってくる。版と sha256 は `frontend/scripts/web-assets.mjs` で固定）、静的なファイルとしてどこからでも配れる。手元で開くには `npm run dev:web`。

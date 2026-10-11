@@ -163,6 +163,20 @@ jobs:
           echo "E2E (web ${SHARD}/${SHARDS}): ${passed} / ${#scripts[@]} passed (of ${#all[@]} scripts)"
           [ "${#scripts[@]}" -gt 0 ] && [ "$passed" -eq "${#scripts[@]}" ]
 
+      # the built Web version as an app (e2e/test_web_offline.py, which serves
+      # the build itself and takes it down for "offline"): the service worker,
+      # offline, the load cache, a file the PC opens with it. Only the build has
+      # the service worker (not Vite's dev server above). In the first job only
+      - name: E2E (web build, offline)
+        if: always() && matrix.shard == 0
+        env:
+          CAD_VIEWER_ENGINE: local
+          CAD_VIEWER_WEB_BUILD: frontend/dist-web
+          PYTHONUNBUFFERED: '1'
+        run: |
+          (cd frontend && npx vite build --mode web > /tmp/vite-build.log 2>&1) || { tail -n 40 /tmp/vite-build.log; exit 1; }
+          DEBUG=pw:api timeout -s INT -k 30 600 backend/.venv/bin/python e2e/test_web_offline.py 2>/tmp/pw-api.log || { rc=$?; tail -n 120 /tmp/pw-api.log; exit $rc; }
+
       - name: Upload screenshots
         if: failure()
         uses: actions/upload-artifact@v4
