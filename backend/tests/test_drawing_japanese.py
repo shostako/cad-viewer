@@ -169,3 +169,11 @@ def test_only_what_is_drawn_counts(japanese_font):
         "ATTR": japanese_font,
         "UNUSED": "msgothic.ttc",
     }
+
+
+def test_ezdxf_keeps_the_lookups_drawing_forgets():
+    """drawing.forget_font_lookups clears ezdxf's own memos by name: an ezdxf that renames
+    them fails here (the drawings would then keep a font added late out of sight)"""
+    for owner, name in drawing.FONT_LOOKUPS:
+        memo = getattr(getattr(fonts, owner, None), name, None)
+        assert isinstance(memo, dict), f"ezdxf.fonts.fonts.{owner}.{name}"

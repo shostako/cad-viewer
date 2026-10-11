@@ -29,6 +29,7 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 from typing import Any
 
 import ezdxf
@@ -87,29 +88,38 @@ CJK_FONTS = (
 )
 
 _extra_fonts_added = False
+# the routes run in threads: the fonts added once, by one of them
+_fonts_lock = threading.Lock()
 
 
 def _add_extra_fonts() -> None:
     """CAD_VIEWER_FONT_DIRS' fonts beside the PC's (once)"""
     global _extra_fonts_added
-    if _extra_fonts_added:
-        return
-    _extra_fonts_added = True
-    dirs = [d for d in os.environ.get("CAD_VIEWER_FONT_DIRS", "").split(os.pathsep) if d and os.path.isdir(d)]
-    if dirs:
-        fonts.font_manager.build(dirs, support_dirs=False)
-        forget_font_lookups()
+    with _fonts_lock:
+        if _extra_fonts_added:
+            return
+        _extra_fonts_added = True
+        dirs = [d for d in os.environ.get("CAD_VIEWER_FONT_DIRS", "").split(os.pathsep) if d and os.path.isdir(d)]
+        if dirs:
+            fonts.font_manager.build(dirs, support_dirs=False)
+            forget_font_lookups()
+
+
+# what ezdxf remembers of its font lookups (ezdxf 1.4.4's own names, pinned in
+# requirements.lock): a family not found, a missing font's stand-in (DejaVu Sans) kept
+# under that font's name, the glyph renderers by font file. tests/test_drawing_japanese.py
+# checks they are there (an ezdxf upgrade that renames them fails it, not a drawing)
+FONT_LOOKUPS = (("font_manager", "_match_cache"), ("font_manager", "_loaded_ttf_fonts"), ("_CachedFont", "_glyph_caches"))
 
 
 def forget_font_lookups() -> None:
     """after fonts are added (here, and the Web version's Japanese font: src/local/drawing.ts):
-    what ezdxf remembers of the lookups made before them forgotten. It keeps a family not found
-    as not found, and a missing font's stand-in (DejaVu Sans) under that font's name. ezdxf
-    1.4.4's own (pinned in requirements.lock): check them on an upgrade"""
-    fm = fonts.font_manager
-    fm._match_cache.clear()
-    fm._loaded_ttf_fonts.clear()
-    fonts._CachedFont._glyph_caches.clear()
+    what ezdxf remembers of the lookups made before them forgotten (one not there: nothing to
+    forget)"""
+    for owner, name in FONT_LOOKUPS:
+        memo = getattr(getattr(fonts, owner, None), name, None)
+        if memo is not None:
+            memo.clear()
 
 
 def _drawn_entities(doc):
