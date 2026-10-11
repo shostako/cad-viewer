@@ -35,6 +35,8 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
+# Playwright's own glob -> regex (not a public API: playwright is pinned to 1.58.0
+# in CLAUDE.md and CI; on an upgrade, check it is still there)
 from playwright._impl._glob import glob_to_regex_pattern
 
 LOCAL = os.environ.get("CAD_VIEWER_ENGINE", "http") == "local"
@@ -44,13 +46,15 @@ _HOOK = r"""
   if (window.__cadEngineNet) return
   const st = { routes: [], decisions: {}, observing: false }
   window.__cadEngineNetState = st
-  // the routes a script set before this page loaded (page.goto after net.route)
-  window.__cadEngineRoutesCall().then((r) => {
+  // the routes a script set before this page loaded (page.goto after net.route);
+  // a request waits for them (one made at the page's start would slip past otherwise)
+  st.ready = window.__cadEngineRoutesCall().then((r) => {
     st.routes = r.routes
     st.observing = r.observing
   })
   window.__cadEngineNet = {
     async route(req) {
+      await st.ready
       if (!st.routes.some((re) => new RegExp(re).test(req.url))) return { action: 'continue' }
       let r = await window.__cadEngineRouteCall(req)
       while (r.pending) {
