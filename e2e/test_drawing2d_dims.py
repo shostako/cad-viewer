@@ -37,6 +37,7 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import TimeoutError as PlaywrightTimeout
 from playwright.sync_api import sync_playwright
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -111,7 +112,7 @@ try:
         errors = []
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-        page.route(
+        Net.of(page).route(
             "**/sidecar",
             lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {"saved": True}),
         )

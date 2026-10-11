@@ -42,6 +42,8 @@ from pathlib import Path
 from PIL import Image, ImageChops
 from playwright.sync_api import sync_playwright
 import gui_common
+import engine_net
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -392,7 +394,7 @@ class Nav:
         """Keep sidecars in the page: the shared backend may hold measures on
         mini_mold from other scripts, whose orange markers would be drawn into
         the canvas and whose rows would fill the measure list."""
-        self.page.route(
+        Net.of(self.page).route(
             "**/sidecar",
             lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
         )
@@ -542,14 +544,9 @@ def put_sidecar(page, path, entries):
     The sidecar is keyed by the file's content hash, so the next load of the
     same bytes restores exactly these entries. The backend stores any JSON.
     """
-    r = page.request.post(
-        f"{BASE_URL}/api/models",
-        multipart={"file": {"name": Path(path).name, "mimeType": "application/octet-stream",
-                            "buffer": Path(path).read_bytes()}},
-        timeout=120000,
-    )
+    r = engine_net.upload(page, path)
     assert r.ok, ("upload", r.status, r.text())
-    r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": entries})
+    r = engine_net.api(page, "PUT", f"/api/models/{r.json()['id']}/sidecar", {"version": 1, "entries": entries})
     assert r.ok, ("put sidecar", r.status, r.text())
 
 

@@ -23,6 +23,7 @@ from PIL import Image
 
 import gui_common
 from nav_common import nav_session
+from engine_net import Net
 
 SCENE = (0x1D, 0x21, 0x26)
 
@@ -94,7 +95,7 @@ with nav_session() as n:
     def hold(route):
         held.append(route)
 
-    page.route("**/thickness.bin*", hold)
+    Net.of(page).route("**/thickness.bin*", hold)
     gui_common.ctl(page, "ヒートマップ").locator("input").click()
     page.mouse.move(5, 795)
     for _ in range(50):
@@ -104,7 +105,7 @@ with nav_session() as n:
     assert held, "4 the heatmap asked for no values"
     page.wait_for_timeout(2000)  # asleep again
     f0 = frames()
-    page.unroute("**/thickness.bin*")
+    Net.of(page).unroute("**/thickness.bin*")
     held[0].continue_()
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚ヒートマップ表示中')", timeout=30000)
     page.wait_for_timeout(600)
@@ -123,7 +124,7 @@ with nav_session() as n:
 
     # ---- 6. a measurement whose answer lands by itself: its line is drawn at once
     held.clear()
-    page.route("**/measure", hold)
+    Net.of(page).route("**/measure", hold)
     gui_common.set_mode(page, "計測")
     for q in ((50, 30, 35), (90, 10, 15)):
         page.mouse.click(*n.project(q))
@@ -136,7 +137,7 @@ with nav_session() as n:
     page.mouse.move(5, 795)
     page.wait_for_timeout(2000)  # asleep again
     f0 = frames()
-    page.unroute("**/measure")
+    Net.of(page).unroute("**/measure")
     for r in held:
         r.continue_()
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('距離')", timeout=15000)

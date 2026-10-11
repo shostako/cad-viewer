@@ -54,9 +54,10 @@ export const httpEngine: Engine = {
 /** no answer at all (the backend is not there, the request was cut) */
 export class EngineUnreachable extends Error {}
 
-/** the Web version's (local/client.ts), loaded on its first use; not in the checkout's build at all */
+/** the Web version's (local/client.ts), loaded at the start (small; its Worker comes with the first request); not in the checkout's build at all */
 function lazyLocal(): Engine {
-  const load = () => import('./local/client.ts').then((m) => m.localEngine)
+  const loaded = import('./local/client.ts').then((m) => m.localEngine)
+  const load = () => loaded
   return {
     fetch: async (path, init) => (await load()).fetch(path, init),
     upload: async (file, onSent) => (await load()).upload(file, onSent),

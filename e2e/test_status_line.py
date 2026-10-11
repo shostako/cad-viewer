@@ -23,6 +23,7 @@ import tempfile
 from pathlib import Path
 
 from nav_common import BASE_URL, nav_session
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 MOLD = TESTDATA / "mini_mold.step"
@@ -76,7 +77,7 @@ with nav_session() as n:
         mold.write_bytes(MOLD.read_bytes())
         # the first load, its mesh held: nothing on screen yet, the empty panel stays
         held = []
-        page.route("**/mesh.bin", lambda r: held.append(r))
+        Net.of(page).route("**/mesh.bin", lambda r: held.append(r))
         page.set_input_files("#file-input", str(mold))
         for _ in range(100):
             if held:
@@ -85,7 +86,7 @@ with nav_session() as n:
         assert held, "the mesh was never asked for"
         page.wait_for_timeout(300)
         assert_empty_panel("loading the first file")
-        page.unroute("**/mesh.bin")
+        Net.of(page).unroute("**/mesh.bin")
         held[0].continue_()
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('mini_mold.step — ')", timeout=60000)
         n.settle()
@@ -129,10 +130,10 @@ with nav_session() as n:
 
         def fail_and_check(tag):
             """uploaded, then the mesh never comes: the old content is gone, the panel is the empty one"""
-            page.route("**/mesh.bin", lambda r: r.abort())
+            Net.of(page).route("**/mesh.bin", lambda r: r.abort())
             page.set_input_files("#file-input", str(other))
             page.wait_for_function("document.querySelector('#hud-info').textContent.startsWith('エラー:')", timeout=30000)
-            page.unroute("**/mesh.bin")
+            Net.of(page).unroute("**/mesh.bin")
             page.wait_for_timeout(300)
             assert_empty_panel(tag)
             page.keyboard.press("Escape")

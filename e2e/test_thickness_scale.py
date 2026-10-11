@@ -28,6 +28,7 @@ from playwright.sync_api import sync_playwright
 
 from draft_cases import F_DRAFT, FTOP, XW, YW, frustum_stl
 from nav_common import BASE_URL, STEP_SRC, TESTDATA, Nav
+from engine_net import Net
 
 STL = str(TESTDATA / "ribbed_plate.stl")
 STEP = str(STEP_SRC)
@@ -154,7 +155,7 @@ def main():
             page.on("pageerror", lambda e: nav.errors.append(str(e)))
             page.on("console", lambda m: nav.errors.append(m.text) if m.type == "error" else None)
             # sidecars stay in the page (from before the first load)
-            page.route(
+            Net.of(page).route(
                 "**/sidecar",
                 lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
             )

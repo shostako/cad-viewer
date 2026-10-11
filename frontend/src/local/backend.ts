@@ -103,7 +103,7 @@ export class LocalBackend {
     const model = this.models.get(parts[2])
     if (method === 'DELETE' && parts.length === 3) {
       if (!model) return detail(404, 'model not found')
-      this.models.delete(model.id)
+      this.drop(model)
       return json(200, { deleted: model.id })
     }
     if (!model) return detail(404, 'model not found')
@@ -231,15 +231,18 @@ export class LocalBackend {
     return json(200, { id: model.id, name, format: 'brep', hash, cached: false, ...meta })
   }
 
-  /** a new model, the least recently used ones dropped past MAX_MODELS (their OCCT objects freed) */
+  /** a new model, the least recently used ones dropped past MAX_MODELS */
   private keep(model: Model): void {
     this.models.set(model.id, model)
-    while (this.models.size > MAX_MODELS) {
-      const old = this.models.values().next().value!
-      this.models.delete(old.id)
-      for (const m of old.brep ?? []) {
-        for (const o of [m.faceMap, m.edgeMap, m.vertexMap, m.part.shape]) o?.delete?.()
-      }
+    while (this.models.size > MAX_MODELS) this.drop(this.models.values().next().value!)
+  }
+
+  /** a model gone (evicted or deleted): its OCCT objects freed too (they live in the WebAssembly heap) */
+  private drop(model: Model): void {
+    this.models.delete(model.id)
+    for (const m of model.brep ?? []) {
+      for (const o of [m.faceMap, m.edgeMap, m.vertexMap, m.part.shape]) o?.delete?.()
     }
+    model.brep = undefined
   }
 }

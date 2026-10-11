@@ -38,6 +38,7 @@ import tempfile
 from PIL import Image
 
 from nav_common import BG, DXF, STEP_SRC, SURFACE, classic_basis, cross, nav_session, norm, sub
+from engine_net import Net
 
 # The shared mini_mold.step: every sidecar request is answered in the page
 # (see run()), so other scripts' notes on it never show here.
@@ -196,7 +197,7 @@ def run(parts: str) -> None:
             # The shared backend may hold measure markers on mini_mold from other
             # runs; they would be drawn over the sample points. Saves stay in the
             # page too (step c measures): nothing is written to the backend.
-            page.route(
+            Net.of(page).route(
                 "**/sidecar",
                 lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
             )
@@ -556,7 +557,7 @@ def run(parts: str) -> None:
                 # route until the colouring is on (a timed stall ran out on the slow CI
                 # runner before the check), then let through.
                 held_props = []
-                page.route("**/properties", lambda r: held_props.append(r))
+                Net.of(page).route("**/properties", lambda r: held_props.append(r))
                 nav.load(OPEN, props="unheld")  # the route above holds the values
                 click_button("等角")
                 page.keyboard.press("f")
@@ -565,7 +566,7 @@ def run(parts: str) -> None:
                 page.wait_for_timeout(300)
                 assert held_props, "b6 /properties was not requested"
                 assert "緑と青が逆" not in legend(), ("b6 note before /properties answered", legend())
-                page.unroute("**/properties")
+                Net.of(page).unroute("**/properties")
                 for r in held_props:
                     r.continue_()
                 page.wait_for_function(
@@ -655,7 +656,7 @@ def run(parts: str) -> None:
 
                 # c2-c4. a held thickness request, overtaken by the draft, is dropped
                 held = []
-                page.route(THICK_RE, lambda r: held.append(r))
+                Net.of(page).route(THICK_RE, lambda r: held.append(r))
                 toggle("ヒートマップ", True)
                 page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚計算中')")
                 for _ in range(50):
@@ -667,9 +668,9 @@ def run(parts: str) -> None:
                 assert not checked("ヒートマップ"), "c3 the draft turns the heatmap off"
                 summary_line()
                 expect({"TOP": TOP}, {"TOP": "ok"}, "c3")
-                with page.expect_request_finished(lambda r: "thickness.bin" in r.url, timeout=60000):
+                with Net.of(page).expect_request_finished(lambda r: "thickness.bin" in r.url, timeout=60000):
                     held[0].continue_()
-                page.unroute(THICK_RE)
+                Net.of(page).unroute(THICK_RE)
                 page.wait_for_timeout(300)
                 settle()
                 expect({"TOP": TOP}, {"TOP": "ok"}, "c4 late thickness response ignored")
@@ -678,7 +679,7 @@ def run(parts: str) -> None:
 
                 # c5. a late thickness error after the draft took over is dropped too
                 held2 = []
-                page.route(THICK_RE, lambda r: held2.append(r))
+                Net.of(page).route(THICK_RE, lambda r: held2.append(r))
                 toggle("ヒートマップ", True)
                 assert not checked("色分け") and not legend_shown(), "c5 the heatmap turns the draft off"
                 page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚計算中')")
@@ -689,11 +690,11 @@ def run(parts: str) -> None:
                 assert held2, "thickness request not seen"
                 toggle("色分け", True)
                 n_err = len(nav.errors)
-                with page.expect_event("requestfailed", lambda r: "thickness.bin" in r.url):
+                with Net.of(page).expect_event("requestfailed", lambda r: "thickness.bin" in r.url):
                     held2[0].abort()
                 page.wait_for_timeout(300)
                 settle()
-                page.unroute(THICK_RE)
+                Net.of(page).unroute(THICK_RE)
                 # the aborted request logs "Failed to load resource": expected here only
                 nav.errors[n_err:] = [e for e in nav.errors[n_err:] if "Failed to load resource" not in e]
                 summary_line()
@@ -743,7 +744,7 @@ def run(parts: str) -> None:
                 meth = ctl("方式").locator("select")
                 meth.select_option(label="ローリングボール法")  # heatmap off: nothing fetched
                 held3 = []
-                page.route(THICK_RE, lambda r: held3.append(r))
+                Net.of(page).route(THICK_RE, lambda r: held3.append(r))
                 toggle("ヒートマップ", True)
                 page.wait_for_function("document.querySelector('#hud-info').textContent.includes('ボール法')")
                 for _ in range(50):
@@ -754,11 +755,11 @@ def run(parts: str) -> None:
                 meth.select_option(label="レイ法")
                 page.wait_for_function("document.querySelector('#hud-info').textContent.includes('肉厚ヒートマップ表示中（レイ法')")
                 n_err = len(nav.errors)
-                with page.expect_event("requestfailed", lambda r: "thickness.bin" in r.url):
+                with Net.of(page).expect_event("requestfailed", lambda r: "thickness.bin" in r.url):
                     held3[0].abort()
                 page.wait_for_timeout(300)
                 settle()
-                page.unroute(THICK_RE)
+                Net.of(page).unroute(THICK_RE)
                 nav.errors[n_err:] = [e for e in nav.errors[n_err:] if "Failed to load resource" not in e]
                 assert "エラー" not in hud() and "レイ法" in hud(), ("c12 late failure of the old 方式", hud())
                 assert checked("ヒートマップ"), "c12 the heatmap must stay on"
@@ -786,7 +787,7 @@ def run(parts: str) -> None:
                 # d2. ticked while the mesh is still on its way: nothing to colour yet,
                 # so the box snaps back and the model arrives uncoloured
                 held_mesh = []
-                page.route("**/mesh.bin", lambda r: held_mesh.append(r))
+                Net.of(page).route("**/mesh.bin", lambda r: held_mesh.append(r))
                 page.set_input_files("#file-input", STEP)
                 for _ in range(300):
                     if held_mesh:
@@ -798,7 +799,7 @@ def run(parts: str) -> None:
                 assert not checked("色分け"), "d2 ticked while loading"
                 assert not legend_shown()
                 held_mesh[0].continue_()
-                page.unroute("**/mesh.bin")
+                Net.of(page).unroute("**/mesh.bin")
                 page.wait_for_function(
                     "document.querySelector('#hud-info').textContent.includes('三角形')"
                     " && document.querySelector('#hud-info').textContent.includes('mini_mold.step')",

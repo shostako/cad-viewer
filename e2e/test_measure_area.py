@@ -24,6 +24,7 @@ from pathlib import Path
 
 import gui_common
 from nav_common import TESTDATA, empty_sidecar, nav_session, put_sidecar
+from engine_net import Net
 
 DEG = math.pi / 180
 BOSS_TUBE = 6 - math.tan(2 * DEG) + 1 / math.cos(2 * DEG)
@@ -175,7 +176,7 @@ with nav_session() as n:
         else:
             route.continue_()
 
-    page.route("**/api/models/*/measure", hold_face_info)
+    Net.of(page).route("**/api/models/*/measure", hold_face_info)
     before = len(rows())
     click((8, 8, 15), "face")
     for _ in range(50):
@@ -189,7 +190,7 @@ with nav_session() as n:
     wait_hud(f"長さ {f3(100)}）")
     for r_ in held:
         r_.continue_()
-    page.unroute("**/api/models/*/measure")
+    Net.of(page).unroute("**/api/models/*/measure")
     page.wait_for_timeout(1500)
     assert f"長さ {f3(100)}）" in hud() and "面積" not in hud(), ("the late face answer landed on the edge", hud())
     page.keyboard.press("Enter")

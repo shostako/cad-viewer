@@ -22,6 +22,7 @@ import tempfile
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright
+from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -46,7 +47,7 @@ with sync_playwright() as p:
     page.goto(BASE_URL)
     page.wait_for_load_state("networkidle")
     # sidecars stay in the page: nothing reaches the shared backend's files
-    page.route(
+    Net.of(page).route(
         "**/sidecar",
         lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
     )
@@ -84,7 +85,7 @@ with sync_playwright() as p:
 
     def held_requests(url, method, store):
         """hold the requests to url with this method in store (the others go on)"""
-        page.route(url, lambda r: store.append(r) if r.request.method == method else r.continue_())
+        Net.of(page).route(url, lambda r: store.append(r) if r.request.method == method else r.continue_())
 
     def wait_held(store, n=1):
         for _ in range(200):
@@ -121,7 +122,7 @@ with sync_playwright() as p:
     # the request is held: the file is going up or the backend has it (not more)
     assert c["steps"]["表示の準備"] == "" and "active" in (c["steps"]["送信"] + c["steps"]["形状の変換"]), c
     assert "読み込み中" in hud()
-    page.unroute("**/api/models")
+    Net.of(page).unroute("**/api/models")
     posts[0].continue_()
     wait_held(meshes)
     wait_steps("表示の準備")
@@ -129,7 +130,7 @@ with sync_playwright() as p:
     print("1 preparing", c)
     assert c["steps"] == {"送信": "done", "形状の変換": "done", "表示の準備": "active"}, c
     assert c["moving"], "1 a moving bar after the upload"
-    page.unroute("**/mesh.bin")
+    Net.of(page).unroute("**/mesh.bin")
     meshes[0].continue_()
     wait_until("document.querySelector('#hud-info').textContent.includes('三角形')")
     assert not card()["shown"], "1 the card goes with the model on screen"
@@ -143,7 +144,7 @@ with sync_playwright() as p:
     c = card()
     print("2 second load", c)
     assert c["shown"] and c["file"] == f"ribbed_plate.stl（{kb(STL)}）" and c["steps"]["表示の準備"] == "active", c
-    page.unroute("**/mesh.bin")
+    Net.of(page).unroute("**/mesh.bin")
     meshes[0].continue_()
     wait_until(
         "document.querySelector('#hud-info').textContent.includes('三角形')"
@@ -163,7 +164,7 @@ with sync_playwright() as p:
             else:
                 r.continue_()
 
-        page.route("**/api/models", hold_first_post)
+        Net.of(page).route("**/api/models", hold_first_post)
         held_requests("**/mesh.bin", "GET", meshes)
         page.set_input_files("#file-input", STEP)  # A
         wait_held(first_post)
@@ -171,7 +172,7 @@ with sync_playwright() as p:
         wait_held(meshes)
         wait_steps("表示の準備")
         assert "ribbed_plate.stl" in card()["file"]
-        with page.expect_event("requestfinished" if release == "continue" else "requestfailed",
+        with Net.of(page).expect_event("requestfinished" if release == "continue" else "requestfailed",
                                lambda q: q.method == "POST"):
             first_post[0].continue_() if release == "continue" else first_post[0].abort()
         page.wait_for_timeout(300)
@@ -180,8 +181,8 @@ with sync_playwright() as p:
         assert c["shown"] and not c["failed"] and "ribbed_plate.stl" in c["file"], (tag, "A on B's card", c)
         assert c["steps"]["表示の準備"] == "active", (tag, "A moved B's step", c)
         assert "エラー" not in hud(), hud()
-        page.unroute("**/api/models")
-        page.unroute("**/mesh.bin")
+        Net.of(page).unroute("**/api/models")
+        Net.of(page).unroute("**/mesh.bin")
         meshes[0].continue_()
         wait_until(
             "document.querySelector('#hud-info').textContent.includes('三角形')"
@@ -195,11 +196,11 @@ with sync_playwright() as p:
     # ---- 4. failures: the reason in plain words, the backend's message behind 詳細を見る
     def fail_with(path, reason_has, detail_has=None, route=None):
         if route:
-            page.route("**/api/models", route)
+            Net.of(page).route("**/api/models", route)
         page.set_input_files("#file-input", path)
         wait_until("document.querySelector('#load-card').classList.contains('failed')")
         if route:
-            page.unroute("**/api/models")
+            Net.of(page).unroute("**/api/models")
         c = card()
         print("4", os.path.basename(path), c["reason"])
         assert c["shown"] and c["title"] == "ファイルを開けなかった" and c["file"] == os.path.basename(path), c
@@ -303,7 +304,7 @@ with sync_playwright() as p:
     page.set_input_files("#file-input", STL)
     wait_held(meshes)
     assert not centred_left_of_panel("#load-card") and above_panel("#load-card"), "6 the loading card under the panel"
-    page.unroute("**/mesh.bin")
+    Net.of(page).unroute("**/mesh.bin")
     meshes[0].continue_()
     wait_until("document.querySelector('#hud-info').textContent.includes('三角形')")
     page.goto(BASE_URL)

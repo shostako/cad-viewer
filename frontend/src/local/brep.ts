@@ -431,15 +431,19 @@ export function tessellatePart(oc: OC, part: BrepPart, linDeflection: number, an
   const segs: number[] = []
   const edgeRanges: PartMesh['edgeRanges'] = []
   let segOffset = 0
-  for (let ei = 1; ei <= edgeMap.Size(); ei++) {
-    const edge = oc.TopoDS.Edge(edgeMap.FindKey(ei))
-    let pl = edgePolyline(oc, edge, ancestors)
-    if (pl === null && faceCount(edge, ancestors) === 0) pl = curvePolyline(oc, edge, linDeflection, angDeflection)
-    if (pl === null || pl.length < 6) continue
-    const n = pl.length / 3
-    for (let k = 0; k + 1 < n; k++) segs.push(pl[3 * k], pl[3 * k + 1], pl[3 * k + 2], pl[3 * k + 3], pl[3 * k + 4], pl[3 * k + 5])
-    edgeRanges.push({ edgeId: ei, segStart: segOffset, segCount: n - 1 })
-    segOffset += n - 1
+  try {
+    for (let ei = 1; ei <= edgeMap.Size(); ei++) {
+      const edge = oc.TopoDS.Edge(edgeMap.FindKey(ei))
+      let pl = edgePolyline(oc, edge, ancestors)
+      if (pl === null && faceCount(edge, ancestors) === 0) pl = curvePolyline(oc, edge, linDeflection, angDeflection)
+      if (pl === null || pl.length < 6) continue
+      const n = pl.length / 3
+      for (let k = 0; k + 1 < n; k++) segs.push(pl[3 * k], pl[3 * k + 1], pl[3 * k + 2], pl[3 * k + 3], pl[3 * k + 4], pl[3 * k + 5])
+      edgeRanges.push({ edgeId: ei, segStart: segOffset, segCount: n - 1 })
+      segOffset += n - 1
+    }
+  } finally {
+    ancestors.delete() // only the edge loop needs it (the face / edge / vertex maps are kept)
   }
 
   // vertices: the B-rep's exact points (snap targets)

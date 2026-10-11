@@ -159,4 +159,6 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - **テストは本番のデータ置き場に書かない。** pytest は `backend/tests/conftest.py` がセッション単位で `.sidecars` と `.cache` を一時ディレクトリに差し替えている。E2E は実際のサーバーを使うので `backend/.sidecars/` に書く。そこには手元で開いた実データの計測・注記も入るので、後片付けはテストデータの分だけにする（上の「コマンド」の手順。ファイル名は中身の sha256 の先頭 32 文字）。多くの E2E は自分専用のコピー（末尾に改行を足したもの）か `page.route` で共有のサイドカーを避けている
 - ヘッドレス Chromium（SwiftShader）の写真で、操作パネルの近くや右下に白い四角が出るのは WebGL の合成の副作用で、実ブラウザでは出ない。絵文字が豆腐になるのもヘッドレスだけ。どちらもバグではない
 - シェルで `cd dir && nohup cmd &` と書くと `&` が列全体にかかり、`$!` が cmd でなく中継のサブシェルの pid になる。`(cd dir || exit; nohup cmd & echo $!)` と分ける
+- **E2E は、アプリの道（`/api/...`）を `page.route`・`page.on("request")`・`page.request` で直に触らない。** `e2e/engine_net.py`（`Net.of(page).route` など、`engine_net.api`・`upload`）を使う。Web 版（`CAD_VIEWER_ENGINE=local`）には HTTP が無く、ページの中の Engine の前で同じことをする。手元の版では `page.route` などそのまま
+- **`vite preview` は `server.proxy` を受け継ぐ。** Web 版（mode web）は proxy を空にしてある。外すと、Web 版の E2E の補助が手元で動いている backend（:8008）に届き、本番のサイドカーの置き場にテストの分を書く（一度やった）
 - パイプは終了コードを飲む（pipefail は既定で off）。`cmd | tail && git commit` は cmd が失敗しても進む。終了コードは変数に取る

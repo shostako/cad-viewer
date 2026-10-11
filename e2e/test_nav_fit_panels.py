@@ -32,6 +32,7 @@ import time
 from pathlib import Path
 
 import gui_common
+from engine_net import Net
 from nav_common import (
     LOAD_DIR, LOOSE_BOX, LOOSE_IGES, MOLD, RUNNER, SURFACE, TESTDATA,
     close, empty_sidecar, free_rect, model_size, nav_session, norm, overlaps, put_sidecar, sub,
@@ -331,7 +332,7 @@ try:
                 time.sleep(0.3)
             route.continue_()
 
-        page.route("**/sidecar", slow_sidecar)
+        Net.of(page).route("**/sidecar", slow_sidecar)
         try:
             page.evaluate(
                 """([px, py, pz]) => { window.__frames = []; window.__sampling = true
@@ -348,7 +349,7 @@ try:
             page.evaluate("window.__sampling = false")
             frames = page.evaluate("window.__frames")
         finally:
-            page.unroute("**/sidecar")
+            Net.of(page).unroute("**/sidecar")
         assert page.locator("#measure-list li").count() == 12, "P7 the list must be restored"
         print("P7 reload", fill_check(*MOLD, "mold reload", needs=("#measure-panel",)))
         final = view()["position"]
@@ -405,11 +406,11 @@ try:
                 route.continue_()
 
         load(n.paths["runner"])
-        page.route("**/sidecar", broken_sidecar)
+        Net.of(page).route("**/sidecar", broken_sidecar)
         try:
             load(MOLD_COPY)
         finally:
-            page.unroute("**/sidecar")
+            Net.of(page).unroute("**/sidecar")
         hud_text = page.inner_text("#hud-info")
         assert "計測・注記を読み込めなかった" in hud_text, ("P8b the HUD must say so", hud_text)
         assert page.locator("#measure-list li").count() == 0, "P8b no list"
@@ -428,11 +429,11 @@ try:
 
         load(n.paths["runner"])
         errors_before = len(n.errors)
-        page.route("**/sidecar", damaged_sidecar)
+        Net.of(page).route("**/sidecar", damaged_sidecar)
         try:
             load(MOLD_COPY)
         finally:
-            page.unroute("**/sidecar")
+            Net.of(page).unroute("**/sidecar")
         # the browser logs the 500 itself; that line is expected, anything else is not
         new_errors = n.errors[errors_before:]
         assert new_errors and all("status of 500" in e for e in new_errors), ("P8c console", new_errors)

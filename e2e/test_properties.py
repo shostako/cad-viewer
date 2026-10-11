@@ -16,6 +16,8 @@ from pathlib import Path
 
 from playwright.sync_api import sync_playwright
 import gui_common
+from engine_net import Net
+import engine_net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
@@ -94,14 +96,9 @@ try:
             return pg
 
         page = new_page()
-        r = page.request.post(
-            f"{BASE_URL}/api/models",
-            multipart={"file": {"name": "mini_mold.step", "mimeType": "application/octet-stream",
-                                "buffer": Path(STEP).read_bytes()}},
-            timeout=120000,
-        )
+        r = engine_net.upload(page, STEP)
         assert r.ok, ("upload", r.status, r.text())
-        r = page.request.put(f"{BASE_URL}/api/models/{r.json()['id']}/sidecar", data={"version": 1, "entries": []})
+        r = engine_net.api(page, "PUT", f"/api/models/{r.json()['id']}/sidecar", {"version": 1, "entries": []})
         assert r.ok, ("empty sidecar", r.status, r.text())
         page.evaluate(f"localStorage.removeItem('{PREFS}'); localStorage.removeItem('{MATERIALS}')")
         page.goto(BASE_URL)
@@ -299,7 +296,7 @@ try:
 
         # 9. drawings: no panel, no request
         requests = []
-        page.on("request", lambda r: requests.append(r.url) if "/properties" in r.url else None)
+        Net.of(page).on_request(lambda r: requests.append(r.url) if "/properties" in r.url else None)
         load(DXF, wait_text="2D 図面")
         page.wait_for_timeout(300)
         assert hidden("#props-panel")
@@ -346,7 +343,7 @@ try:
             pin.update(volume=None, closed=False, reason="open", centerOfMass=None)
             route.fulfill(response=resp, json=body)
 
-        page.route("**/api/models/*/properties", one_open)
+        Net.of(page).route("**/api/models/*/properties", one_open)
         load(STEP)
         wait_values()
         pins = rows()["core_pin"]
@@ -372,7 +369,7 @@ try:
             pin.update(volume=None, area=None, closed=False, reason="failed", centerOfMass=None)
             route.fulfill(response=resp, json=body)
 
-        page.route("**/api/models/*/properties", one_failed)
+        Net.of(page).route("**/api/models/*/properties", one_failed)
         load(STEP)
         wait_values()
         check_total(v_closed, A["plate"] + A["core_pin"] + A["cavity_block"], 1.19)

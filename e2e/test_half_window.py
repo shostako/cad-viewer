@@ -32,6 +32,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 import gui_common
+from engine_net import Net
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTDATA = ROOT / "testdata"
@@ -52,7 +53,7 @@ with sync_playwright() as p:
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-    page.route(
+    Net.of(page).route(
         "**/sidecar",
         lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
     )

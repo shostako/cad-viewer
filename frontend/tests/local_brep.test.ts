@@ -106,6 +106,17 @@ for (const file of FILES) {
   })
 }
 
+test('a model deleted: gone, its OpenCASCADE objects freed, the next one fine', { skip: !ready && 'no testdata' }, async () => {
+  const be = new LocalBackend(memoryStore(), '0.0.0', () => createInstance())
+  const bytes = () => new Uint8Array(fs.readFileSync(FILES[0])).buffer
+  const a = (await be.handle('POST', '/api/models', { name: 'a.step', bytes: bytes() })).body as any
+  assert.equal((await be.handle('DELETE', `/api/models/${a.id}`)).status, 200)
+  assert.equal((await be.handle('GET', `/api/models/${a.id}/mesh.bin`)).status, 404)
+  const b = await be.handle('POST', '/api/models', { name: 'a.step', bytes: bytes() })
+  assert.equal(b.status, 200)
+  assert.notEqual((b.body as any).id, a.id, 'read again, not the deleted one')
+})
+
 test('a STEP that is not one', async () => {
   const up = await backend.handle('POST', '/api/models', { name: 'bad.step', bytes: new TextEncoder().encode('not a step file').buffer })
   assert.equal(up.status, 422, JSON.stringify(up.body))

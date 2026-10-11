@@ -27,6 +27,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from nav_common import BASE_URL, DXF, STEP_SRC, TESTDATA, Nav, sub
+from engine_net import Net
 
 STEP = str(STEP_SRC)
 STL = str(TESTDATA / "ribbed_plate.stl")
@@ -66,7 +67,7 @@ def main():
                     ref = body["ref"]
                     infos.append((body["type"], ref["partId"], ref["kind"], ref["id"]))
 
-        page.on("request", on_request)
+        Net.of(page).on_request(on_request)
         nav.stub_sidecar()  # from before the first load
         page.goto(BASE_URL)
         page.evaluate("localStorage.removeItem('cad-viewer:view')")
@@ -380,7 +381,7 @@ def run(page, nav, infos):
         else:
             route.continue_()
 
-    page.route("**/measure", fail_first)
+    Net.of(page).route("**/measure", fail_first)
     hover(rim1_xy)
     page.wait_for_timeout(700)
     assert failed, "(f2) the rim was not asked about"
@@ -388,7 +389,7 @@ def run(page, nav, infos):
     hover(a_xy)  # away: the block's top (known, asks nothing)
     hover(rim1_xy)  # back: a new rest
     t = wait_dia("(f2) asked again")
-    page.unroute("**/measure")
+    Net.of(page).unroute("**/measure")
     assert [q[0] for q in infos if q[1:] == key1] == ["edge_info", "edge_info"], ("(f2)", infos[-4:])
     # the aborted request's console line
     nav.errors[:] = [e for e in nav.errors if "Failed to load resource" not in e]

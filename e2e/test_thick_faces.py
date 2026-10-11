@@ -23,6 +23,7 @@ from PIL import Image
 
 import gui_common
 from nav_common import TESTDATA, nav_session
+from engine_net import Net
 
 RIBBED = TESTDATA / "ribbed_plate.stl"
 # points on faces seen from the view the file opens in (checked by a pick)
@@ -146,7 +147,7 @@ with nav_session() as n:
         time.sleep(3)
         route.continue_()
 
-    page.route("**/thick?*", slow)
+    Net.of(page).route("**/thick?*", slow)
     set_number("厚肉 (一般部の倍)", 2)
     ctl("用途").locator("select").select_option(label="一般")
     page.evaluate("document.activeElement && document.activeElement.blur()")
@@ -154,7 +155,7 @@ with nav_session() as n:
     n.settle()
     assert page.locator(".thick-band").count() == 0, "the late molding answer painted its band over 一般"
     assert not purple(colour_at(BOSS_TOP))
-    page.unroute("**/thick?*")
+    Net.of(page).unroute("**/thick?*")
     ctl("用途").locator("select").select_option(label="射出成形")
     page.evaluate("document.activeElement && document.activeElement.blur()")
     page.wait_for_function("document.querySelector('.thick-band')?.textContent.includes('2 倍以上')", timeout=30000)

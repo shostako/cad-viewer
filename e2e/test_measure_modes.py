@@ -25,6 +25,7 @@ from pathlib import Path
 
 import gui_common
 from nav_common import TESTDATA, empty_sidecar, nav_session
+from engine_net import Net
 
 FAR = math.hypot(55, 35)
 DEG = math.pi / 180
@@ -143,11 +144,11 @@ with nav_session() as n:
     # ---- a load that fails in 計測 after the old model went leaves the empty
     # screen: no 距離 there (Codex on #66). The mesh fails after the upload; a
     # file that fails at the upload keeps the old model (and 距離 with it)
-    page.route("**/mesh.bin", lambda r: r.fulfill(status=500, body="no"))
+    Net.of(page).route("**/mesh.bin", lambda r: r.fulfill(status=500, body="no"))
     page.set_input_files("#file-input", str(curved))
     page.wait_for_function("document.querySelector('#load-card')?.textContent.includes('開けなかった')", timeout=30000)
     n.settle()
-    page.unroute("**/mesh.bin")
+    Net.of(page).unroute("**/mesh.bin")
     n.errors[:] = [e for e in n.errors if "status of 500" not in e]  # asked for here
     assert gui_common.ctl(page, "モード").locator("select").evaluate("s => s.options[s.selectedIndex].text") == "計測", "still in 計測"
     assert not distance_shown(), "the empty screen has nothing to measure"
