@@ -213,16 +213,21 @@ export function measureVertexInfo(modelId: string, ref: EntityRef) {
 }
 
 /** Per-vertex thickness per part (0 = no data). method: ray=fast, ball=rolling ball (exact at junctions) */
+/**
+ * Per-vertex thickness by method: ray / ball (thickness.bin), face (thick.bin:
+ * each B-rep face's thickness on its vertices, from the grid inside the part)
+ */
 export async function fetchThickness(
   modelId: string,
-  method: 'ray' | 'ball' = 'ray',
+  method: 'ray' | 'ball' | 'face' = 'ray',
 ): Promise<Map<number, Float32Array>> {
-  const res = await fetch(`/api/models/${modelId}/thickness.bin?method=${method}`)
+  const url = method === 'face' ? `/api/models/${modelId}/thick.bin` : `/api/models/${modelId}/thickness.bin?method=${method}`
+  const res = await fetch(url)
   if (!res.ok) throw new Error(`thickness fetch failed: ${res.status}`)
   const pack = parseMeshPack(await res.arrayBuffer())
   const out = new Map<number, Float32Array>()
   for (const [name, arr] of Object.entries(pack.buffers)) {
-    const m = name.match(/^p(\d+):thickness$/)
+    const m = name.match(method === 'face' ? /^p(\d+):thick$/ : /^p(\d+):thickness$/)
     if (m) out.set(Number(m[1]), arr as Float32Array)
   }
   return out
