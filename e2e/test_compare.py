@@ -11,14 +11,15 @@ red-orange (removed), grey (unchanged).
 
 Steps: the comparison and its line; 重ねる (the new version, the removed rib
 over it); 新しい版だけ, 前の版だけ; the tolerance; 新しいのは turned the other
-way; the section cuts it; the value under the cursor; a drawing refused; a
-measuring mode, and a new file, end it.
+way; the section cuts it; the value under the cursor; the light theme's
+colours; a measuring mode ends it; a drawing refused; a part hidden in the tree
+is compared all the same; a new file ends it.
 """
 import math
 import re
 
 import gui_common
-from nav_common import DXF, TESTDATA, nav_session
+from nav_common import DXF, STEP_SRC, TESTDATA, nav_session
 
 NEW = TESTDATA / "revision_b.step"
 OLD = TESTDATA / "revision_a.step"
@@ -193,6 +194,30 @@ with nav_session() as nav:
     assert m and math.isclose(float(m.group(1)), 1.2, abs_tol=0.03), page.inner_text("#cursor-tip")
     page.mouse.move(5, 5)
 
+    # the light theme: the colours are made again, each at 3:1 against its background at least
+    def contrast(c1, c2):
+        def lum(c):
+            f = lambda v: v / 12.92 if v <= 0.04045 else ((v + 0.055) / 1.055) ** 2.4
+            r, g, b = (f(x / 255) for x in c)
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b
+        hi, lo = sorted((lum(c1), lum(c2)), reverse=True)
+        return (hi + 0.05) / (lo + 0.05)
+
+    def swatches():
+        return [
+            tuple(int(v) for v in re.findall(r"\d+", c)[:3])
+            for c in page.eval_on_selector_all("#compare-legend .draft-swatch", "els => els.map(e => getComputedStyle(e).backgroundColor)")
+        ]
+
+    dark = swatches()
+    nav.ctl("配色").locator("select").select_option(label="ライト")
+    nav.settle()
+    light = swatches()
+    assert light != dark and all(contrast(c, (0xE4, 0xE8, 0xED)) >= 3 for c in light), ("ライト", light)
+    nav.ctl("配色").locator("select").select_option(label="ダーク")
+    nav.settle()
+    assert swatches() == dark
+
     # a measuring mode works on the open model: the comparison ends
     nav.ctl("モード").locator("select").select_option("計測")
     nav.settle()
@@ -206,6 +231,19 @@ with nav_session() as nav:
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('比べられなかった')", timeout=60000)
     assert "図面（2D）とは比べられない" in hud(), hud()
     assert not legend_shown()
+
+    # a part hidden in the tree is compared all the same: an assembly against the same
+    # file under another name, its block hidden, has no change (the other file has no
+    # tree to hide the block in)
+    nav.load(nav.paths["step"])
+    row = page.locator("#tree-panel label", has_text=re.compile("^cavity_block$")).locator("xpath=..")
+    row.locator("input").click()
+    nav.settle()
+    compare_with(STEP_SRC)
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('足された')", timeout=120000)
+    assert "足された 最大 ±0.00 mm、削られた 最大 ±0.00 mm" in hud(), hud()
+    row.locator("input").click()
+    nav.load(NEW)
 
     # again, then a new file: the comparison was the old model's
     compare_with(OLD)

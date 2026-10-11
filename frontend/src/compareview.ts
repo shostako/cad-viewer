@@ -15,16 +15,22 @@ import * as THREE from 'three'
 
 import type { Comparison, Sampled, Surface } from './compare.ts'
 import type { CompareReply } from './compareworker.ts'
+import { palette } from './theme.ts'
 
 /** the compared file is the previous version of the one open, or the next */
 export type CompareRole = 'previous' | 'next'
 /** 重ねる: the new version, and of the old one what was removed; or one version alone */
 export type CompareShow = 'overlay' | 'new' | 'old'
 
-/** added: a blue-green; removed: a red-orange (told apart also with red-green colour blindness); unchanged: grey */
-export const ADDED = new THREE.Color(0x00a88f)
-export const REMOVED = new THREE.Color(0xe8590c)
-export const SAME = new THREE.Color(0xa7adb4)
+/**
+ * added: a blue-green; removed: a red-orange (told apart also with red-green
+ * colour blindness); unchanged: grey. The theme's (theme.ts PALETTES): the
+ * light theme's are darker
+ */
+export function compareColors(): { added: THREE.Color; removed: THREE.Color; same: THREE.Color } {
+  const c = palette().compare
+  return { added: new THREE.Color(c.added), removed: new THREE.Color(c.removed), same: new THREE.Color(c.same) }
+}
 /** how much of the colour a change just over the tolerance gets (the rest grows to the largest change) */
 const MIN_MIX = 0.35
 /** the removed parts of the old version over the new one (重ねる) */
@@ -69,10 +75,16 @@ function changeOf(s: Sampled, isNew: boolean): Float32Array {
  * known), else the added or removed colour, from MIN_MIX of it just over the
  * tolerance to all of it at `max`.
  */
-export function changeColor(c: number, tol: number, max: number, out: THREE.Color): THREE.Color {
-  if (!(Math.abs(c) > tol)) return out.copy(SAME)
+export function changeColor(
+  c: number,
+  tol: number,
+  max: number,
+  out: THREE.Color,
+  colors: ReturnType<typeof compareColors> = compareColors(),
+): THREE.Color {
+  if (!(Math.abs(c) > tol)) return out.copy(colors.same)
   const f = max > tol ? Math.min(1, (Math.abs(c) - tol) / (max - tol)) : 1
-  return out.copy(SAME).lerp(c > 0 ? ADDED : REMOVED, MIN_MIX + (1 - MIN_MIX) * f)
+  return out.copy(colors.same).lerp(c > 0 ? colors.added : colors.removed, MIN_MIX + (1 - MIN_MIX) * f)
 }
 
 export interface CompareStats {
@@ -234,8 +246,9 @@ function meshOf(s: Sampled, change: Float32Array, tol: number, max: number, ghos
   const size = ghost ? 4 : 3
   const colors = new Float32Array(n * size)
   const c = new THREE.Color()
+  const theme = compareColors()
   for (let i = 0; i < n; i++) {
-    changeColor(change[i], tol, max, c)
+    changeColor(change[i], tol, max, c, theme)
     colors[size * i] = c.r
     colors[size * i + 1] = c.g
     colors[size * i + 2] = c.b
@@ -274,10 +287,11 @@ export function renderCompareLegend(
   const bar = document.createElement('div')
   bar.className = 'thick-bar'
   const c = new THREE.Color()
+  const theme = compareColors()
   const stops: string[] = []
   for (let k = 0; k <= 20; k++) {
     const v = -max + (2 * max * k) / 20
-    stops.push(`${css(changeColor(v, tol, max, c))} ${(k / 20) * 100}%`)
+    stops.push(`${css(changeColor(v, tol, max, c, theme))} ${(k / 20) * 100}%`)
   }
   bar.style.background = `linear-gradient(to right, ${stops.join(', ')})`
   const ticks = document.createElement('div')
@@ -309,9 +323,9 @@ export function renderCompareLegend(
     title,
     bar,
     ticks,
-    row(ADDED, `足された（新しい版にだけある）最大 ${signed(s.added)} mm`),
-    row(REMOVED, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`),
-    row(SAME, `変わっていない（許容 ±${tol} mm の中）`),
+    row(theme.added, `足された（新しい版にだけある）最大 ${signed(s.added)} mm`),
+    row(theme.removed, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`),
+    row(theme.same, `変わっていない（許容 ±${tol} mm の中）`),
   ]
   if (note) {
     const n = document.createElement('div')

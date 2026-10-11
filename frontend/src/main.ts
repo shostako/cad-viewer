@@ -1780,6 +1780,8 @@ function showCompareCtls(): void {
   compareStopCtl.show(compareView !== null || compareRun !== null)
 }
 showCompareCtls()
+// the comparison's colours are the theme's (theme.ts): made again in the new one
+onTheme(() => redrawCompare())
 compareInput.addEventListener('change', () => {
   const file = compareInput.files?.[0]
   if (file) void compareWith(file)
@@ -1788,11 +1790,15 @@ function setCompareHud(text: string): void {
   compareHud = text
   hudInfo.textContent = text
 }
-/** the open model's surfaces (its visible parts with faces) */
+/**
+ * The open model's surfaces: every part with faces, hidden ones too. The
+ * compared file has no tree to hide the same parts in, so only all of both
+ * compare alike (a part hidden on one side only would come out as removed)
+ */
 function openSurfaces(): Surface[] {
   const out: Surface[] = []
-  for (const [id, mesh] of viewer.getPartMeshes()) {
-    if (!viewer.isPartVisible(id) || !mesh.geometry.index?.count) continue
+  for (const mesh of viewer.getPartMeshes().values()) {
+    if (!mesh.geometry.index?.count) continue
     out.push({
       positions: mesh.geometry.getAttribute('position').array,
       normals: mesh.geometry.getAttribute('normal').array,
