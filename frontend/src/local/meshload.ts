@@ -278,9 +278,10 @@ function compose(a: Affine, b: Affine): Affine {
   return out
 }
 
+/** an XML attribute's value, in double or single quotes (XML allows both) */
 function attr(tag: string, name: string): string | undefined {
-  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*"([^"]*)"`))
-  return m ? m[1] : undefined
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)')`))
+  return m ? (m[1] ?? m[2]) : undefined
 }
 
 function read3mf(bytes: Uint8Array): Soup {
@@ -291,7 +292,8 @@ function read3mf(bytes: Uint8Array): Soup {
     throw new MeshLoadError('not a 3MF file (not a zip)')
   }
   const rels = files['_rels/.rels'] ? text(files['_rels/.rels']) : ''
-  const start = rels.match(/Target\s*=\s*"\/?([^"]+\.model)"/i)?.[1]
+  const target = rels.match(/Target\s*=\s*(?:"\/?([^"]+\.model)"|'\/?([^']+\.model)')/i)
+  const start = target ? (target[1] ?? target[2]) : undefined
   const modelName = start && files[start] ? start : Object.keys(files).find((f) => /\.model$/i.test(f))
   if (!modelName) throw new MeshLoadError('3MF: no model in the package')
   const xml = text(files[modelName])

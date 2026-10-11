@@ -158,8 +158,9 @@ function off(tris: Tri[]): string {
   return `OFF\n# a comment\n${v.length} ${f.length} 0\n${v.map((p) => p.join(' ')).join('\n')}\n${f.map((t) => `3 ${t.join(' ')}`).join('\n')}\n`
 }
 
-/** a 3MF: the first shape an object placed by its build item's transform, the second inside a components object */
-function threeMf(a: Tri[], b: Tri[]): Uint8Array {
+/** a 3MF: the first shape an object placed by its build item's transform, the second inside a components object;
+ * quote: the attributes' quotes (XML allows both) */
+function threeMf(a: Tri[], b: Tri[], quote = '"'): Uint8Array {
   const mesh = (id: number, tris: Tri[]) => {
     const { v, f } = indexed(tris)
     return `<object id="${id}" type="model"><mesh><vertices>${v.map((p) => `<vertex x="${p[0]}" y="${p[1]}" z="${p[2]}"/>`).join('')}</vertices><triangles>${f.map((t) => `<triangle v1="${t[0]}" v2="${t[1]}" v3="${t[2]}"/>`).join('')}</triangles></mesh></object>`
@@ -167,7 +168,7 @@ function threeMf(a: Tri[], b: Tri[]): Uint8Array {
   const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02"><resources>${mesh(1, a)}${mesh(2, b)}<object id="3" type="model"><components><component objectid="2" transform="1 0 0 0 0 1 0 -1 0 0 0 30"/></components></object></resources>
 <build><item objectid="1" transform="0 1 0 -1 0 0 0 0 1 5 6 7"/><item objectid="3" transform="0 0 1 0 1 0 -1 0 0 100 0 0"/></build></model>`
-  const enc = (s: string) => new TextEncoder().encode(s)
+  const enc = (s: string) => new TextEncoder().encode(quote === '"' ? s : s.replace(/="([^"]*)"/g, "='$1'"))
   return zipSync({
     '[Content_Types].xml': enc('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/></Types>'),
     '_rels/.rels': enc('<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'),
@@ -200,6 +201,7 @@ const files: Record<string, Uint8Array | string> = {
   'prism_binary.ply': plyBinary(prism(13, 3, 2)),
   'box.off': off(box([0, 0, 0], [1, 2, 3])),
   'parts.3mf': threeMf(box([0, 0, 0], [2, 3, 4]), prism(16, 2, 3)),
+  'single_quotes.3mf': threeMf(box([0, 0, 0], [3, 2, 1]), prism(12, 1, 2), "'"),
 }
 for (const [name, data] of Object.entries(files)) fs.writeFileSync(path.join(dir, name), data)
 const paths = Object.keys(files).map((n) => path.join(dir, n))
