@@ -9,6 +9,8 @@ of a known size (see make_curved_part).
 Creates inch_block.step: a block of 1 x 2 x 0.5 in (25.4 x 50.8 x 12.7 mm)
 written in inches (the 計測の単位's file unit; see make_inch_block).
 
+Creates named_parts.step: an instance's own name and colour (see make_named_parts).
+
 Usage: backend/.venv/bin/python testdata/make_step_assembly.py
 """
 import math
@@ -89,6 +91,25 @@ def main() -> None:
 
     make_curved_part()
     make_inch_block()
+    make_named_parts()
+
+
+def make_named_parts() -> None:
+    """named_parts.step: an assembly "frame" of two instances of one uncoloured
+    box (10 mm): "left" at the origin, with the instance's own name and colour
+    (green: the box it refers to takes it), and an unnamed one at x 20 (the
+    box's name, "brick", and no colour)."""
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
+    st = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    ct = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
+    brick = named(st, st.AddShape(BRepPrimAPI_MakeBox(10, 10, 10).Shape(), False), "brick")
+    frame = named(st, st.NewShape(), "frame")
+    left = named(st, st.AddComponent(frame, brick, loc(0, 0, 0)), "left")
+    st.AddComponent(frame, brick, loc(20, 0, 0))
+    st.UpdateAssemblies()
+    green = Quantity_Color(0.2, 0.7, 0.3, Quantity_TOC_RGB)
+    ct.SetColor(left, green, XCAFDoc_ColorType.XCAFDoc_ColorGen)
+    write(doc, "named_parts.step")
 
 
 # curved_part.step: the sizes the tests check

@@ -116,6 +116,8 @@ jobs:
 
       - name: E2E (web)
         env:
+          # e2e/engine_net.py: the scripts hold and answer the app's requests in the page
+          CAD_VIEWER_ENGINE: local
           E2E_SCRIPT_TIMEOUT: 600
           PYTHONUNBUFFERED: '1'
         run: |
