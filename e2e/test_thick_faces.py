@@ -176,6 +176,15 @@ with nav_session() as n:
         none = [u for u in page.evaluate("window.__cadCheck().undecided") if "肉厚の値が出ない頂点" in u["why"]]
         if method == "ball":
             assert none, "the rolling ball has no value on mini_mold's flat faces' vertices"
+            # where to look instead (#63): in the list's line and in the legend
+            assert all("「面ごと（形の中から）」で見る" in u["why"] for u in none), none
+            gui_common.open_folder(page, "肉厚")
+            heat = ctl("ヒートマップ").locator("input")
+            if not heat.is_checked():
+                heat.check()
+            page.wait_for_function("document.querySelector('#thickness-legend')?.textContent.includes('球の入らない頂点')", timeout=90000)
+            assert "「面ごと（形の中から）」で見る" in page.inner_text("#thickness-legend")
+            heat.uncheck()
         else:
             assert not none, ("面ごと: a value on every vertex", none)
     print("5 mini_mold: every vertex has a value 面ごと")
