@@ -406,8 +406,9 @@ export function draftSpots(
  * the draft angle as under the cursor without its class (「勾配 −2.0°」: a real
  * minus sign, none on a value that rounds to 0; draft.ts draftTipText).
  */
-export function spotText(kind: 'thin' | 'thick' | DraftClass, s: Spot): string {
+export function spotText(kind: 'thin' | 'thick' | 'undercut' | DraftClass, s: Spot): string {
   if (kind === 'thin') return `${s.value.toFixed(2)} mm`
+  if (kind === 'undercut') return `${s.area.toFixed(1)} mm²`
   if (kind === 'thick') return `⌀${s.value.toFixed(2)} mm（一般部の ${(s.ratio ?? 0).toFixed(1)} 倍）`
   const value = Math.abs(s.value).toFixed(1)
   const sign = s.value < 0 && value !== '0.0' ? '−' : ''
