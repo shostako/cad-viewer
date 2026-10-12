@@ -40,6 +40,8 @@ export interface AutoAlignment {
   fits: Fit[]
   /** how many after the first fit about as well (within ALIKE of its share): a symmetric shape */
   alike: number
+  /** how many placements it started from (1: the datums' alignment alone) */
+  starts: number
 }
 
 /** points for the search from each start, and for the last fit of the best ones */
@@ -463,15 +465,23 @@ export function autoAlign(a: Surface[], b: Surface[], start: AutoStart, toleranc
     const m = refine(target, f.motion, final, tolerance, size, 4 * tolerance)
     if (!fits.some((g) => samePlace(g.motion, m, size, tolerance))) fits.push(fitOf(target, m, final, tolerance))
   }
-  fits.sort((x, y) => y.within - x.within || x.rms - y.rms)
-  // those that fit about as well as the best: the least move first (two versions
-  // of a symmetric part written in one frame stay as they are, not turned over)
+  return { ...ordered(fits, centreOf(final), size), starts: starts.length }
+}
+
+/**
+ * The placements in their order: the best fit first; of those that fit about
+ * as well as it (within ALIKE), the one that moves the compared version
+ * (`centre`, of a part of `size`) least first (two versions of a symmetric part
+ * written in one frame stay as they are, not turned over). alike: how many
+ * after the first fit about as well.
+ */
+export function ordered(found: Fit[], centre: Xyz, size: number): { fits: Fit[]; alike: number } {
+  const fits = [...found].sort((x, y) => y.within - x.within || x.rms - y.rms)
   const top = fits[0]?.within ?? 0
   const alikeFits = fits.filter((f) => f.within >= top - ALIKE)
   const rest = fits.filter((f) => f.within < top - ALIKE)
-  const centre = centreOf(final)
   alikeFits.sort((x, y) => moveSize(x.motion, centre, size) - moveSize(y.motion, centre, size))
-  return { fits: [...alikeFits, ...rest], alike: alikeFits.length - 1 }
+  return { fits: [...alikeFits, ...rest], alike: Math.max(0, alikeFits.length - 1) }
 }
 
 /** the points' centroid */

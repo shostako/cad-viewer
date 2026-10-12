@@ -9,7 +9,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 
 import { moveBy, turn, turnAngle, type Motion, type Xyz } from '../src/align.ts'
-import { autoAlign, axisStarts, principal, samplePoints } from '../src/autoalign.ts'
+import { autoAlign, axisStarts, ordered, principal, samplePoints, type Fit } from '../src/autoalign.ts'
 import type { Surface } from '../src/compare.ts'
 
 type V = [number, number, number]
@@ -134,6 +134,30 @@ test('from a plane alone (a turn about it left free): turned about it in steps, 
   const r = autoAlign([PLATE, STEP], b, { motion: off, spin: { axis: [0, 0, 1], at } }, 0.05)
   undoes(r.fits[0].motion, M)
   assert.equal(r.alike, 0)
+})
+
+test('the order: the best fit first; of those that fit alike, the least move first, whatever their RMS', () => {
+  const centre: Xyz = [20, 15, 5]
+  const at = (angle: number, rms: number, within = 1): Fit => {
+    const r = turnAbout([0, 0, 1], angle)
+    const q = turn(r, centre)
+    return { motion: { r, t: [centre[0] - q[0], centre[1] - q[1], centre[2] - q[2]] }, within, rms }
+  }
+  // the turned ones fit a little closer (rms), the one not moved is still first among the alike
+  const o = ordered([at(180, 0), at(0, 2e-3), at(90, 1e-3), at(0, 0, 0.5)], centre, 50)
+  assert.deepEqual(o.fits.map((f) => Math.round(turnAngle(f.motion.r).angle)), [0, 90, 180, 0])
+  assert.equal(o.alike, 2)
+  assert.equal(o.fits[3].within, 0.5, 'the one that fits worse last')
+})
+
+test('the starts: the alignment by datums alone when it fixed everything; with a free turn, the turns about it and the search', () => {
+  const b = [moved(PLATE, M), moved(STEP, M)]
+  const want = inverse(M)
+  assert.equal(autoAlign([PLATE, STEP], b, { motion: want }, 0.05).starts, 1)
+  const spun = autoAlign([PLATE, STEP], b, { motion: want, spin: { axis: [0, 0, 1], at: [30, 20, 3] } }, 0.05).starts
+  const searched = autoAlign([PLATE, STEP], b, { motion: null }, 0.05).starts
+  assert.equal(spun, 12 + searched)
+  assert.equal(searched, 5, 'the places in the files and the 4 ways round the axes')
 })
 
 test('the principal axes: largest spread first, a turn (det +1)', () => {

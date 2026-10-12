@@ -141,13 +141,14 @@ with nav_session() as nav:
     by_datums([(5, 5, 3)])
     a = auto_align("datums")
     undoes(a, R_B, T_B)
+    assert a["auto"]["starts"] > 12, a["auto"]  # the turns about the top, and the search
     assert "基準の合わせから詰めた" in page.inner_text("#compare-legend [data-align]")
     # the top, the old boss's side and the front (every turn and move fixed): refined from
     # there alone, one placement (a symmetric part stays as the datums put it)
     d = by_datums([(5, 5, 3), (15, 16, 7), (30, 0, 1.5)])
     assert d["fixed"] == {"turn": 3, "move": 3}, d
     a = auto_align("datums")
-    assert len(a["auto"]["fits"]) == 1, a["auto"]
+    assert a["auto"]["starts"] == 1 and len(a["auto"]["fits"]) == 1, a["auto"]
     undoes(a, R_B, T_B)
     nav.ctl("比較をやめる").locator("button").click()
 

@@ -4252,7 +4252,7 @@ testHooks.__cadAlign = () => {
       misfit: a.kind === 'datums' ? a.result.misfit : [],
       auto:
         a.kind === 'auto'
-          ? { at: a.at, alike: a.found.alike, from: a.from, fits: a.found.fits.map((f) => ({ within: f.within, rms: f.rms })) }
+          ? { at: a.at, alike: a.found.alike, from: a.from, starts: a.found.starts, fits: a.found.fits.map((f) => ({ within: f.within, rms: f.rms })) }
           : null,
       ...turnAngle(a.motion.r),
       shift: compareOther ? shiftOf(a.motion, compareOther.centre) : null,
