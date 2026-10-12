@@ -247,6 +247,23 @@ def _tops(model, part_ids):
     return a, b
 
 
+def test_faces_lists_every_face(model, part_ids):
+    """measure "faces" (版の比較's 面の変化): every face of every part, in id
+    order, each as face_info tells it; a face's centroid is on it (the plate's
+    top at z 15, its area as face_info's)"""
+    res = _measure(model, {"type": "faces"})
+    assert res["type"] == "faces"
+    by_part = {p["partId"]: p["faces"] for p in res["parts"]}
+    plate = part_ids["plate"][0]
+    faces = by_part[plate]
+    assert [f["id"] for f in faces] == list(range(1, len(faces) + 1))
+    top, _ = _tops(model, part_ids)
+    one = _measure(model, {"type": "face_info", "ref": top})
+    listed = faces[top["id"] - 1]
+    assert listed["surface"] == "plane" and listed["area"] == pytest.approx(one["area"], rel=1e-12)
+    assert listed["centroid"][2] == pytest.approx(15, abs=1e-9) and listed["centroid"] == pytest.approx(one["centroid"], abs=1e-12)
+
+
 def test_plane_has_a_point_of_it(model, part_ids):
     """a plane's face_info gives a point of the plane (位置合わせ): the plate's
     top is at z 15, the block's at z 35"""
