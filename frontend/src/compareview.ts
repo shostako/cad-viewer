@@ -310,6 +310,7 @@ export function renderCompareLegend(
   names: { a: string; b: string },
   note: string,
   nav: CompareNav | null = null,
+  aligned = '',
 ): void {
   const s = view.stats()
   const max = Math.max(s.added, -s.removed, view.tolerance)
@@ -378,10 +379,13 @@ export function renderCompareLegend(
     row(theme.removed, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`, 'removed'),
     row(theme.same, `変わっていない（許容 ±${tol} mm の中）`),
   ]
-  if (note) {
+  // the alignment (main.ts alignText), then the note
+  for (const text of [aligned, note]) {
+    if (!text) continue
     const n = document.createElement('div')
     n.className = 'compare-note'
-    n.textContent = note
+    if (text === aligned) n.dataset.align = ''
+    n.textContent = text
     rows.push(n)
   }
   el.replaceChildren(...rows)

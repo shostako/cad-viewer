@@ -12,7 +12,8 @@ written in inches (the 計測の単位's file unit; see make_inch_block).
 Creates named_parts.step: an instance's own name and colour (see make_named_parts).
 
 Creates revision_a.step and revision_b.step: two versions of one part, for 版の
-比較 (see make_revisions).
+比較 (see make_revisions). And revision_b_moved.step: revision_b turned and
+moved, as a file written in another frame, for 位置合わせ.
 
 Creates undercut_block.step: a block with a side hole, a pocket from the top and
 a hook, for アンダーカットの候補 (see make_undercut_block). And undercut_pair.step:
@@ -226,6 +227,11 @@ def make_inch_block() -> None:
 
 
 
+# revision_b_moved.step: the turns in the order they are made (about Z first),
+# then the move. A point p of revision_b is at move + Rx(30) Rz(90) p
+MOVED_B = {"turns": [((0, 0, 1), 90), ((1, 0, 0), 30)], "move": (80, 20, 5)}
+
+
 def make_revisions() -> None:
     """Two versions of a plate of 60 x 40 x 3 mm (z 0 to 3), one solid each.
 
@@ -233,6 +239,9 @@ def make_revisions() -> None:
                                   1.5 x 24 (x 44.25..45.75, y 8..32) to z 9
     revision_b.step (the next):   the boss to z 13 (2 higher); a new boss of R3
                                   at (30, 30) to z 8; no rib
+    revision_b_moved.step:        revision_b turned 90° about Z, then 30° about
+                                  X, then moved by (80, 20, 5) (MOVED_B: the
+                                  E2E aligns it back by its datums)
     """
     from OCP.STEPControl import STEPControl_Writer
 
@@ -248,10 +257,21 @@ def make_revisions() -> None:
     def boss(x, y, r, top):
         return BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(x, y, 3), gp_Dir(0, 0, 1)), r, top - 3).Shape()
 
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_Transform
+    from OCP.gp import gp_Ax1
+
     rib = BRepPrimAPI_MakeBox(gp_Pnt(44.25, 8, 3), gp_Pnt(45.75, 32, 9)).Shape()
+    b = plate_with(boss(15, 20, 4, 13), boss(30, 30, 3, 8))
+    move = gp_Trsf()
+    move.SetTranslation(gp_Vec(*MOVED_B["move"]))
+    for axis, angle in reversed(MOVED_B["turns"]):
+        turn = gp_Trsf()
+        turn.SetRotation(gp_Ax1(gp_Pnt(0, 0, 0), gp_Dir(*axis)), math.radians(angle))
+        move.Multiply(turn)
     for name, shape in (
         ("revision_a.step", plate_with(boss(15, 20, 4, 11), rib)),
-        ("revision_b.step", plate_with(boss(15, 20, 4, 13), boss(30, 30, 3, 8))),
+        ("revision_b.step", b),
+        ("revision_b_moved.step", BRepBuilderAPI_Transform(b, move, True).Shape()),
     ):
         writer = STEPControl_Writer()
         writer.Transfer(shape, STEPControl_AsIs)

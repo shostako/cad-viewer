@@ -496,6 +496,7 @@ export class Measurer {
     } else if (name === 'plane') {
       const n = k(k(geom.Axis()).Direction())
       out.normal = xyz(face.Orientation() === 'TopAbs_REVERSED' ? k(n.Reversed()) : n)
+      out.origin = xyz(k(geom.Location()))
     } else if (name === 'torus') {
       Object.assign(out, { radius: geom.MinorRadius(), majorRadius: geom.MajorRadius(), center: xyz(k(geom.Location())), axis: xyz(k(k(geom.Axis()).Direction())) })
     } else if (name === 'sphere') {

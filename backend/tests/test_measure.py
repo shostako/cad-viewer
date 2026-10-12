@@ -247,6 +247,14 @@ def _tops(model, part_ids):
     return a, b
 
 
+def test_plane_has_a_point_of_it(model, part_ids):
+    """a plane's face_info gives a point of the plane (位置合わせ): the plate's
+    top is at z 15, the block's at z 35"""
+    for ref, z in zip(_tops(model, part_ids), (15, 35)):
+        info = _measure(model, {"type": "face_info", "ref": ref})
+        assert info["origin"][2] == pytest.approx(z, abs=1e-9)
+
+
 def test_parallel_faces_line_through_the_click(model, part_ids):
     """plate top (z 15) and block top (z 35): 20 wherever they overlap; the line
     goes through the clicked point, square to both faces"""
