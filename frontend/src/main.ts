@@ -40,8 +40,8 @@ import { InfoCache, Preselect } from './preselect'
 import { PropertiesPanel, REASON_TEXT, fmtDensity } from './properties'
 import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
-import { CompareView, renderCompareLegend, runCompare, signed, startTolerance, type CompareRole, type CompareShow } from './compareview'
-import type { Surface } from './compare'
+import { CompareView, changeText, renderCompareLegend, runCompare, signed, startTolerance, type CompareNav, type CompareRole, type CompareShow } from './compareview'
+import type { Place, Surface } from './compare'
 import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
 import { undercutPlaces, type Reach } from './undercut'
 import { SpotNav } from './spotnav'
@@ -688,6 +688,24 @@ function buildReport(at: Date, image: string | null): Report {
     )
   }
   if (!is2D) tables.push(...(propsPanel.reportTables() ?? [{ title: '体積・重量', head: [], rows: [], empty: '計算中か、計算できなかった' }]))
+  // 版の比較, while one is on: the places that changed (the 変わった所へ's), the largest first
+  const changed = placesNow()
+  if (compareView && changed) {
+    const n = compareView.newSide, o = compareView.oldSide
+    const rows: Cell[][] = []
+    for (const kind of ['added', 'removed'] as const) {
+      for (const q of changed[kind]) {
+        rows.push([kind === 'added' ? '足された' : '削られた', { n: q.peak, d: 3 }, 'mm', { n: q.area, d: 1 }, ...q.at.map((v): Cell => ({ n: v, d: 3 })), SOURCE.mesh])
+      }
+    }
+    tables.push({
+      title: `版の比較（${rows.length} 所）`,
+      note: `新しい版 ${compareNames[n]}・前の版 ${compareNames[o]}・許容 ±${compareView.tolerance} mm（それより小さい差は変わっていないとする）`,
+      head: ['種類', '最大の差', '単位', '面積 (mm²)', 'X', 'Y', 'Z', '出どころ'],
+      rows,
+      empty: '許容より大きい差は無かった',
+    })
+  }
   return {
     fileName: shownFileName,
     stem: stampedName(shownFileName, at, '記録'),
@@ -2146,12 +2164,50 @@ function redrawCompare(): void {
   compareView.show = compareState.show
   compareView.tolerance = compareState.tolerance
   viewer.setStandIn(compareView.build())
-  renderCompareLegend(compareLegend, compareView, compareNames, compareNote)
+  dropCompareSpot() // the places were of the last role, show and tolerance
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav)
   compareLegend.classList.remove('hidden')
   const s = compareView.stats()
   setCompareHud(`版の比較: 足された 最大 ${signed(s.added)} mm、削られた 最大 ${signed(s.removed)} mm`)
   showCompareCtls()
   probe.refresh()
+}
+// 変わった所へ (the legend's buttons): the places that changed, made at the first
+// look (compareview.ts places), and where each kind's presses are
+let comparePlaces: { added: Place[]; removed: Place[] } | null = null
+const compareAt = { added: -1, removed: -1 }
+let compareSpot: Spot | null = null
+function placesNow(): { added: Place[]; removed: Place[] } | null {
+  if (!compareView) return null
+  comparePlaces ??= compareView.places()
+  return comparePlaces
+}
+const compareNav: CompareNav = {
+  count: (kind) => placesNow()?.[kind].length ?? 0,
+  state: (kind) => {
+    const list = placesNow()?.[kind]
+    const i = compareAt[kind]
+    return list && i >= 0 && i < list.length ? `${i + 1}/${list.length} ・ ${signed(list[i].peak)} mm` : ''
+  },
+  go: (kind) => goToChange(kind),
+}
+/** the next place of the kind (after the last, the first again): the view frames it, a ring and its change on it */
+function goToChange(kind: 'added' | 'removed'): void {
+  const list = placesNow()?.[kind]
+  if (!compareView || !list?.length) return
+  compareAt[kind] = (compareAt[kind] + 1) % list.length
+  compareAt[kind === 'added' ? 'removed' : 'added'] = -1
+  const q = list[compareAt[kind]]
+  compareSpot = { partId: -1, faceId: null, at: q.at, normal: q.normal, min: q.min, max: q.max, value: q.peak, area: q.area }
+  viewer.goToSpot(compareSpot, changeText(kind, q))
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav)
+}
+/** the places go (made again at the next look), and the ring if it is still theirs */
+function dropCompareSpot(): void {
+  comparePlaces = null
+  compareAt.added = compareAt.removed = -1
+  if (compareSpot && viewer.shownSpot === compareSpot) viewer.clearSpot()
+  compareSpot = null
 }
 /** the comparison ends: the open model as it was */
 function stopCompare(): void {
@@ -2163,6 +2219,7 @@ function stopCompare(): void {
     compareView.dispose()
     compareView = null
   }
+  dropCompareSpot()
   releaseColors('compare')
   compareLegend.classList.add('hidden')
   if (compareState.name) {
@@ -3835,6 +3892,13 @@ testHooks.__cadCheck = () => {
 }
 // the reach the colours and the list share: its key (model and direction), or null
 testHooks.__cadReach = () => reachShared?.key ?? null
+// 版の比較's changed places (変わった所へ's), and where each kind's presses are
+testHooks.__cadCompare = () => {
+  const places = placesNow()
+  if (!places) return null
+  const one = (q: Place) => ({ peak: q.peak, area: q.area, at: q.at })
+  return { added: places.added.map(one), removed: places.removed.map(one), at: { ...compareAt } }
+}
 testHooks.__cadView = () => {
   viewer.prepareCamera() // the pose the next frame draws (parallel: the camera's depth)
   return {

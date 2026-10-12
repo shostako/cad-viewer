@@ -310,3 +310,126 @@ export function compare(a: Surface[], b: Surface[], budget = SAMPLE_BUDGET): Com
   const eb = partEdges(b, budget)
   return { a: measured(a, ea, b), b: measured(b, eb, a), edge: Math.max(0, ...ea, ...eb) }
 }
+
+/** a place on a finer mesh (spots.ts Spot's fields) */
+export interface Place {
+  /** the marker: the vertex of the place's largest value, or (no values) the one nearest its middle; and its normal */
+  at: [number, number, number]
+  normal: [number, number, number]
+  min: [number, number, number]
+  max: [number, number, number]
+  /** mm²: the finer triangles by the share of their corners that are in it */
+  area: number
+  /** the largest value of its vertices (0 without values) */
+  peak: number
+}
+
+/**
+ * The places of the flagged vertices of a finer mesh (subdivide): those
+ * joined by its triangles' edges, and by nearness (closer than the finer
+ * mesh's edge `edge`: the rims of two display triangles are cut into points of
+ * their own, apart by less than that). A place under half a finer triangle
+ * (edge² / 2) is a point where two kinds meet, not a place. `value`: what the
+ * place's peak and marker are taken from (the largest); without it, the marker
+ * is the vertex nearest the place's middle. In no order.
+ */
+export function placesOf(
+  p: { positions: ArrayLike<number>; normals: ArrayLike<number>; indices: ArrayLike<number> },
+  flagged: (i: number) => boolean,
+  edge: number,
+  value?: (i: number) => number,
+): Place[] {
+  const n = p.positions.length / 3
+  const P = p.positions
+  const up = new Int32Array(n).fill(-1)
+  const find = (i: number): number => {
+    let r = i
+    while (up[r] !== r) r = up[r]
+    while (up[i] !== r) {
+      const next = up[i]
+      up[i] = r
+      i = next
+    }
+    return r
+  }
+  const join = (a: number, b: number) => {
+    const ra = find(a), rb = find(b)
+    if (ra !== rb) up[ra] = rb
+  }
+  for (let i = 0; i < n; i++) if (flagged(i)) up[i] = i
+  const ix = p.indices
+  for (let t = 0; t < ix.length; t += 3) {
+    for (const [a, b] of [[ix[t], ix[t + 1]], [ix[t + 1], ix[t + 2]], [ix[t + 2], ix[t]]]) if (up[a] >= 0 && up[b] >= 0) join(a, b)
+  }
+  // nearness: a grid of cells `edge` across; a point and those of the cells around it
+  const reach = edge * 1.01
+  const cell = (v: number) => Math.floor(v / reach)
+  const cells = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const key = `${cell(P[3 * i])},${cell(P[3 * i + 1])},${cell(P[3 * i + 2])}`
+    const list = cells.get(key)
+    if (list) list.push(i)
+    else cells.set(key, [i])
+  }
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const cx = cell(P[3 * i]), cy = cell(P[3 * i + 1]), cz = cell(P[3 * i + 2])
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          for (const j of cells.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
+            if (j <= i) continue
+            const d = Math.hypot(P[3 * j] - P[3 * i], P[3 * j + 1] - P[3 * i + 1], P[3 * j + 2] - P[3 * i + 2])
+            if (d <= reach) join(i, j)
+          }
+        }
+  }
+  // each place's area and its middle (area-weighted)
+  const area = new Map<number, number>()
+  const mid = new Map<number, [number, number, number]>()
+  for (let t = 0; t < ix.length; t += 3) {
+    const tri = [ix[t], ix[t + 1], ix[t + 2]]
+    const zero = tri.filter((v) => up[v] >= 0)
+    if (!zero.length) continue
+    const [a, b, c] = tri
+    const ux = P[3 * b] - P[3 * a], uy = P[3 * b + 1] - P[3 * a + 1], uz = P[3 * b + 2] - P[3 * a + 2]
+    const vx = P[3 * c] - P[3 * a], vy = P[3 * c + 1] - P[3 * a + 1], vz = P[3 * c + 2] - P[3 * a + 2]
+    const w = (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2) * (zero.length / 3)
+    const r = find(zero[0])
+    area.set(r, (area.get(r) ?? 0) + w)
+    const m = mid.get(r) ?? [0, 0, 0]
+    for (let k = 0; k < 3; k++) m[k] += (w * (P[3 * a + k] + P[3 * b + k] + P[3 * c + k])) / 3
+    mid.set(r, m)
+  }
+  const places = new Map<number, Place & { best: number }>()
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const r = find(i)
+    const a = area.get(r) ?? 0
+    if (!(a > 0)) continue
+    const at: [number, number, number] = [P[3 * i], P[3 * i + 1], P[3 * i + 2]]
+    // the marker's measure: the value (the largest wins), or nearness to the middle
+    let score: number
+    if (value) score = -value(i)
+    else {
+      const m = mid.get(r)!
+      score = Math.hypot(at[0] - m[0] / a, at[1] - m[1] / a, at[2] - m[2] / a)
+    }
+    let place = places.get(r)
+    if (!place) {
+      place = { at, normal: [p.normals[3 * i], p.normals[3 * i + 1], p.normals[3 * i + 2]], min: [...at], max: [...at], area: a, peak: value ? value(i) : 0, best: score }
+      places.set(r, place)
+    } else if (score < place.best) {
+      place.at = at
+      place.normal = [p.normals[3 * i], p.normals[3 * i + 1], p.normals[3 * i + 2]]
+      place.best = score
+      if (value) place.peak = value(i)
+    }
+    for (let k = 0; k < 3; k++) {
+      place.min[k] = Math.min(place.min[k], at[k])
+      place.max[k] = Math.max(place.max[k], at[k])
+    }
+  }
+  return [...places.values()].filter((q) => q.area >= (edge * edge) / 2).map(({ best: _best, ...q }) => q)
+}
