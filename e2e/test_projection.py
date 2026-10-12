@@ -107,7 +107,10 @@ def main():
             assert one_line("#props-total-clamp") and one_line("#props-clamp-label"), "the force's row is one line"
             # the force's tooltip keeps the area (read when its row is folded)
             title = page.locator("#props-total-clamp").get_attribute("title")
-            assert title == f"投影面積 {area}（{axis}・目安）× 型内圧 {mpa:g} MPa", title
+            assert title == f"投影面積 {area}（{axis}・目安）× 型内圧 {mpa:g} MPa。ランナー・スプルーの分は入らない（多数個取りなら取り数を掛ける）", title
+            # what it is of, on the area's and the weight's too (#59 P1)
+            assert page.locator("#props-total-proj").get_attribute("title").endswith("ランナー・スプルーの分は入らない（多数個取りなら取り数を掛ける）")
+            assert "ランナー・スプルー" in page.locator("#props-total-mass").get_attribute("title")
             # the estimate is said on the row: no extra note line for it
             assert "目安" not in page.inner_text("#props-note")
 

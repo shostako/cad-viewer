@@ -186,6 +186,8 @@ with nav_session() as n:
     assert len(rows) == n_check and all(r["出どころ"] == "表示用メッシュの近似" for r in rows if r["種類"] != "判定できない"), rows
     assert all(r["値"] == "0.00" for r in rows if r["種類"] == "勾配不足"), rows
 
+    # what the values are of (#59 P1): the parts shown, no runner, a cavity of a multi-cavity mould
+    assert b["体積・重量"][0][0].endswith("重量・投影面積・型締力は、表示している部品の分だけ（ランナー・スプルーは入らない。多数個取りなら取り数を掛ける）"), b["体積・重量"][0]
     head, rows = table(b["体積・重量"], "項目")
     props = {}
     for r in rows:
