@@ -42,8 +42,9 @@ import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { CompareView, changeText, renderCompareLegend, runCompare, signed, startTolerance, type CompareNav, type CompareRole, type CompareShow } from './compareview'
 import type { Place, Surface } from './compare'
-import { DATUM_NAMES, align, movedSurfaces, shiftOf, turnAngle, type Alignment, type DatumPair, type Xyz } from './align'
-import { AlignTool, type AlignSide } from './aligntool'
+import { DATUM_NAMES, align, movedSurfaces, shiftOf, turnAngle, type Alignment, type DatumPair, type Motion, type Xyz } from './align'
+import { AlignTool, runAutoAlign, type AlignSide } from './aligntool'
+import type { AutoAlignment } from './autoalign'
 import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
 import { undercutPlaces, type Reach } from './undercut'
 import { SpotNav } from './spotnav'
@@ -2070,8 +2071,16 @@ let compareHud = ''
  * a B-rep, its parts and surfaces, its box's centre
  */
 let compareOther: { modelId: string; brep: boolean; parts: PartData[]; surfaces: Surface[]; centre: Xyz } | null = null
+/**
+ * An alignment a comparison is made in, its motion of the compared version:
+ * by datums (align.ts), or found (autoalign.ts: its placements, the one shown,
+ * where it started from, the tolerance it fitted within)
+ */
+type CompareAlign =
+  | { kind: 'datums'; motion: Motion; pairs: DatumPair[]; result: Alignment }
+  | { kind: 'auto'; motion: Motion; found: AutoAlignment; at: number; from: 'file' | 'datums'; tolerance: number }
 /** the alignment the comparison is made in (null: the files' own places) */
-let compareAlign: { pairs: DatumPair[]; result: Alignment } | null = null
+let compareAlign: CompareAlign | null = null
 const compareFolder = gui.addFolder('版の比較')
 compareFolder.close()
 const compareActions = {
@@ -2097,16 +2106,24 @@ const compareTolCtl = compareFolder
   .name('許容 (mm)')
   .onChange(() => redrawCompare())
 compareTolCtl.domElement.title = 'この差より小さい所は「変わっていない」（灰色）にする'
-const alignActions = { start: () => startAlign(), reset: () => resetAlign() }
+const alignActions = { start: () => startAlign(), auto: () => void autoAlignCompare(), nextFit: () => nextFit(), reset: () => resetAlign() }
 const alignStartCtl = compareFolder.add(alignActions, 'start').name('基準で合わせる…')
 alignStartCtl.domElement.title = '両方の版で同じ基準（平らな面・穴の軸・円・頂点）を同じ順に選び、比べる版を開いている版に重ねる'
+const autoAlignCtl = compareFolder.add(alignActions, 'auto').name('自動で合わせる')
+autoAlignCtl.domElement.title =
+  '比べる版を、開いている版にいちばんよく重なる位置に置く（基準で合わせてあれば、そこから詰める）。許容より離れた所（形の変更）は合わせに使わない'
+const nextFitCtl = compareFolder.add(alignActions, 'nextFit').name('次の置き方')
+nextFitCtl.domElement.title = '同じくらい合う置き方（対称な形）を順に見る'
 const alignResetCtl = compareFolder.add(alignActions, 'reset').name('位置合わせを外す')
 alignResetCtl.domElement.title = '比べる版をファイルのままの位置に戻して比べ直す'
 const compareStopCtl = compareFolder.add(compareActions, 'stop').name('比較をやめる')
 function showCompareCtls(): void {
   compareNameCtl.show(compareState.name !== '')
   // (not while a comparison is being made: its end would show it over the datums' clicks)
-  alignStartCtl.show(compareView !== null && compareOther !== null && compareRun === null)
+  const idle = compareView !== null && compareOther !== null && compareRun === null
+  alignStartCtl.show(idle)
+  autoAlignCtl.show(idle)
+  nextFitCtl.show(idle && compareAlign?.kind === 'auto' && compareAlign.found.alike > 0)
   alignResetCtl.show(compareView !== null && compareAlign !== null)
   compareStopCtl.show(compareView !== null || compareRun !== null)
 }
@@ -2217,7 +2234,7 @@ async function runComparison(
   if (!other) return 'dropped'
   const modelGen = viewer.modelGen
   compareRun?.cancel()
-  const b = next ? movedSurfaces(other.surfaces, next.result.motion) : other.surfaces
+  const b = next ? movedSurfaces(other.surfaces, next.motion) : other.surfaces
   setCompareHud(`版の比較: ${compareState.name} と比べている...`)
   const run = runCompare(openSurfaces(), b)
   compareRun = run
@@ -2418,7 +2435,52 @@ async function alignBy(pairs: DatumPair[]): Promise<void> {
     return
   }
   redrawCompare() // the last comparison while the new one is made
-  if ((await runComparison({ pairs, result })) === 'shown') viewer.fitToView()
+  if ((await runComparison({ kind: 'datums', motion: result.motion, pairs, result })) === 'shown') viewer.fitToView()
+}
+/**
+ * 自動で合わせる (autoalign.ts, in a Worker): the compared version where it
+ * fits the open one best: from the datums' alignment if there is one, else
+ * searched for. Then compared again in it.
+ */
+async function autoAlignCompare(): Promise<void> {
+  if (!compareView || !compareOther || compareRun) return
+  if (alignTool.active) stopAlignPick()
+  const datums = compareAlign?.kind === 'datums' ? compareAlign : null
+  const gen = ++compareGen
+  const tolerance = compareState.tolerance
+  setCompareHud(`版の比較: ${compareState.name} を自動で合わせている...`)
+  // the datums left a turn free (a plane alone): about its direction the start is turned in steps, and searched too
+  const free = datums && datums.result.fixed.turn < 3 ? datums.pairs.find((p) => p.open.dir) : undefined
+  const spin = free ? { axis: free.open.dir!, at: free.open.at } : null
+  const run = runAutoAlign(openSurfaces(), compareOther.surfaces, { motion: datums?.motion ?? null, spin }, tolerance)
+  compareRun = run // 比較をやめる cancels it; the buttons wait for it
+  showCompareCtls()
+  let found: AutoAlignment
+  try {
+    found = await run.promise
+  } catch (e) {
+    if (gen !== compareGen) return
+    compareRun = null
+    showCompareCtls()
+    setCompareHud(`版の比較: 自動で合わせられなかった — ${e instanceof Error ? e.message : e}`)
+    return
+  }
+  if (gen !== compareGen) return
+  compareRun = null
+  if (!found.fits.length) {
+    showCompareCtls()
+    setCompareHud('版の比較: 自動で合わせられなかった（重なる所が見つからない）')
+    return
+  }
+  const next: CompareAlign = { kind: 'auto', motion: found.fits[0].motion, found, at: 0, from: datums ? 'datums' : 'file', tolerance }
+  if ((await runComparison(next, gen)) === 'shown') viewer.fitToView()
+}
+/** 次の置き方: the next of the placements that fit about as well (a symmetric shape), compared again in it */
+function nextFit(): void {
+  const a = compareAlign
+  if (!a || a.kind !== 'auto' || !a.found.alike || compareRun) return
+  const at = (a.at + 1) % (a.found.alike + 1)
+  void runComparison({ ...a, at, motion: a.found.fits[at].motion })
 }
 /** 位置合わせを外す: the compared version in its file's place again */
 function resetAlign(): void {
@@ -2428,15 +2490,27 @@ function resetAlign(): void {
 const dirText = (d: readonly number[]) => `(${d.map((v) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3)).join(', ')})`
 /** the alignment as the legend and the 記録 tell it ('' for none) */
 function alignText(): string {
-  if (!compareAlign || !compareOther) return ''
-  const { pairs, result } = compareAlign
-  const kinds = pairs.map((p) => DATUM_NAMES[p.open.kind]).join('・')
-  const { angle, axis } = turnAngle(result.motion.r)
+  const a = compareAlign
+  if (!a || !compareOther) return ''
+  const { angle, axis } = turnAngle(a.motion.r)
   const turned = angle < 5e-3 ? '回さず' : `回転 ${angle.toFixed(2)}°（軸 ${dirText(axis)}）`
-  const shift = shiftOf(result.motion, compareOther.centre)
+  const moved = `比べる版を${turned}、真ん中を ${modelPoint(shiftOf(a.motion, compareOther.centre))} mm 動かした`
+  if (a.kind === 'auto') {
+    const f = a.found.fits[a.at]
+    const from = a.from === 'datums' ? '基準の合わせから詰めた。' : ''
+    let text =
+      `位置合わせ（自動）: ${from}${moved}（ファイルどうしの位置のずれ）。` +
+      `比べる版の面の ${(100 * f.within).toFixed(1)} % が許容 ±${a.tolerance} mm の中で重なる（その離れ RMS ${fmt(f.rms)} mm）。残りが形の変更`
+    if (a.found.alike) {
+      text += `。同じくらい合う置き方がほかに ${a.found.alike} 通りある（対称な形。いまは ${a.at + 1}/${a.found.alike + 1}）。「次の置き方」で見比べるか、形が対称でない所を基準に合わせる`
+    }
+    return text
+  }
+  const { pairs, result } = a
+  const kinds = pairs.map((p) => DATUM_NAMES[p.open.kind]).join('・')
   const far = Math.max(...result.misfit.map((f) => f.distance))
   const off = Math.max(...result.misfit.map((f) => f.angle))
-  let text = `位置合わせ: 基準 ${kinds}。比べる版を${turned}、真ん中を ${modelPoint(shift)} mm 動かした。基準のずれ 最大 ${fmt(far)} mm・${off.toFixed(2)}°`
+  let text = `位置合わせ: 基準 ${kinds}。${moved}。基準のずれ 最大 ${fmt(far)} mm・${off.toFixed(2)}°`
   const turnFree = 3 - result.fixed.turn, moveFree = 3 - result.fixed.move
   if (turnFree || moveFree) text += `。基準で決まらない動き（回転 ${turnFree}・移動 ${moveFree}）は、比べる版の真ん中を動かさない`
   return text
@@ -4168,13 +4242,18 @@ testHooks.__cadAlign = () => {
     side: alignTool.side,
     counts: alignTool.counts,
     aligned: a && {
-      kinds: a.pairs.map((p) => p.open.kind),
-      r: a.result.motion.r,
-      t: a.result.motion.t,
-      fixed: a.result.fixed,
-      misfit: a.result.misfit,
-      ...turnAngle(a.result.motion.r),
-      shift: compareOther ? shiftOf(a.result.motion, compareOther.centre) : null,
+      kind: a.kind,
+      kinds: a.kind === 'datums' ? a.pairs.map((p) => p.open.kind) : [],
+      r: a.motion.r,
+      t: a.motion.t,
+      fixed: a.kind === 'datums' ? a.result.fixed : null,
+      misfit: a.kind === 'datums' ? a.result.misfit : [],
+      auto:
+        a.kind === 'auto'
+          ? { at: a.at, alike: a.found.alike, from: a.from, fits: a.found.fits.map((f) => ({ within: f.within, rms: f.rms })) }
+          : null,
+      ...turnAngle(a.motion.r),
+      shift: compareOther ? shiftOf(a.motion, compareOther.centre) : null,
     },
   }
 }

@@ -8,8 +8,35 @@
  * the B-rep's), as 座標系 takes its origin and axes (frame.ts).
  */
 import { DATUM_NAMES, type Datum, type DatumPair, type Xyz } from './align'
+import type { AlignAsk, AlignReply } from './alignworker'
+import type { AutoAlignment, AutoStart } from './autoalign'
+import type { Surface } from './compare'
 import { measureEdgeInfo, measureFaceInfo, measureVertexInfo, type EntityRef } from './api'
 import type { PickResult } from './picking'
+
+/** 自動で合わせる in the Worker (autoalign.ts); cancel() stops it (the promise then never settles) */
+export function runAutoAlign(a: Surface[], b: Surface[], start: AutoStart, tolerance: number): { promise: Promise<AutoAlignment>; cancel(): void } {
+  const worker = new Worker(new URL('./alignworker.ts', import.meta.url), { type: 'module' })
+  const promise = new Promise<AutoAlignment>((resolve, reject) => {
+    worker.onmessage = (e: MessageEvent<AlignReply>) => {
+      worker.terminate()
+      const r = e.data
+      if (r.ok) resolve(r.result)
+      else reject(new Error(r.error))
+    }
+    worker.onerror = (e) => {
+      worker.terminate()
+      reject(new Error(e.message || '自動の合わせの計算が止まった'))
+    }
+  })
+  // copies: the meshes on screen keep their arrays
+  const copy = (parts: Surface[]): Surface[] =>
+    parts.map((s) => ({ positions: Float32Array.from(s.positions), normals: Float32Array.from(s.normals), indices: Uint32Array.from(s.indices) }))
+  const ca = copy(a), cb = copy(b)
+  const transfer = [...ca, ...cb].flatMap((s) => [(s.positions as Float32Array).buffer, (s.normals as Float32Array).buffer, (s.indices as Uint32Array).buffer])
+  worker.postMessage({ a: ca, b: cb, start, tolerance } satisfies AlignAsk, transfer)
+  return { promise, cancel: () => worker.terminate() }
+}
 
 /** which version the clicks are on */
 export type AlignSide = 'open' | 'other'
