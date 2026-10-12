@@ -1,3 +1,4 @@
+import type { FaceInfo } from './facecompare'
 import { engine, EngineUnreachable } from './engine'
 import { parseMeshPack, type MeshPack } from './meshpack'
 
@@ -146,6 +147,15 @@ export interface FaceInfoResult {
   /** anything else curved, given the click: the smallest radius of curvature there, and the surface's point there */
   localRadius?: number
   at?: Xyz
+}
+
+/** every face of every part (版の比較's 面の変化: facecompare.ts) */
+export interface FacesResult {
+  type: 'faces'
+  parts: { partId: number; faces: FaceInfo[] }[]
+}
+export function measureFaces(modelId: string) {
+  return measureRequest<FacesResult>(modelId, { type: 'faces' })
 }
 
 async function measureRequest<T>(modelId: string, body: unknown): Promise<T> {

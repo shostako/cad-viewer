@@ -125,7 +125,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `loaders.py` → `tessellation.py` → `meshpack.py` — 形式ごとの読み込み → ID 付きのテッセレーション → バイナリ化
   - `polygons.py` — OBJ・PLY・OFF の角が 4 つ以上の面の分け方（#87）。trimesh は先頭の角からの扇形で分けるので、凹んだ面で扇形が面の外に出るときだけ、ファイルの面を自分で読み直して耳切りで分ける。trimesh が読めないファイル（角の数がまちまちの OFF と二進の PLY）も、ここで Web 版と同じに読む。Web 版の `local/polygons.ts` と同じ手順（1 歩ずつそろえてある。変えるなら両方）
   - `tessellation.merge_loose_shapes` — 最上位のバラバラの面（IGES に多い）を縫い合わせて 1 つの形にし、閉じればソリッドにする。バラバラの曲線は「曲線（N 本）」の 1 部品にまとめる
-- `measure.py` — OCCT での計測（distance、edge_info、face_info）
+- `measure.py` — OCCT での計測（distance、edge_info、face_info、faces：全部の面の face_info）
 - `thickness.py` — 肉厚（レイ法とローリングボール法）。表示用メッシュで計算する
 - `projection.py` — 投影面積（型締力の目安）。表示用メッシュの影をビットマップに塗って数える。向きは X・Y・Z か、任意の向き（`dir=x,y,z`。向きに垂直な 2 本の軸は `basis`、Web 版の `local/projection.ts` と同じ作り方）
 - `thick.py` — 厚肉（`GET /thick`・`/thick.bin`）。部品の中に格子を並べ、表面までの距離（scipy の距離変換）から、面ごとの肉厚・一般部の肉厚（面の最頻値）・肉だまり（一般部の何倍もの球が入る所）を出す。格子はモデルごとに覚える（`entry.extra["thick_fields"]`）。B-rep の部品が閉じているかは `/properties` の判定に任せる（表示用メッシュは曲面の継ぎ目に髪の毛ほどの隙間があり、三角形で見ると開いて見える）。`/properties` はロックの外で先に呼ぶ（B-rep の読み直しが `entry.lock` を取るので、中で呼ぶと止まる）
@@ -151,6 +151,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
 - `compare.ts` / `compareworker.ts` / `compareview.ts` — 版の比較（`docs/designs/compare.md`）。2 つの版の表示用メッシュを細かく割り、相手の面までの距離と、外か中か（角度で重み付けした擬似法線）を Worker で出す。backend には無い（手元の版も Web 版もブラウザの中で同じ計算をする）。比べている間、viewer は開いている版の面を隠して比較の面（`setStandIn`）を出す
 - `align.ts` / `aligntool.ts` — 版の比較の位置合わせ（`docs/designs/align.md`）。両方の版で同じ基準（平面・軸・円・点。値は `face_info`・`edge_info`・`vertex_info` の B-rep の真値）を同じ順に選び、選んだ順を優先に比べる版を動かす（3-2-1）。`align.ts` は解き方だけ（DOM なし、単体テスト）、`aligntool.ts` はクリックの段取り。比べる版の上のクリックは、`viewer.standInParts` が作る面と稜線に、それ用の `Picker`（`PickSource` を渡す）で拾う。動かした比べる版で比べ直す（main の `runComparison`）
+- `facecompare.ts` — 版の比較の面の変化（`docs/designs/compare-faces.md`）。計測の問い `{"type": "faces"}`（全部の面の `face_info` と番号。backend の `measure.faces`、Web 版の `Measurer.faces`）の答えを 2 つの版で組にし、同じ・動いた・大きさ・形・片方だけに分ける。比べる版の面は位置合わせの動きで移してから。純粋（DOM なし、単体テスト）
 - `autoalign.ts` / `alignworker.ts` — 版の比較の自動の合わせ（`docs/designs/align.md` の段 2）。ファイルのままの位置・主軸を重ねる置き方・基準の合わせ（回りが残れば、その軸のまわりに回した物も）から、点から面の ICP で詰める（Worker、three-mesh-bvh）。重みの幅を許容まで狭め、最後は許容の中の点だけ（形の変更は合わせに使わない）。同じくらい合う置き方（対称な形）は全部返し、動きの小さい順に並べる
 - `undercut.ts` / `undercutworker.ts` / `undercutview.ts` — アンダーカットの候補（`docs/designs/undercut.md`）。部品ごとに、細かく割った面の点から型開き方向の上下へ光線を飛ばし、同じ部品に当たるかで分ける（Worker、three-mesh-bvh、backend には無い）。表示は版の比較と同じく `setStandIn`（面に部品の番号を持たせ、`setPartVisible` で一緒に出し入れする。隠したモデルのピックは効くので、計測はそのまま使える）。光線の出発点は、面から法線の向きに少し離し、面の中へも少しずらす（縁や角の点から出す光線は境目をなぞって、隣の床などに当たる）。問題の一覧の「アンダーカット」は `undercutPlaces` で所にまとめる。光線の計算は、色の表示と問題の一覧で共用する（main の `reachNow`。鍵はモデルと型開き方向）
 - `engine.ts` — 計算をどこでするか（Web 版の境目、`docs/designs/web-version.md`）。`api.ts` はここを通してだけ backend の道（`/api/...`）を呼ぶ。HttpEngine（fetch と、送った量の分かる XMLHttpRequest）と、Web 版の LocalEngine（`local/`）。どちらかはビルドで決まる（`VITE_CAD_ENGINE=local`、`npm run build:web`）。`api.ts` に `fetch` を直に書き足さない
