@@ -11,7 +11,7 @@ the legend.
 """
 import math
 
-from nav_common import TESTDATA, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, nav_session
 
 # revision_b's box (testdata/make_step_assembly.py make_revisions): the plate and the bosses
 LO, HI = (0, 0, 0), (60, 40, 13)
@@ -21,7 +21,7 @@ def corners(lo, hi):
     return [(x, y, z) for x in (lo[0], hi[0]) for y in (lo[1], hi[1]) for z in (lo[2], hi[2])]
 
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
 
     def compare(width, height):
