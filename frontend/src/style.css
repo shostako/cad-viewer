@@ -327,6 +327,58 @@ body,
   display: none;
 }
 
+/* 左右に見比べる (main.ts swipeBar): the line over the 3D view, dragged; its labels at its top */
+#swipe-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--cv-accent);
+  cursor: ew-resize;
+  touch-action: none;
+  z-index: 2;
+}
+
+#swipe-bar.hidden {
+  display: none;
+}
+
+/* a wider strip to take the pointer than the line drawn */
+#swipe-bar::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -7px;
+  right: -7px;
+}
+
+#swipe-bar.dragging,
+#swipe-bar:hover {
+  background: var(--cv-accent-hover);
+}
+
+.swipe-label {
+  position: absolute;
+  top: calc(var(--cv-column-top) + 4px);
+  padding: 1px 6px;
+  border-radius: var(--cv-r-sm);
+  background: var(--cv-surface);
+  color: var(--cv-text);
+  font-size: var(--cv-fs-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.swipe-label.left {
+  right: 8px;
+}
+
+.swipe-label.right {
+  left: 8px;
+}
+
 .compare-note {
   margin-top: 2px;
   max-width: 34em;

@@ -224,6 +224,12 @@ export class Viewer {
   private modelGroup = new THREE.Group()
   /** meshes shown in place of the model's (setStandIn): 版の比較 (compareview.ts), アンダーカットの候補 (undercutview.ts) */
   private standInGroup = new THREE.Group()
+  /**
+   * 左右に見比べる (版の比較): left of a line across the canvas (at, its
+   * fraction of the width) these objects alone, right of it those (the rest of
+   * the scene on both): one camera, drawn twice in two scissors (setSplit)
+   */
+  private split: { at: number; left: THREE.Object3D[]; right: THREE.Object3D[] } | null = null
   /** the section's planes now (setClippingPlanes), for stand-in meshes put on later */
   private clipping: THREE.Plane[] | null = null
   private gridHelper: THREE.GridHelper | null = null
@@ -486,7 +492,7 @@ export class Viewer {
   /** draw a frame now (the loop, or a read of the canvas) */
   private drawFrame(now: number): void {
     this.prepareCamera()
-    this.renderer.render(this.scene, this.camera)
+    this.renderScene()
     this.labelRenderer.render(this.scene, this.camera)
     this.spreadLabels()
     this.lastDrawn = now
@@ -788,6 +794,7 @@ export class Viewer {
    */
   setStandIn(meshes: THREE.Object3D[] | null): void {
     this.wake()
+    this.split = null // it was of the last stand-ins (the caller splits the new ones again)
     this.standInGroup.clear()
     for (const m of meshes ?? []) {
       m.traverse((o) => {
@@ -858,6 +865,56 @@ export class Viewer {
       }
     }
     return { objects, source, dispose }
+  }
+
+  /**
+   * 左右に見比べる: left of the line at `at` (a fraction of the canvas's width)
+   * `left` alone, right of it `right` (null: the whole scene, as usual). The
+   * objects are the caller's (setStandIn's).
+   */
+  setSplit(split: { at: number; left: THREE.Object3D[]; right: THREE.Object3D[] } | null): void {
+    this.wake()
+    this.split = split ? { at: split.at, left: [...split.left], right: [...split.right] } : null
+  }
+
+  /** the split's line moved (a fraction of the canvas's width) */
+  setSplitAt(at: number): void {
+    if (!this.split) return
+    this.wake()
+    this.split.at = at
+  }
+
+  /** the split's line (a fraction of the width), or null when the scene is drawn whole */
+  get splitAt(): number | null {
+    return this.split?.at ?? null
+  }
+
+  /** the scene for the camera: whole, or (setSplit) each side of the line its own objects */
+  private renderScene(): void {
+    const split = this.split
+    if (!split) {
+      this.renderer.render(this.scene, this.camera)
+      return
+    }
+    const el = this.renderer.domElement
+    const w = el.clientWidth, h = el.clientHeight
+    const x = Math.round(Math.min(1, Math.max(0, split.at)) * w)
+    const shown = (list: THREE.Object3D[], on: boolean) => list.forEach((o) => (o.visible = on))
+    const r = this.renderer
+    r.setScissorTest(true)
+    try {
+      shown(split.right, false)
+      r.setScissor(0, 0, x, h)
+      r.render(this.scene, this.camera)
+      shown(split.right, true)
+      shown(split.left, false)
+      r.setScissor(x, 0, w - x, h)
+      r.render(this.scene, this.camera)
+    } finally {
+      shown(split.left, true)
+      shown(split.right, true)
+      r.setScissorTest(false)
+    }
   }
 
   /** Create a screen-space label attached to a 3D point. */
@@ -1401,7 +1458,7 @@ export class Viewer {
       this.applyOrthoZoomLimits()
       this.applyPose(before, up)
       this.lastFit = fit
-      this.renderer.render(this.scene, this.camera)
+      this.renderScene()
       this.labelRenderer.render(this.scene, this.camera)
       this.wake()
     }
@@ -2014,7 +2071,7 @@ export class Viewer {
     this.setHighlight([])
     try {
       if (background === 'white') restore = this.applyWhiteBackground()
-      this.renderer.render(this.scene, this.camera)
+      this.renderScene()
       // same task as render(): without preserveDrawingBuffer the buffer is undefined once presented
       ctx.drawImage(src, 0, 0)
     } finally {
@@ -2023,7 +2080,7 @@ export class Viewer {
       this.setHighlight(lit) // after restore(): it puts back the plain line colours
       // the visible canvas holds the normal frame again (a hidden tab may not
       // run the loop for a while)
-      this.renderer.render(this.scene, this.camera)
+      this.renderScene()
     }
     this.labelRenderer.render(this.scene, this.camera) // label positions for exactly this camera
     const rect = src.getBoundingClientRect()

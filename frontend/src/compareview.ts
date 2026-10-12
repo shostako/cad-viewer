@@ -20,8 +20,12 @@ import { palette } from './theme.ts'
 
 /** the compared file is the previous version of the one open, or the next */
 export type CompareRole = 'previous' | 'next'
-/** 重ねる: the new version, and of the old one what was removed; or one version alone */
-export type CompareShow = 'overlay' | 'new' | 'old'
+/**
+ * 重ねる: the new version, and of the old one what was removed; or one version
+ * alone; or 左右に見比べる (swipe): the old version left of a line, the new one
+ * right of it, each coloured (viewer.ts setSplit)
+ */
+export type CompareShow = 'overlay' | 'new' | 'old' | 'swipe'
 
 /**
  * added: a blue-green; removed: a red-orange (told apart also with red-green
@@ -199,8 +203,17 @@ export class CompareView {
     if (this.show === 'overlay') {
       add(this.newSide, false)
       add(this.oldSide, true)
+    } else if (this.show === 'swipe') {
+      add(this.oldSide, false)
+      add(this.newSide, false)
     } else add(this.show === 'new' ? this.newSide : this.oldSide, false)
     return out
+  }
+
+  /** 左右に見比べる: the old version's mesh (left of the line) and the new one's (right); null in the other ways */
+  swipeSides(): { left: THREE.Mesh; right: THREE.Mesh } | null {
+    const o = this.sides[this.oldSide], n = this.sides[this.newSide]
+    return this.show === 'swipe' && o && n ? { left: o.mesh, right: n.mesh } : null
   }
 
   dispose(): void {
@@ -220,8 +233,10 @@ export class CompareView {
    * removed is not drawn over the new one; the section's cut-away side is not
    * drawn either). null off the meshes.
    */
-  valueAt(ndc: THREE.Vector2, camera: THREE.Camera): string | null {
-    const meshes = (['a', 'b'] as const).map((k) => this.sides[k]).filter((s): s is Side => s !== null)
+  valueAt(ndc: THREE.Vector2, camera: THREE.Camera, only?: 'old' | 'new'): string | null {
+    // 左右に見比べる: the version drawn on the cursor's side of the line alone
+    const keys = only ? [only === 'new' ? this.newSide : this.oldSide] : (['a', 'b'] as const)
+    const meshes = keys.map((k) => this.sides[k]).filter((s): s is Side => s !== null)
     for (const s of meshes) if (!s.mesh.geometry.boundsTree) s.mesh.geometry.computeBoundsTree?.({ indirect: true })
     this.raycaster.setFromCamera(ndc, camera)
     const hits = this.raycaster.intersectObjects(
