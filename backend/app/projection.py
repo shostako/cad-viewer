@@ -4,7 +4,8 @@ The projected area is the area of the model's shadow on a plane normal to the
 direction: the union of the projected triangles, so overlapping parts, a boss
 over the plate and the two sides of a closed body count once, and a through
 hole stays open. The direction is one of the axes (the same choice as the
-draft analysis); its sign does not matter, the shadow is the same.
+draft analysis), or any direction (one picked from a face or an edge: a
+basis square to it, basis()); its sign does not matter, the shadow is the same.
 
 Like the wall thickness this runs on the display mesh, not the B-rep: an
 estimate. A curved outline is the tessellation's polygon (inside the true
@@ -22,7 +23,7 @@ pixel size keeps the finer bitmap under a fixed number of pixels.
 from __future__ import annotations
 
 import math
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -48,8 +49,57 @@ def _bitmap_area(tris: np.ndarray, lo: np.ndarray, h: float, size: tuple[int, in
     return float(size[0] * size[1] - im.histogram()[0]) * h * h
 
 
-def projected_area(parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str) -> dict[str, Any]:
-    """the shadow's area (mm²) of the given (positions, indices) meshes along axis X / Y / Z"""
+def unit_direction(direction: Sequence[float]) -> np.ndarray | None:
+    """the direction made a unit vector; None when it is not three finite numbers, not all 0"""
+    d = np.asarray(direction, dtype=np.float64)
+    if d.shape != (3,) or not np.isfinite(d).all():
+        return None
+    # by the largest first: the length of 1e308 x 3 would overflow, of 1e-300 underflow (Codex on #105)
+    m = float(np.max(np.abs(d)))
+    if m == 0:
+        return None
+    d = d / m
+    return d / float(np.linalg.norm(d))
+
+
+def axis_of(d: np.ndarray) -> str | None:
+    """the axis a unit direction lies along, to the last bit (its sign aside); None for any other"""
+    for name, k in AXES.items():
+        if abs(d[k]) == 1.0 and all(d[i] == 0.0 for i in range(3) if i != k):
+            return name
+    return None
+
+
+def basis(d: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """two unit vectors square to the unit direction d and to each other: the first
+    from d and the axis d is least along (the first such, in X Y Z), the second d x it.
+    The Web version's projection.ts makes the same pair"""
+    k = 0
+    for i in (1, 2):
+        if abs(d[i]) < abs(d[k]):
+            k = i
+    e = np.zeros(3)
+    e[k] = 1.0
+    u = np.cross(d, e)
+    u = u / np.linalg.norm(u)
+    return u, np.cross(d, u)
+
+
+def projected_area(
+    parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str = "Z", direction: np.ndarray | None = None
+) -> dict[str, Any]:
+    """the shadow's area (mm²) of the given (positions, indices) meshes along axis X / Y / Z,
+    or along a unit direction (unit_direction) when one is given"""
+    head: dict[str, Any] = {"axis": axis}
+    flat = True
+    if direction is not None:
+        head = {"axis": "dir", "dir": direction.tolist()}
+        along = axis_of(direction)
+        if along is not None:
+            axis = along  # the axis's own way: the same answer as asking for the axis
+        else:
+            flat = False
+            u, v = basis(direction)
     k = AXES[axis]
     keep = [i for i in range(3) if i != k]
     chunks = []
@@ -57,7 +107,8 @@ def projected_area(parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str) ->
         p = np.asarray(positions, dtype=np.float64).reshape(-1, 3)
         idx = np.asarray(indices, dtype=np.int64).reshape(-1, 3)
         if len(idx):
-            chunks.append(p[idx][:, :, keep])
+            t = p[idx]
+            chunks.append(t[:, :, keep] if flat else np.stack([t @ u, t @ v], axis=-1))
     tris = np.concatenate(chunks) if chunks else np.zeros((0, 3, 2))
     if len(tris):
         # walls along the axis project to slivers with no area: Pillow would
@@ -68,7 +119,7 @@ def projected_area(parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str) ->
         scale = float(np.max(hi - lo))
         tris = tris[twice > (scale * 1e-9) ** 2]
     if len(tris) == 0:
-        return {"axis": axis, "area": 0.0, "pixel": None}
+        return {**head, "area": 0.0, "pixel": None}
 
     lo, hi = tris.reshape(-1, 2).min(0), tris.reshape(-1, 2).max(0)
     w, hgt = (hi - lo).tolist()
@@ -82,4 +133,4 @@ def projected_area(parts: Iterable[tuple[np.ndarray, np.ndarray]], axis: str) ->
     coarse = _bitmap_area(tris, origin, 2 * h, size(2 * h))
     fine = _bitmap_area(tris, origin, h, size(h))
     area = max(2 * fine - coarse, 0.0)
-    return {"axis": axis, "area": area, "pixel": h}
+    return {**head, "area": area, "pixel": h}

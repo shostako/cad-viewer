@@ -18,15 +18,21 @@ import type { Frame } from './sizes'
 
 type Xyz = [number, number, number]
 
-/** what the clicks are for, in turn */
-export type FrameStep = 'origin' | 'z' | 'x'
+/** what the clicks are for, in turn ('pull': one click, the 抜き勾配's 型開き方向: startPull) */
+export type FrameStep = 'origin' | 'z' | 'x' | 'pull'
 
 /** the line of the status line that asks for the step's click */
 export const FRAME_PROMPTS: Record<FrameStep, string> = {
   origin: '座標系: 原点をクリック（頂点、円の稜線か球の面の中心・Esc でやめる）',
   z: '座標系: Z 軸をクリック（平面の法線、直線の稜線、円筒・円錐・円の軸・Esc でやめる）',
   x: '座標系: X 軸をクリック（Z と同じ種類。Z に直角にそろえる・Esc でやめる）',
+  pull: '型開き方向: 平らな面（その法線）、直線の稜線、円筒・円錐・円の軸をクリック（Esc でやめる）',
 }
+
+/** the prompt's own part, after its "座標系: " / "型開き方向: " */
+const promptBody = (step: FrameStep) => FRAME_PROMPTS[step].replace(/^[^:]+: /, '')
+/** what the status line says a step is about */
+const stepName = (step: FrameStep) => (step === 'pull' ? '型開き方向' : '座標系')
 
 /** an axis closer to Z than this (the sine of the angle) cannot make X */
 const PARALLEL_SIN = 1e-6
@@ -95,6 +101,8 @@ export class FrameTool {
   private step: FrameStep | null = null
   private origin: Xyz | null = null
   private z: Xyz | null = null
+  /** 'pull': what the direction is for */
+  private onPull: ((dir: Xyz) => void) | null = null
   /** a click being answered: the next one waits (it is dropped) */
   private asking = false
   /** bumped by a new model and by stop(): a late answer for the old one is dropped */
@@ -129,11 +137,32 @@ export class FrameTool {
     this.hooks.say(FRAME_PROMPTS.origin)
   }
 
+  /**
+   * One click instead, for the 抜き勾配's 型開き方向 (#59 P2): a plane's normal
+   * out of the solid, a straight edge, the axis of a cylinder, a cone or a
+   * circle, as the frame's axes are taken. `done` gets it (a unit vector).
+   */
+  startPull(done: (dir: Xyz) => void): void {
+    if (!this.modelId) return
+    this.session++
+    this.step = 'pull'
+    this.origin = this.z = null
+    this.onPull = done
+    this.asking = false
+    this.hooks.say(FRAME_PROMPTS.pull)
+  }
+
+  /** what the clicks are for now (null: nothing is being chosen) */
+  get choosing(): FrameStep | null {
+    return this.step
+  }
+
   /** give up the choice under way (the frame shown stays as it was) */
   stop(): void {
     this.session++
     this.step = null
     this.origin = this.z = null
+    this.onPull = null
     this.asking = false
   }
 
@@ -149,7 +178,13 @@ export class FrameTool {
       const got = step === 'origin' ? await originOf(modelId, ref) : await axisOf(modelId, ref)
       if (session !== this.session) return
       // why not, and the step's prompt again: 「座標系: この稜線に中心はない — 原点をクリック（…）」
-      if (typeof got === 'string') return this.hooks.say(`座標系: ${got} — ${FRAME_PROMPTS[step].replace('座標系: ', '')}`)
+      if (typeof got === 'string') return this.hooks.say(`${stepName(step)}: ${got} — ${promptBody(step)}`)
+      if (step === 'pull') {
+        const done = this.onPull
+        this.step = null
+        this.onPull = null
+        return done?.(unit(got))
+      }
       if (step === 'origin') {
         this.origin = got
         this.step = 'z'
@@ -161,11 +196,11 @@ export class FrameTool {
         return this.hooks.say(FRAME_PROMPTS.x)
       }
       const frame = makeFrame(this.origin!, this.z!, got)
-      if (!frame) return this.hooks.say(`座標系: Z 軸と平行で X 軸にならない — ${FRAME_PROMPTS.x.replace('座標系: ', '')}`)
+      if (!frame) return this.hooks.say(`座標系: Z 軸と平行で X 軸にならない — ${promptBody('x')}`)
       this.step = null
       this.hooks.changed(frame)
     } catch (e) {
-      if (session === this.session) this.hooks.say(`座標系: 調べられなかった（${e instanceof Error ? e.message : e}）`)
+      if (session === this.session) this.hooks.say(`${stepName(step)}: 調べられなかった（${e instanceof Error ? e.message : e}）`)
     } finally {
       if (session === this.session) this.asking = false
     }

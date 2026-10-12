@@ -24,7 +24,7 @@ import {
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { foldButton } from './cardfold'
-import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_LABELS, PULL_DIR_OPTIONS, draftTipText, renderDraftLegend, type PullDir } from './draft'
+import { DRAFT_MAX_DEG, PULL_DIRS, PULL_DIR_LABELS, PULL_DIR_OPTIONS, draftTipText, pickedLabel, renderDraftLegend, type PullDir } from './draft'
 import { Drawing2D, type Measurement2D } from './drawing2d'
 import { fitRect, type ScreenRect } from './freearea'
 import { KeyHelp } from './help'
@@ -1176,10 +1176,26 @@ function releaseColors(owner: ColorOwner): void {
 // Draft direction and angle survive a reload; the on/off box does not (a model
 // that opens already coloured would look like a broken file).
 const DRAFT_PREFS_KEY = 'cad-viewer:draft'
-const draftState = { enabled: false, dir: '+Z' as PullDir, required: 1 }
+const draftState = { enabled: false, dir: '+Z' as PullDir | 'picked', required: 1 }
+/**
+ * 型開き方向 picked from a face or an edge (選んだ向き, #59 P2): a unit vector
+ * in the model's coordinates; null until one is picked. Not kept across a
+ * reload (it is a face of a model); a new model keeps it (versions of a part)
+ */
+let pickedDir: [number, number, number] | null = null
+/** the last of the six, for a reload while 選んだ向き is chosen */
+let lastPreset: PullDir = '+Z'
+/** the pull direction now: one of the six, or the picked one */
+function pullVector(): readonly [number, number, number] {
+  return draftState.dir === 'picked' && pickedDir ? pickedDir : PULL_DIRS[draftState.dir === 'picked' ? lastPreset : draftState.dir]
+}
+/** its name, as the legends, the list and the 記録 say it: +Z, −X, 選んだ向き (0.000, 0.707, 0.707) */
+function pullLabel(): string {
+  return draftState.dir === 'picked' && pickedDir ? pickedLabel(pickedDir) : PULL_DIR_LABELS[draftState.dir === 'picked' ? lastPreset : draftState.dir]
+}
 try {
   const saved = JSON.parse(localStorage.getItem(DRAFT_PREFS_KEY) ?? '{}') ?? {}
-  if ((Object.keys(PULL_DIRS) as string[]).includes(saved.dir)) draftState.dir = saved.dir
+  if ((Object.keys(PULL_DIRS) as string[]).includes(saved.dir)) draftState.dir = lastPreset = saved.dir
   const r = saved.required
   if (typeof r === 'number' && Number.isFinite(r) && r >= 0 && r <= DRAFT_MAX_DEG) draftState.required = r
 } catch {
@@ -1190,7 +1206,8 @@ let modelProps: ModelProperties | null = null
 function saveDraftPrefs(): void {
   try {
     const { dir, required } = draftState
-    localStorage.setItem(DRAFT_PREFS_KEY, JSON.stringify({ dir, required }))
+    if (dir !== 'picked') lastPreset = dir
+    localStorage.setItem(DRAFT_PREFS_KEY, JSON.stringify({ dir: dir === 'picked' ? lastPreset : dir, required }))
   } catch {
     /* best-effort */
   }
@@ -1524,7 +1541,7 @@ function updateDraft(): void {
     probe.refresh()
     return
   }
-  viewer.setDraftColors(PULL_DIRS[draftState.dir], draftState.required)
+  viewer.setDraftColors(pullVector(), draftState.required)
   colorOwner = 'draft'
   renderLegend()
   draftLegend.classList.remove('hidden')
@@ -1535,7 +1552,7 @@ function renderLegend(): void {
   // bodies are turned outward on load, so their front side is the file's.
   // Counted once /properties has answered; until then (or if it fails) no note.
   const unoriented = modelProps?.parts.filter((p) => p.volume === null && p.reason !== 'no_faces').length ?? 0
-  renderDraftLegend(draftLegend, draftState.dir, draftState.required, unoriented)
+  renderDraftLegend(draftLegend, pullLabel(), draftState.required, unoriented)
   spotNav.decorateDraft(draftLegend)
 }
 // the legends' buttons that go to the places their colours point at (spotnav.ts)
@@ -1545,7 +1562,7 @@ const spotNav = new SpotNav(viewer, {
       ? { values: shownThickness, threshold: thicknessState.threshold }
       : null,
   draft: () =>
-    draftState.enabled && colorOwner === 'draft' ? { dir: PULL_DIRS[draftState.dir], required: draftState.required } : null,
+    draftState.enabled && colorOwner === 'draft' ? { dir: pullVector(), required: draftState.required } : null,
 })
 const draftFolder = gui.addFolder('抜き勾配')
 draftFolder.close()
@@ -1568,17 +1585,79 @@ draftFolder
     }
     updateDraft()
   })
-draftFolder
-  .add(draftState, 'dir', PULL_DIR_OPTIONS)
+const pullDirCtl = draftFolder
+  .add(draftState, 'dir', { ...PULL_DIR_OPTIONS, 選んだ向き: 'picked' })
   .name('型開き方向')
-  .onChange(() => {
+  .onChange((dir: PullDir | 'picked') => {
     // the arrows on the still-focused select move the view (isTextEntry)
-    saveDraftPrefs()
-    updateDraft()
-    updateProjection() // the clamping force's projected area follows the direction
-    scheduleChecks()
-    if (undercutState.enabled) void updateUndercut()
+    if (dir === 'picked' && !pickedDir) {
+      // none picked yet: the last of the six stays until one is
+      draftState.dir = lastPreset
+      pullDirCtl.updateDisplay()
+      startPullPick()
+      return
+    }
+    stopPullPick()
+    pullChanged()
   })
+/** a pick of the direction under way is given up (a direction chosen otherwise: the next click is not a pick, Codex on #105) */
+function stopPullPick(): void {
+  if (frameTool.choosing !== 'pull') return
+  frameTool.stop()
+  forgetHoverPick()
+  showModeHint() // the prompt goes
+  probe.refresh()
+}
+/** everything that follows the pull direction, after it changed */
+function pullChanged(): void {
+  saveDraftPrefs()
+  updateDraft()
+  updateProjection() // the clamping force's projected area follows the direction
+  scheduleChecks()
+  if (undercutState.enabled) void updateUndercut()
+  pullDirCtl.domElement.title = `型開き方向 ${pullLabel()}`
+}
+/**
+ * 選んだ向き (#59 P2, as SOLIDWORKS's and Fusion's draft analyses take it): a
+ * click on a plane (its normal out of the solid), a straight edge or the axis
+ * of a cylinder, a cone or a circle, given exactly by the backend (frame.ts
+ * startPull: the frame's clicks and their wiring, Esc to give up)
+ */
+function startPullPick(): void {
+  if (!contentShown || is2D) return
+  if (!frameTool.available) {
+    hudInfo.textContent = '型開き方向を面・稜線から選べるのは STEP・IGES のモデルだけ（メッシュ形式には B-rep の面・稜線が無い）'
+    return
+  }
+  forgetHoverPick()
+  frameTool.startPull((dir) => {
+    pickedDir = [dir[0], dir[1], dir[2]]
+    draftState.dir = 'picked'
+    pullDirCtl.updateDisplay()
+    pullChanged()
+    forgetHoverPick()
+    showModeHint() // the prompt goes
+    hudInfo.textContent = `型開き方向を ${pullLabel()} にした`
+    probe.refresh()
+  })
+  probe.refresh()
+}
+const pullActions = {
+  pick: () => startPullPick(),
+  /** the other way: one of the six to its opposite, the picked one turned over */
+  flip: () => {
+    stopPullPick()
+    if (draftState.dir === 'picked' && pickedDir) pickedDir = [0 - pickedDir[0], 0 - pickedDir[1], 0 - pickedDir[2]]
+    else {
+      const d = draftState.dir === 'picked' ? lastPreset : draftState.dir
+      draftState.dir = `${d[0] === '+' ? '-' : '+'}${d[1]}` as PullDir
+    }
+    pullDirCtl.updateDisplay()
+    pullChanged()
+  },
+}
+draftFolder.add(pullActions, 'pick').name('面・稜線から選ぶ…')
+draftFolder.add(pullActions, 'flip').name('向きを反転')
 const requiredCtl = draftFolder
   .add(draftState, 'required', 0, DRAFT_MAX_DEG, 0.1)
   .name('必要な勾配 (°)')
@@ -1635,8 +1714,8 @@ async function updateUndercut(): Promise<void> {
     ids.push(id)
   }
   if (!parts.length) return
-  setUndercutHud(`アンダーカットの候補: 型開き方向 ${PULL_DIR_LABELS[draftState.dir]} で調べている...`)
-  const run = runReach(parts, PULL_DIRS[draftState.dir])
+  setUndercutHud(`アンダーカットの候補: 型開き方向 ${pullLabel()} で調べている...`)
+  const run = runReach(parts, pullVector())
   undercutRun = run
   try {
     const reach = await run.promise
@@ -1665,9 +1744,9 @@ onTheme(() => {
 function showUndercut(): void {
   if (!undercutView) return
   const area = undercutView.area((id) => viewer.isPartVisible(id))
-  renderUndercutLegend(undercutLegend, PULL_DIR_LABELS[draftState.dir], area)
+  renderUndercutLegend(undercutLegend, pullLabel(), area)
   undercutLegend.classList.remove('hidden')
-  setUndercutHud(`アンダーカットの候補: ${area > 0 ? `${area.toFixed(1)} mm²` : 'なし'}（型開き方向 ${PULL_DIR_LABELS[draftState.dir]}）`)
+  setUndercutHud(`アンダーカットの候補: ${area > 0 ? `${area.toFixed(1)} mm²` : 'なし'}（型開き方向 ${pullLabel()}）`)
 }
 /** the view goes (a new computation comes, or none) */
 function dropUndercutView(): void {
@@ -1711,7 +1790,7 @@ function checkConditions(): CheckConditions {
   return {
     thin: checkState.thickness ? { threshold: thicknessState.threshold, methodName: METHOD_NAMES[methodValues(thicknessState.method)] } : null,
     draft: checkState.draft
-      ? { dirLabel: PULL_DIR_LABELS[draftState.dir], dir: PULL_DIRS[draftState.dir], required: draftState.required }
+      ? { dirLabel: pullLabel(), dir: pullVector(), required: draftState.required }
       : null,
     thick: checkState.thick ? { ratio: thickState.ratio, nominal: thickState.nominal > 0 ? thickState.nominal : null } : null,
     basis: materialStore.follow ? basisText(materialNow(), materialValues()) : null,
@@ -2215,7 +2294,7 @@ function valueAt(hit: FaceHit | null): string | null {
     const v = thicknessAt(values, hit.vertices, hit.weights)
     return shownNominals ? deviationTipText(v, shownNominals.get(hit.partId) ?? null) : thicknessTipText(v)
   }
-  const s = viewer.draftSineAt(hit.partId, hit.triangle, hit.weights, PULL_DIRS[draftState.dir])
+  const s = viewer.draftSineAt(hit.partId, hit.triangle, hit.weights, pullVector())
   return s === null ? null : draftTipText(s, draftState.required)
 }
 // A still cursor sees something else when the view moves under it (keys,
@@ -2678,9 +2757,12 @@ const PROJECTION_DEBOUNCE_MS = 150
 let projectionRequest = 0
 let projectionTimer: ReturnType<typeof setTimeout> | undefined
 const projectionCache = new Map<string, number>()
-function pullAxis(): PullAxis {
-  return draftState.dir[1] as PullAxis
+/** what the projected area is asked along: the axis of one of the six, or the picked direction */
+function pullAlong(): PullAxis | readonly [number, number, number] {
+  return draftState.dir === 'picked' && pickedDir ? pickedDir : ((draftState.dir === 'picked' ? lastPreset : draftState.dir)[1] as PullAxis)
 }
+/** the direction's name on the 体積・重量 panel's rows: the axis, or 選んだ向き */
+const pullShort = (along: PullAxis | readonly number[]): string => (typeof along === 'string' ? along : '選んだ向き')
 /** no rows, and no answer in flight or waiting to be asked will bring them back (teardown) */
 function cancelProjection(): void {
   clearTimeout(projectionTimer)
@@ -2696,9 +2778,10 @@ function updateProjection(): void {
   }
   clearTimeout(projectionTimer)
   const n = ++projectionRequest
-  const axis = pullAxis()
+  const along = pullAlong()
+  const axis = pullShort(along)
   const ids = [...viewer.getPartMeshes().keys()].filter((id) => viewer.isPartVisible(id)).sort((a, b) => a - b)
-  const key = `${modelId}:${axis}:${ids.join(',')}`
+  const key = `${modelId}:${typeof along === 'string' ? along : along.join(',')}:${ids.join(',')}`
   const known = projectionCache.get(key)
   if (known !== undefined) {
     propsPanel.setProjection({ state: 'ok', axis, area: known })
@@ -2707,7 +2790,7 @@ function updateProjection(): void {
   propsPanel.setProjection({ state: 'loading', axis })
   // a tree group toggles its children one by one: ask once they are all set
   projectionTimer = setTimeout(() => {
-    fetchProjectedArea(modelId, axis, ids).then(
+    fetchProjectedArea(modelId, along, ids).then(
       (r) => {
         projectionCache.set(key, r.area)
         if (n === projectionRequest) propsPanel.setProjection({ state: 'ok', axis, area: r.area })

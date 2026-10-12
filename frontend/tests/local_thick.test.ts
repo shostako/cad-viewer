@@ -164,6 +164,22 @@ for (const file of MESH) {
       assert.ok(Math.abs(got.area - exp.area) <= tol, `${ax}: ${got.area} vs ${exp.area} (within ${tol})`)
       assert.deepEqual(got.parts, exp.parts)
     }
+    // along a direction of its own: the same, the outline's length at most the box's
+    {
+      const got = await js('projected_area?dir=1,2,3')
+      const exp = want.projected.dir
+      const span = [0, 1, 2].map((k) => box.max[k] - box.min[k])
+      const tol = Math.max(2e-3 * exp.area, 0.6 * 2 * (span[0] + span[1] + span[2]) * exp.pixel)
+      assert.equal(got.axis, 'dir')
+      assert.ok(Math.abs(got.area - exp.area) <= tol, `dir: ${got.area} vs ${exp.area} (within ${tol})`)
+      // along an axis given as a direction: the axis's own answer
+      assert.equal((await js('projected_area?dir=0,0,2')).area, (await js('projected_area?axis=Z')).area)
+      // any size (projection.py's unit_direction, by the largest first)
+      // (1, 2, 3) as large as a double goes (2e308 would be past it, and refused)
+      const huge = (await js('projected_area?dir=0.5e308,1e308,1.5e308')).area
+      assert.ok(Math.abs(huge - got.area) <= 1e-6 * got.area, `${huge} vs ${got.area}`)
+      assert.equal((await js('projected_area?dir=1e-300,0,0')).area, (await js('projected_area?axis=X')).area)
+    }
     // the shadows known exactly: the thin sheet's 50 x 0.002, 100 x 0.002, 100 x 50;
     // ribbed_plate's from above, its plate's 80 x 50 (the ribs and bosses inside it)
     const exact: Record<string, [string, number][]> = {
@@ -216,8 +232,8 @@ for (const file of BREP) {
         assert.ok(Math.abs(m - t) <= 2 * pitch, `${what} face ${fid}: ${m} vs ${t}`)
       }
     }
-    for (const ax of ['X', 'Y', 'Z']) {
-      const got = await js(`projected_area?axis=${ax}`)
+    for (const ax of ['X', 'Y', 'Z', 'dir']) {
+      const got = await js(ax === 'dir' ? 'projected_area?dir=1,2,3' : `projected_area?axis=${ax}`)
       const exp = want.projected[ax]
       assert.ok(Math.abs(got.area - exp.area) <= 5e-3 * exp.area, `${ax}: ${got.area} vs ${exp.area}`)
     }
@@ -233,6 +249,11 @@ test('the routes\' errors as the backend words them', async () => {
     ['thick?nominal=0:5000', 422, 'nominal must be 0.01..1000 mm'],
     ['projected_area?axis=W', 422, 'axis must be X, Y or Z'],
     ['projected_area?parts=x', 422, 'parts must be comma-separated part ids'],
+    ['projected_area?dir=1,2', 422, 'dir must be three numbers, not all 0'],
+    ['projected_area?dir=0,0,0', 422, 'dir must be three numbers, not all 0'],
+    ['projected_area?dir=1,,2', 422, 'dir must be three numbers, not all 0'],
+    ['projected_area?dir=nan,0,1', 422, 'dir must be three numbers, not all 0'],
+    ['projected_area?dir=2e308,0,0', 422, 'dir must be three numbers, not all 0'],
   ] as const) {
     const r = await be.handle('GET', `/api/models/${id}/${p}`)
     assert.equal(r.status, status, p)

@@ -127,6 +127,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
   - `tessellation.merge_loose_shapes` — 最上位のバラバラの面（IGES に多い）を縫い合わせて 1 つの形にし、閉じればソリッドにする。バラバラの曲線は「曲線（N 本）」の 1 部品にまとめる
 - `measure.py` — OCCT での計測（distance、edge_info、face_info）
 - `thickness.py` — 肉厚（レイ法とローリングボール法）。表示用メッシュで計算する
+- `projection.py` — 投影面積（型締力の目安）。表示用メッシュの影をビットマップに塗って数える。向きは X・Y・Z か、任意の向き（`dir=x,y,z`。向きに垂直な 2 本の軸は `basis`、Web 版の `local/projection.ts` と同じ作り方）
 - `thick.py` — 厚肉（`GET /thick`・`/thick.bin`）。部品の中に格子を並べ、表面までの距離（scipy の距離変換）から、面ごとの肉厚・一般部の肉厚（面の最頻値）・肉だまり（一般部の何倍もの球が入る所）を出す。格子はモデルごとに覚える（`entry.extra["thick_fields"]`）。B-rep の部品が閉じているかは `/properties` の判定に任せる（表示用メッシュは曲面の継ぎ目に髪の毛ほどの隙間があり、三角形で見ると開いて見える）。`/properties` はロックの外で先に呼ぶ（B-rep の読み直しが `entry.lock` を取るので、中で呼ぶと止まる）
 - `drawing.py` — DXF/DWG → SVG。DWG は ODA File Converter（無料、手動で入れる、再配布不可）が PATH に必要。日本語の字（#90）: ezdxf は PC に無いフォントを DejaVu Sans に置き換え、フォントに無い字を四角で描く（書式でフォントを指定した MTEXT は 1 字も描かない）。日本語を描くスタイルと MTEXT のフォント指定のうち、日本語の無い物を、`CJK_FONTS` の最初に見つかった物に差し替える（ラテン文字だけのスタイルは変えない）。`CAD_VIEWER_FONT_DIRS` で足したフォントの置き場も見る（テストと Web 版は Noto Sans JP）
 - `cache.py` — テッセレーションの結果を `backend/.cache/` に保存する（キー: ファイルの sha256＋パラメータ＋`CACHE_VERSION`）
@@ -145,6 +146,7 @@ CI（`.github/workflows/test.yml`）が PR と master で、pytest・ビルド�
   - 配色のライト（`theme.ts`）は、`:root[data-theme='light']` で同じトークンを定義し直す（文字は面の上で 4.5:1 以上、線と印は 3D の背景の上で 3:1 以上）。3D と 2D の描画の色（背景・グリッド・計測の線と点・先選び・断面の枠・2D の頁）は CSS ではなく `theme.ts` の `PALETTES` にあり、材質に色を持つ所は `onTheme` で塗り直す。新しく 3D や 2D に色を足すときは、この表から取って `onTheme` で塗り直す。既定はダーク（E2E はダークで走る）
 - `viewer.ts` — 描画、カメラ操作（ターンテーブル＝OrbitControls、自由回転＝TrackballControls）、視点の切り替え、自動回転、グリッド
 - `picking.ts` / `measure.ts` / `section.ts` / `drawing2d.ts` — ピッキング、計測と注記、断面、2D 図面
+- `frame.ts` — 座標系（3 回のクリック）と、抜き勾配の型開き方向を面・稜線から選ぶ 1 回のクリック（`startPull`）。どちらも backend の B-rep の真値（vertex_info・edge_info・face_info）から向きを取る。main の配線（クリック、Esc、先選び）は `frameTool.active` を見て両方に効く
 - `materials.ts` / `materialpop.ts` — 材料と用途（射出成形／一般）。材料ごとの一般的な基準（比重・肉厚の下限・勾配と根拠。出典は `docs/material-basis.md`）、直した値の保存、材料の基準のカード。判定の基準の初めは材料に合わせる（PMMA 0.64 mm・0.5°）。1.5 mm・1.0° を前提に書いた E2E は `nav_common.classic_basis` で「手で決める」を明示してから始める
 - `api.ts` / `model.ts` / `tree.ts` — API の呼び出し、メッシュの読み取り結果、部品ツリー
 - `compare.ts` / `compareworker.ts` / `compareview.ts` — 版の比較（`docs/designs/compare.md`）。2 つの版の表示用メッシュを細かく割り、相手の面までの距離と、外か中か（角度で重み付けした擬似法線）を Worker で出す。backend には無い（手元の版も Web 版もブラウザの中で同じ計算をする）。比べている間、viewer は開いている版の面を隠して比較の面（`setStandIn`）を出す
