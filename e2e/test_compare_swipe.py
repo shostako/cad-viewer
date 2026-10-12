@@ -126,4 +126,11 @@ with nav_session() as nav:
     nav.ctl("比較をやめる").locator("button").click()
     nav.settle()
     assert page.evaluate("window.__cadSwipe()") == {"at": None, "shown": False}
+    # the next comparison: the line in the middle again (Codex on #112)
+    with page.expect_file_chooser() as fc:
+        nav.ctl("別の版と比べる").locator("button").click()
+    fc.value.set_files(str(TESTDATA / "revision_a.step"))
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('足された')", timeout=120000)
+    show("左右に見比べる")
+    assert page.evaluate("window.__cadSwipe()") == {"at": 0.5, "shown": True}
     print("OK: 版の比較の左右の見比べ")

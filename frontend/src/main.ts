@@ -2465,6 +2465,7 @@ function stopCompare(): void {
     compareView = null
   }
   swipeBar.classList.add('hidden')
+  swipeAt = 0.5 // the next comparison's line starts in the middle (kept only within one, Codex on #112)
   dropCompareSpot()
   releaseColors('compare')
   compareLegend.classList.add('hidden')
