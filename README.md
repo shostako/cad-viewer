@@ -4,7 +4,21 @@
 
 版ごとの変更は [CHANGELOG.md](CHANGELOG.md) にある。
 
+## 使い始める
+
+版は 3 つある。画面と操作はどれも同じ（下の「画面の操作」以降は 3 つに共通）。
+
+| 版 | 向いている使い方 | 始め方 |
+|---|---|---|
+| Web 版 | 何も入れずに使う。ファイルはどこにも送らない | Chrome か Edge で <https://shostako.github.io/cad-viewer/> を開く（下の「Web 版」） |
+| Windows のインストール版 | WSL も Python も無い Windows の PC。DWG も開ける（ODA File Converter を入れたとき） | Releases のインストーラーを入れ、スタートメニューの cad-viewer で起動（下の「Windows のインストール版」） |
+| 手元の版（WSL） | 開発している PC での日常使い | デスクトップの `cad-viewer.vbs` か `./start.sh`（下の「手元の版（WSL）の起動」） |
+
+開いたら、真ん中の「CAD ファイルを開く」のカードの「ファイルを選ぶ」を押すか、ファイルを画面に落とす。回して見るのは左ドラッグ、計測は M、キー操作の一覧は ? で出る。
+
 ## アーキテクチャ
+
+手元の版とインストール版の形。Web 版は backend の計算をブラウザの中に写したもので、backend を持たない（下の「Web 版」）。
 
 ```
 [WSL2] FastAPI + OCP(OpenCASCADE) ──localhost──> [Windows] ブラウザ (Three.js + TypeScript)
@@ -14,7 +28,7 @@
 設計原則: **メッシュは表示用の嘘、計測はB-repの真実**。
 テッセレーションメッシュにはトポロジID（face/edge/vertex）を付与して配信し、計測は必ずサーバ側でOCCTの真値計算を行う。
 
-## 起動（日常使い）
+## 手元の版（WSL）の起動
 
 **Windows デスクトップの `cad-viewer.vbs` をダブルクリック** → backend が起動し、
 既定ブラウザで開く（コンソール窓は出ない）。既に起動済みならブラウザを開くだけ（冪等）。
@@ -55,16 +69,32 @@ WSL も Python も無い Windows の PC で使うためのもの。GitHub の [R
 
 ブラウザだけで動く版。backend が無く、開いたファイルはブラウザのタブの中で読む。どこにも送らない。計画は `docs/designs/web-version.md`。
 
+### 開き方
+
+1. Chrome か Edge で <https://shostako.github.io/cad-viewer/> を開く。入れる物もログインも要らない。
+2. 真ん中の「CAD ファイルを開く」のカードで「ファイルを選ぶ」を押すか、ファイルを画面のどこかに落とす。
+3. あとの操作は手元の版と同じ（下の「画面の操作」以降）。右上のツールバーと操作パネル、? で出るキー操作の一覧もそのまま使える。一覧の下に「Web 版：計算はこのページの中」と出ていれば Web 版。
+
+- よく使うなら、アドレスバーの「インストール」でアプリとして入れる。スタートメニューから開けるようになり、エクスプローラーで CAD ファイルを右クリックして「プログラムから開く」でも開ける。
+- 一度開いたあとは、ネットが無くても開ける。新しい版が master に入ると、次にネットのあるところで開いたときに入れ替わる。
+
+### できること・できないこと
+
 - 開ける形式は STEP・IGES・STL・OBJ・PLY・OFF・3MF。真値の計測（距離・稜線・面・頂点）と体積・重量、肉厚のヒートマップ・厚肉・投影面積も、手元の版と同じ計算で出す。
-- 2D 図面（DXF）は、手元の版と同じ絵で開く（backend の図面の Python をブラウザの中の Python（Pyodide）でそのまま動かす）。初めて図面を開くときに、その一式（20 MB ほど、送るときは gzip で 13 MB）を読み込む。DWG は開けない（DXF に書き出して開く）。図面の日本語は Noto Sans JP で描く（日本語のありそうな図面のときだけ、4.5 MB を足して読む）。
+- 2D 図面（DXF）は、手元の版と同じ絵で開く（backend の図面の Python をブラウザの中の Python（Pyodide）でそのまま動かす）。初めて図面を開くときに、その一式（20 MB ほど、送るときは gzip で 13 MB）を読み込む。図面の日本語は Noto Sans JP で描く（日本語のありそうな図面のときだけ、4.5 MB を足して読む）。
 - STEP/IGES は、ブラウザの中の OpenCASCADE（WebAssembly）で開く。初めて STEP/IGES を開くときに、その部品（12 MB ほど）を読み込む。2 回目からはブラウザが覚えている。
 - 一度開いた STEP/IGES は、表示の形をブラウザの中（OPFS）に残す。同じファイルの 2 回目は読み直さずにすぐ出る（計測と体積は、そのとき B-rep を読み直す）。残すのは最後の 40 ファイル。
 - ネットが無くても使える。一度開いたページと、一度使った部品（OpenCASCADE、図面の Python）を、ブラウザ（Service Worker）が覚えている。
 - Chrome・Edge では、アプリとして入れられる（アドレスバーの「インストール」）。入れると、PC の STEP・IGES・STL・OBJ・3MF・PLY・OFF・DXF を「プログラムから開く」でこのアプリで開ける（最近開いたファイルにも入る）。
 - 計測・注記はブラウザの中（IndexedDB）に、ファイルの中身ごとに保存する。手元の版のサイドカーとは別。
-- ヘルプ（?）の下に「Web 版」と出る。
-- 作り方: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき（図面用の Python 一式を `frontend/web-public/py/` に取ってくる。版と sha256 は `frontend/scripts/web-assets.mjs` で固定）、静的なファイルとしてどこからでも配れる。手元で開くには `npm run dev:web`。
-- master に入ると `.github/workflows/pages.yml` が GitHub Pages に配る。
+- 開けないもの: DWG（DXF に書き出して開く）と glTF/GLB（手元の版とインストール版では、画面に落とせば開ける）。
+
+### 作り方（開発する人向け）
+
+- 手元で試す: `(cd frontend && npm run dev:web)` で <http://localhost:5173/> に開く（backend は要らない）。Service Worker（ネットが無くても使える仕掛け）は開発サーバーでは動かない。
+- 配る物を作る: `(cd frontend && npm run build:web)` で `frontend/dist-web` にでき、静的なファイルとしてどこからでも配れる。できた物を手元で開くには `(cd frontend && npm run preview:web)`（<http://localhost:4173/>）。
+- `dev:web` と `build:web` は、初めに図面用の Python 一式（Pyodide・ezdxf・フォント）を cdn.jsdelivr.net などから `frontend/web-public/py/` に取ってくる（版と sha256 は `frontend/scripts/web-assets.mjs` で固定、git には入れない）。初めの 1 回はネットが要る（取ってきた物が置き場にあれば取り直さない）。
+- master に入ると `.github/workflows/pages.yml` が作って GitHub Pages（上のアドレス）に配る。
 - 計算の部分（`frontend/src/local/`）は backend と同じ答えを出すかを `(cd frontend && npm test)` で確かめる。backend の venv が要る（`scripts/engine_golden.py` で backend の答えを出し、突き合わせる）。
 
 ## 開く・読み込み中・開けなかったとき
@@ -80,6 +110,8 @@ WSL も Python も無い Windows の PC で使うためのもの。GitHub の [R
 - カードは操作パネルの左の範囲の真ん中に置く（パネルに隠れないように）。窓が狭くて入らないときは画面の真ん中に、パネルの上に重ねて置く
 
 ## 画面の操作
+
+ここから下の操作は、Web 版・インストール版・手元の版で同じ。
 
 右上のツールバーに、よく使う操作を並べてある（左から）: ファイルを開く（右の ▾ で最近開いたファイル）・全体表示｜回転・計測・注記｜断面・表示スタイル・画像を保存・キー操作の一覧。いまのモードと、断面を入れているあいだの断面のボタンは、押された見た目（青）になる。ボタンにカーソルを乗せるとキーを含む説明が出る。
 
@@ -546,7 +578,7 @@ DXF はそのまま、DWG は ODA File Converter で DXF にしてから開く�
 (cd backend && .venv/bin/pytest)
 ```
 
-テストデータ生成: `backend/.venv/bin/python testdata/make_testdata.py`
+テストデータ生成（OCP を使うので backend の venv で）: `for g in make_testdata make_step_assembly make_dxf make_iges_loose; do backend/.venv/bin/python testdata/$g.py; done`
 
 ## フェーズ計画
 
