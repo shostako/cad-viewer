@@ -19,7 +19,7 @@ import math
 import os
 import tempfile
 
-from nav_common import TESTDATA, box_stl, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, box_stl, nav_session
 
 OPEN = TESTDATA / "revision_a.step"
 MOVED_A = TESTDATA / "revision_a_moved.step"
@@ -44,7 +44,7 @@ def turn_about(axis, deg):
 R_A, T_A = mat(turn_about("z", 45), turn_about("y", 120)), (-30, 50, 10)
 R_B, T_B = mat(turn_about("x", 30), turn_about("z", 90)), (80, 20, 5)
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
     tmp = tempfile.mkdtemp(prefix="cad_auto_")
 

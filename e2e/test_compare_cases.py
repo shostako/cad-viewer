@@ -25,11 +25,11 @@ import math
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, nav_session
 
 CRESCENT = 2 * (math.pi * 9 - (18 * math.acos(5 / 6) - 2.5 * math.sqrt(11))) + 2 * math.acos(5 / 6) * 3 * 3
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
 
     def compare(case, other=None):

@@ -23,9 +23,9 @@ import tempfile
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, box_stl, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, box_stl, nav_session
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
 
     def compare(new, old):

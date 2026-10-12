@@ -566,12 +566,20 @@ def empty_sidecar(page, path):
     put_sidecar(page, path, [])
 
 
+# 版の比較 draws two finer meshes (compare.ts): a frame of it takes long in the
+# runners' software WebGL, and a click waits for frames (Playwright's "stable").
+# A click there reached Playwright's 30 s on a slow runner (2026-10-12, #111 and
+# #113): the comparison's scripts wait up to this long for each step instead.
+SLOW_SCENE_TIMEOUT = 90_000
+
+
 @contextmanager
-def nav_session(boxes=()):
+def nav_session(boxes=(), timeout=None):
     """A fresh page on the app with cleared view preferences.
 
     boxes: names from BOXES to write as STL files (nav.paths[name]). The page
-    must log no errors; the files are removed afterwards.
+    must log no errors; the files are removed afterwards. timeout: each step's
+    limit in ms (Playwright's 30 s when None; SLOW_SCENE_TIMEOUT for a heavy scene).
 
     nav.paths["step"] is a private copy of mini_mold.step (three trailing
     newlines: its own content hash, so its own sidecar), emptied here. Other
@@ -588,6 +596,8 @@ def nav_session(boxes=()):
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(viewport={"width": 1280, "height": 800})
+            if timeout is not None:
+                page.set_default_timeout(timeout)
             nav = Nav(page, paths)
             page.on("pageerror", lambda e: nav.errors.append(str(e)))
             page.on("console", lambda m: nav.errors.append(m.text) if m.type == "error" else None)

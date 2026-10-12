@@ -15,13 +15,13 @@ from pathlib import Path
 
 from PIL import Image
 
-from nav_common import TESTDATA, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, nav_session
 
 BOSS_TOP = (30, 30, 8)
 RIB_TOP = (45, 26, 9)
 RIB_FRONT = (45, 8, 6)  # its face toward the view: behind it the plate's top (both versions have it)
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
     nav.load(TESTDATA / "revision_b.step", props="live")
     with page.expect_file_chooser() as fc:
