@@ -16,6 +16,10 @@ Creates revision_a.step and revision_b.step: two versions of one part, for 版�
 moved, as a file written in another frame, for 位置合わせ; revision_a_moved.step:
 revision_a turned and moved (only that: no change of shape), for 自動で合わせる.
 
+Creates compare_*_a.step / compare_*_b.step: pairs of versions with one known
+change each (a hole moved, a plate made thicker, a part added and one taken
+away), for 版の比較 (see make_compare_cases).
+
 Creates undercut_block.step: a block with a side hole, a pocket from the top and
 a hook, for アンダーカットの候補 (see make_undercut_block). And undercut_pair.step:
 two parts, each a block with a side hole (see make_undercut_pair).
@@ -105,6 +109,7 @@ def main() -> None:
     make_inch_block()
     make_named_parts()
     make_revisions()
+    make_compare_cases()
     make_undercut_block()
     make_undercut_pair()
     make_tilted_block()
@@ -287,6 +292,57 @@ def make_revisions() -> None:
         assert writer.Write(str(OUT / name)) == IFSelect_RetDone
         print(f"wrote {OUT / name}")
 
+
+
+def make_compare_cases() -> None:
+    """Pairs of versions with one known change each, for 版の比較 (the cases #59
+    asks for; the same shape is a file against itself, a shift of place
+    revision_a_moved.step):
+
+    compare_hole_a / _b.step:   a plate 60 x 40 x 3 with a through hole of R3
+                                at (20, 20); in b the hole at (25, 20)
+    compare_thick_a / _b.step:  a plate 60 x 40 x 3; in b 3.5 thick (its top
+                                0.5 higher)
+    compare_parts_a / _b.step:  an assembly: "plate" 60 x 40 x 3 and "pin" (R2,
+                                10 high, on the plate at (50, 30)); in b no
+                                pin, and "cap" (10 x 10 x 4 on the plate at
+                                x 5..15, y 28..38)
+    """
+    from OCP.STEPControl import STEPControl_Writer
+
+    def plate(h=3.0, hole=None):
+        solid = BRepPrimAPI_MakeBox(60, 40, h).Shape()
+        if hole:
+            op = BRepAlgoAPI_Cut(solid, BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(hole[0], hole[1], -1), gp_Dir(0, 0, 1)), 3, h + 2).Shape())
+            op.Build()
+            assert op.IsDone()
+            solid = op.Shape()
+        return solid
+
+    for name, shape in (
+        ("compare_hole_a.step", plate(hole=(20, 20))),
+        ("compare_hole_b.step", plate(hole=(25, 20))),
+        ("compare_thick_a.step", plate()),
+        ("compare_thick_b.step", plate(3.5)),
+    ):
+        writer = STEPControl_Writer()
+        writer.Transfer(shape, STEPControl_AsIs)
+        assert writer.Write(str(OUT / name)) == IFSelect_RetDone
+        print(f"wrote {OUT / name}")
+
+    for name, extra in (
+        ("compare_parts_a.step", ("pin", BRepPrimAPI_MakeCylinder(2, 10).Shape(), (50, 30, 3))),
+        ("compare_parts_b.step", ("cap", BRepPrimAPI_MakeBox(10, 10, 4).Shape(), (5, 28, 3))),
+    ):
+        doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
+        st = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+        asm = st.NewShape()
+        named(st, asm, "case")
+        st.AddComponent(asm, named(st, st.AddShape(plate(), False), "plate"), loc(0, 0, 0))
+        part, shape, at = extra
+        st.AddComponent(asm, named(st, st.AddShape(shape, False), part), loc(*at))
+        st.UpdateAssemblies()
+        write(doc, name)
 
 
 def make_undercut_block() -> None:
