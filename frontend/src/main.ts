@@ -43,6 +43,7 @@ import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './ch
 import { CompareView, renderCompareLegend, runCompare, signed, startTolerance, type CompareRole, type CompareShow } from './compareview'
 import type { Surface } from './compare'
 import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
+import { undercutPlaces, type Reach } from './undercut'
 import { SpotNav } from './spotnav'
 import {
   METALS,
@@ -66,7 +67,7 @@ import {
   type Use,
 } from './materials'
 import { MaterialPop } from './materialpop'
-import { spotText } from './spots'
+import { spotText, type Spot } from './spots'
 import { drawingSummaryText, modelSummaryText } from './summary'
 import { canvasToPng, downloadBlob, pngFileName, stampedName, type ExportBackground } from './snapshot'
 import { ReportPop, SOURCE, reportCsv, reportHtml, reportTime, type Cell, type Report, type ReportTable, type Review } from './report'
@@ -1673,8 +1674,36 @@ const requiredCtl = draftFolder
 // Worker, undercut.ts, the same in both versions of the app)
 const undercutState = { enabled: false }
 let undercutView: UndercutView | null = null
-let undercutRun: { cancel(): void } | null = null
 let undercutGen = 0
+/**
+ * The reach along the pull direction now, over every part with faces (hidden
+ * ones too): the colours' and the list's, computed once for the model and the
+ * direction (a new one cancels the last: its promise never settles, and what
+ * waits on it is a superseded call)
+ */
+let reachShared: { key: string; ids: number[]; promise: Promise<Reach>; cancel(): void } | null = null
+function reachNow(): { ids: number[]; promise: Promise<Reach> } | null {
+  const key = `${viewer.modelGen}:${pullVector().join(',')}`
+  if (reachShared?.key === key) return reachShared
+  reachShared?.cancel()
+  reachShared = null
+  const parts: Surface[] = []
+  const ids: number[] = []
+  for (const [id, mesh] of viewer.getPartMeshes()) {
+    if (!mesh.geometry.index?.count) continue
+    parts.push({ positions: mesh.geometry.getAttribute('position').array, normals: mesh.geometry.getAttribute('normal').array, indices: mesh.geometry.index.array })
+    ids.push(id)
+  }
+  if (!parts.length) return null
+  const run = runReach(parts, pullVector())
+  const entry = { key, ids, promise: run.promise, cancel: run.cancel }
+  // a failure is not kept: the next ask computes again
+  run.promise.catch(() => {
+    if (reachShared === entry) reachShared = null
+  })
+  reachShared = entry
+  return entry
+}
 let undercutHud = ''
 draftFolder
   .add(undercutState, 'enabled')
@@ -1705,31 +1734,22 @@ async function updateUndercut(): Promise<void> {
   if (!undercutState.enabled || !contentShown || is2D) return
   const gen = ++undercutGen
   const modelGen = viewer.modelGen
-  // every part with faces (hidden ones too: showing a part needs no new computation)
-  const parts: Surface[] = []
-  const ids: number[] = []
-  for (const [id, mesh] of viewer.getPartMeshes()) {
-    if (!mesh.geometry.index?.count) continue
-    parts.push({ positions: mesh.geometry.getAttribute('position').array, normals: mesh.geometry.getAttribute('normal').array, indices: mesh.geometry.index.array })
-    ids.push(id)
-  }
-  if (!parts.length) return
+  // every part with faces (hidden ones too: showing a part needs no new
+  // computation), shared with the list (reachNow)
+  const shared = reachNow()
+  if (!shared) return
   setUndercutHud(`アンダーカットの候補: 型開き方向 ${pullLabel()} で調べている...`)
-  const run = runReach(parts, pullVector())
-  undercutRun = run
   try {
-    const reach = await run.promise
+    const reach = await shared.promise
     if (gen !== undercutGen || modelGen !== viewer.modelGen) return
-    undercutRun = null
     viewer.clearVertexColors()
     colorOwner = 'undercut'
-    undercutView = new UndercutView(reach, ids)
+    undercutView = new UndercutView(reach, shared.ids)
     viewer.setStandIn(undercutView.build())
     showUndercut()
     probe.refresh()
   } catch (e) {
     if (gen !== undercutGen) return
-    undercutRun = null
     undercutState.enabled = false
     setUndercutHud(`アンダーカットの候補を調べられなかった — ${e instanceof Error ? e.message : e}`)
   }
@@ -1750,9 +1770,7 @@ function showUndercut(): void {
 }
 /** the view goes (a new computation comes, or none) */
 function dropUndercutView(): void {
-  undercutGen++
-  undercutRun?.cancel()
-  undercutRun = null
+  undercutGen++ // (the reach itself goes on: the list may wait on it, reachNow)
   if (undercutView) {
     viewer.setStandIn(null)
     undercutView.dispose()
@@ -1771,7 +1789,7 @@ function stopUndercut(): void {
 
 // ---- 問題の一覧 (checklist.ts): 薄肉・勾配不足・反対側 in one list, by the
 // conditions of the two folders above; a row goes to its place
-const checkState = { enabled: false, thickness: true, thick: true, draft: true }
+const checkState = { enabled: false, thickness: true, thick: true, draft: true, undercut: false }
 /** the loaded model's part names (the part tree's), for the list's rows */
 let checkPartNames = new Map<number, string>()
 /** why /properties failed for this model (the list cannot tell open parts from closed ones), or null */
@@ -1793,6 +1811,7 @@ function checkConditions(): CheckConditions {
       ? { dirLabel: pullLabel(), dir: pullVector(), required: draftState.required }
       : null,
     thick: checkState.thick ? { ratio: thickState.ratio, nominal: thickState.nominal > 0 ? thickState.nominal : null } : null,
+    undercut: checkState.undercut ? { dirLabel: pullLabel() } : null,
     basis: materialStore.follow ? basisText(materialNow(), materialValues()) : null,
   }
 }
@@ -1808,7 +1827,13 @@ async function updateChecks(): Promise<void> {
   const gen = ++checkGen
   dropCheckSpot()
   const conditions = checkConditions()
-  if (!checkState.enabled || !currentModelId || is2D || !viewer.hasFaces() || (!conditions.thin && !conditions.draft && !conditions.thick)) {
+  if (
+    !checkState.enabled ||
+    !currentModelId ||
+    is2D ||
+    !viewer.hasFaces() ||
+    (!conditions.thin && !conditions.draft && !conditions.thick && !conditions.undercut)
+  ) {
     checkPanel.hide()
     layoutCorner()
     return
@@ -1857,8 +1882,37 @@ async function updateChecks(): Promise<void> {
       if (gen !== checkGen || model !== currentModelId) return
     }
   }
-  checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values, thick), conditions)
+  let undercut: Map<number, Spot[]> | null = null
+  if (conditions.undercut) {
+    const shared = reachNow()
+    if (shared) {
+      checkPanel.showBusy('アンダーカットを調べている（光線、少し待て）…')
+      layoutCorner()
+      const model = currentModelId
+      let reach: Reach
+      try {
+        reach = await shared.promise
+      } catch (e) {
+        if (gen === checkGen && model === currentModelId) checkPanel.showBusy(`アンダーカットを調べられなかった（${e instanceof Error ? e.message : e}）`)
+        return
+      }
+      if (gen !== checkGen || model !== currentModelId) return
+      undercut = undercutSpots(reach, shared.ids)
+    }
+  }
+  checkPanel.show(runChecks(viewer.spotParts(), unjudged, conditions, values, thick, undercut), conditions)
   layoutCorner()
+}
+/** the list's places of undercut candidates, by part (undercut.ts undercutPlaces) */
+function undercutSpots(reach: Reach, ids: readonly number[]): Map<number, Spot[]> {
+  const out = new Map<number, Spot[]>()
+  reach.parts.forEach((p, k) => {
+    out.set(
+      ids[k],
+      undercutPlaces(p, reach.edges[k]).map((q) => ({ partId: ids[k], faceId: null, at: q.at, normal: q.normal, min: q.min, max: q.max, value: q.area, area: q.area })),
+    )
+  })
+  return out
 }
 
 let checkTimer = 0
@@ -1871,6 +1925,22 @@ function scheduleChecks(): void {
 /** the colours a row's kind is seen in: 薄肉 the heatmap, 勾配不足・反対側 the draft colouring */
 async function colourFor(kind: CheckRow['kind']): Promise<void> {
   stopCompare() // the place is on the open model
+  if (kind === 'undercut') {
+    // the candidates' colours (their reach is the list's: at once)
+    if (!undercutState.enabled) {
+      if (draftState.enabled) {
+        draftState.enabled = false
+        updateDraft()
+      }
+      if (thicknessState.enabled) {
+        thicknessState.enabled = false
+        clearThickness()
+      }
+      undercutState.enabled = true
+      await updateUndercut()
+    }
+    return
+  }
   stopUndercut()
   if (kind === 'thick') return // its sphere says it (viewer.goToSpot): whatever colours are up stay
   if (kind === 'thin') {
@@ -1917,6 +1987,10 @@ checkFolder
   .add(checkState, 'draft')
   .name('抜き勾配を調べる')
   .onChange(() => void updateChecks())
+checkFolder
+  .add(checkState, 'undercut')
+  .name('アンダーカットを調べる')
+  .onChange(() => void updateChecks()).domElement.title = '型開き方向へまっすぐ開く 2 枚の型で、どちらにも抜けない所（アンダーカットの候補）。光線を飛ばすので数秒かかる'
 // 判定の基準: the material's values for the 肉厚 and 抜き勾配 folders, or as
 // they are set there (手で決める: a value changed by hand comes here by itself)
 const basisCtl = checkFolder

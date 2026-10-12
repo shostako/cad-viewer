@@ -15,7 +15,8 @@ Creates revision_a.step and revision_b.step: two versions of one part, for 版�
 比較 (see make_revisions).
 
 Creates undercut_block.step: a block with a side hole, a pocket from the top and
-a hook, for アンダーカットの候補 (see make_undercut_block).
+a hook, for アンダーカットの候補 (see make_undercut_block). And undercut_pair.step:
+two parts, each a block with a side hole (see make_undercut_pair).
 
 Creates tilted_block.step: a block turned 30° about X, for a 型開き方向 picked
 from its top face (see make_tilted_block).
@@ -103,6 +104,7 @@ def main() -> None:
     make_named_parts()
     make_revisions()
     make_undercut_block()
+    make_undercut_pair()
     make_tilted_block()
 
 
@@ -292,6 +294,34 @@ def make_undercut_block() -> None:
     assert writer.Write(str(OUT / "undercut_block.step")) == IFSelect_RetDone
     print(f"wrote {OUT / 'undercut_block.step'}")
 
+
+
+def make_undercut_pair() -> None:
+    """undercut_pair.step: an assembly of two parts, each a block of 20 x 20 x 10
+    (z 0 to 10) with a side hole along y through it, its axis at x 10, z 5:
+    "small_hole" at the origin, its hole R1 (inside: 2 pi 1 x 20 = 125.7 mm²);
+    "large_hole" at x 50, its hole R3 (2 pi 3 x 20 = 377.0 mm²). The first part
+    has the smaller undercut: a list by area puts the second's first."""
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
+    st = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+
+    def holed(r):
+        op = BRepAlgoAPI_Cut(
+            BRepPrimAPI_MakeBox(20, 20, 10).Shape(),
+            BRepPrimAPI_MakeCylinder(gp_Ax2(gp_Pnt(10, -1, 5), gp_Dir(0, 1, 0)), r, 22).Shape(),
+        )
+        op.Build()
+        assert op.IsDone()
+        return op.Shape()
+
+    small = named(st, st.AddShape(holed(1), False), "small_hole")
+    large = named(st, st.AddShape(holed(3), False), "large_hole")
+    asm = st.NewShape()
+    named(st, asm, "undercut_pair")
+    st.AddComponent(asm, small, loc(0, 0, 0))
+    st.AddComponent(asm, large, loc(50, 0, 0))
+    st.UpdateAssemblies()
+    write(doc, "undercut_pair.step")
 
 
 def make_tilted_block() -> None:

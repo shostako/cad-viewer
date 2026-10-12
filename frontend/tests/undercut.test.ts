@@ -11,7 +11,7 @@ import test from 'node:test'
 import * as THREE from 'three'
 
 import type { Surface } from '../src/compare.ts'
-import { DOWN, UP, reachOf, undercutArea, type ReachPart } from '../src/undercut.ts'
+import { DOWN, UP, reachOf, undercutArea, undercutPlaces, type ReachPart } from '../src/undercut.ts'
 import { UndercutView, reachText } from '../src/undercutview.ts'
 
 type V = [number, number, number]
@@ -164,4 +164,43 @@ test('a small part beside a large one, far off: its own resolution and its own o
   const area = undercutArea(parts[0])
   assert.ok(Math.abs(area - 0.012) < 0.0012, `area ${area}`)
   assert.equal(undercutArea(parts[1]), 0)
+})
+
+test('the candidates as places: the shadow on the block, the slab over it (5 apart: two)', () => {
+  const { parts, edges } = reachOf([join(block, slab)], [0, 0, 1])
+  const places = undercutPlaces(parts[0], edges[0])
+  assert.equal(places.length, 2, JSON.stringify(places.map((q) => [q.area, q.at])))
+  for (const q of places) {
+    assert.ok(Math.abs(q.area - 60) < 6, `area ${q.area}`)
+    // the marker in the shadow (x 0..10, y 2..8), on the block's top or the slab's underside
+    const [x, y, z] = q.at
+    assert.ok(x > 0 && x < 10 && y > 2 && y < 8 && (Math.abs(z - 10) < 1e-4 || Math.abs(z - 15) < 1e-4), `at ${q.at}`)
+    // its extent: the shadow, to a finer edge
+    assert.ok(q.min[0] < 0.5 && q.max[0] > 9.5 && q.min[1] < 2.5 && q.max[1] > 7.5, `extent ${q.min} ${q.max}`)
+  }
+  // a part with none: no places
+  const box1 = reachOf([block], [0, 0, 1])
+  assert.deepEqual(undercutPlaces(box1.parts[0], box1.edges[0]), [])
+})
+
+test('a wall standing on a floor: its rim is no undercut (the floor beside it is not in the way)', () => {
+  // a plate 30 x 30 x 4 with a square pocket 10..20 x 10..20 down to z 2: the
+  // pocket's walls stand on its floor (their rim's points are in the floor's plane)
+  const strip = (x0: number, x1: number, y0: number, y1: number): V[] => [[x0, y0, 4], [x1, y0, 4], [x1, y1, 4], [x0, y1, 4]]
+  const part = faces([
+    [[0, 0, 0], [0, 30, 0], [30, 30, 0], [30, 0, 0]], // bottom
+    strip(0, 30, 0, 10), strip(0, 30, 20, 30), strip(0, 10, 10, 20), strip(20, 30, 10, 20), // the top around the pocket
+    [[0, 0, 0], [30, 0, 0], [30, 0, 4], [0, 0, 4]], // -y
+    [[0, 30, 0], [0, 30, 4], [30, 30, 4], [30, 30, 0]], // +y
+    [[0, 0, 0], [0, 0, 4], [0, 30, 4], [0, 30, 0]], // -x
+    [[30, 0, 0], [30, 30, 0], [30, 30, 4], [30, 0, 4]], // +x
+    [[10, 10, 2], [20, 10, 2], [20, 20, 2], [10, 20, 2]], // the pocket's floor
+    [[10, 10, 2], [10, 20, 2], [10, 20, 4], [10, 10, 4]], // its walls, facing in
+    [[20, 10, 2], [20, 10, 4], [20, 20, 4], [20, 20, 2]],
+    [[10, 10, 2], [10, 10, 4], [20, 10, 4], [20, 10, 2]],
+    [[10, 20, 2], [20, 20, 2], [20, 20, 4], [10, 20, 4]],
+  ])
+  const { parts } = reachOf([part], [0, 0, 1])
+  for (const v of vertices(parts[0])) assert.notEqual(v.r, 0, `${[v.x, v.y, v.z]} n ${v.n}`)
+  assert.equal(undercutArea(parts[0]), 0)
 })

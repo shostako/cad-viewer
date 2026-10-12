@@ -108,7 +108,7 @@ with nav_session() as nav:
     wait_area("+Z")
     assert legend_shown()
     a = area()
-    assert abs(a - AREA_Z) < 0.05 * AREA_Z, ("Z", a, AREA_Z)
+    assert abs(a - AREA_Z) < 0.01 * AREA_Z, ("Z", a, AREA_Z)
     assert f"{a:.1f} mm²" in page.inner_text("#undercut-legend")
     expect(
         {"hole": (HOLE, UNDERCUT), "floor": (FLOOR, UNDERCUT), "top": (TOP, UP), "pocket": (POCKET, UP), "front": (FRONT, BOTH), "lip": (LIP, UP)},
@@ -146,7 +146,7 @@ with nav_session() as nav:
     nav.ctl("型開き方向").locator("select").select_option(label="+Y")
     wait_area("+Y")
     a = area()
-    assert abs(a - AREA_Y) < 0.08 * AREA_Y, ("Y", a, AREA_Y)
+    assert abs(a - AREA_Y) < 0.015 * AREA_Y, ("Y", a, AREA_Y)
     expect({"pocket": (POCKET, UNDERCUT), "hole": (HOLE, BOTH), "front": (FRONT, DOWN)}, "Y")
     nav.ctl("型開き方向").locator("select").select_option(label="+Z")
     wait_area("+Z")

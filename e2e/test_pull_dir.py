@@ -173,7 +173,7 @@ with nav_session(boxes=("tiny",)) as nav:
     nav.ctl("アンダーカットの候補").locator("input").check()
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('mm²（型開き方向 選んだ向き')", timeout=120000)
     m = re.search(r"アンダーカットの候補: (\d+\.\d) mm²", hud())
-    assert m and abs(float(m.group(1)) - 216.8) < 0.08 * 216.8, hud()
+    assert m and abs(float(m.group(1)) - 216.8) < 0.015 * 216.8, hud()
     nav.ctl("アンダーカットの候補").locator("input").uncheck()
 
     # ---- a mesh model has no faces to pick ------------------------------------------------
