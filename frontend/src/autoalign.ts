@@ -69,6 +69,11 @@ function random(seed: number): () => number {
 
 /** n points spread over the surfaces by area (x, y, z each) */
 export function samplePoints(parts: Surface[], n: number, seed = 1): Float64Array {
+  return sampleFaces(parts, n, seed).pts
+}
+
+/** n points spread over the surfaces by area, and the normal of the triangle each is on */
+export function sampleFaces(parts: Surface[], n: number, seed = 1): { pts: Float64Array; normals: Float64Array } {
   const tris: { s: Surface; t: number }[] = []
   const cum: number[] = []
   let total = 0
@@ -85,8 +90,8 @@ export function samplePoints(parts: Surface[], n: number, seed = 1): Float64Arra
       cum.push(total)
     }
   }
-  const out = new Float64Array(3 * n)
-  if (!tris.length) return new Float64Array(0)
+  const out = new Float64Array(3 * n), normals = new Float64Array(3 * n)
+  if (!tris.length) return { pts: new Float64Array(0), normals: new Float64Array(0) }
   const rnd = random(seed)
   for (let i = 0; i < n; i++) {
     // the triangle by area (a binary search in the running sums), a point in it
@@ -103,8 +108,16 @@ export function samplePoints(parts: Surface[], n: number, seed = 1): Float64Arra
     const P = s.positions, ix = s.indices
     const a = 3 * ix[t], b = 3 * ix[t + 1], c = 3 * ix[t + 2]
     for (let k = 0; k < 3; k++) out[3 * i + k] = P[a + k] + u * (P[b + k] - P[a + k]) + v * (P[c + k] - P[a + k])
+    // the triangle's normal (its corners' order: out of the solid, as the display mesh's)
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2]
+    const vx = P[c] - P[a], vy = P[c + 1] - P[a + 1], vz = P[c + 2] - P[a + 2]
+    const nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx
+    const l = Math.hypot(nx, ny, nz) || 1
+    normals[3 * i] = nx / l
+    normals[3 * i + 1] = ny / l
+    normals[3 * i + 2] = nz / l
   }
-  return out
+  return { pts: out, normals }
 }
 
 /** the centroid and the principal axes (columns of a turn, det +1) of points, with their spreads (eigenvalues), largest first */
@@ -188,23 +201,66 @@ function axisTurns(): number[][] {
 
 /**
  * The placements that put the compared version's principal axes on the open
- * one's: each way round (4), and with axes of about the same spread swapped
- * (a square plate: 8, a cube: 24). Their centroids on each other.
+ * one's, in the order of their spreads: each way round (4), and with axes of
+ * about the same spread within a version swapped (a square plate: 8, a cube:
+ * 24). Their centroids on each other; along an axis where the two are not
+ * as long, also their ends on each other (each end).
  */
 export function axisStarts(a: Float64Array, b: Float64Array): Motion[] {
   const pa = principal(a), pb = principal(b)
-  const big = Math.max(pa.spread[0], pb.spread[0], 1e-300)
   const out: Motion[] = []
+  // axes i and j may be taken for each other when their spreads are about the
+  // same within a version (which of two like axes comes first is chance there);
+  // across the versions the spreads may differ (a revision made longer, Codex on #109)
+  const like = (i: number, j: number) =>
+    i === j ||
+    Math.abs(pa.spread[i] - pa.spread[j]) <= SAME_SPREAD * Math.max(pa.spread[0], 1e-300) ||
+    Math.abs(pb.spread[i] - pb.spread[j]) <= SAME_SPREAD * Math.max(pb.spread[0], 1e-300)
   for (const s of axisTurns()) {
-    // s takes b's axis j to a's axis i where s[i][j] != 0: only axes of about the same spread
+    // s takes b's axis j to a's axis i where s[i][j] != 0: the ranked match, or like axes swapped
     let ok = true
-    for (let i = 0; i < 3 && ok; i++) for (let j = 0; j < 3; j++) if (s[3 * i + j] && Math.abs(pa.spread[i] - pb.spread[j]) > SAME_SPREAD * big) ok = false
+    for (let i = 0; i < 3 && ok; i++) for (let j = 0; j < 3; j++) if (s[3 * i + j] && !like(i, j)) ok = false
     if (!ok) continue
     const r = mul(mul(pa.axes, s), transpose(pb.axes))
     const rc = turn(r, pb.centre)
-    out.push({ r, t: [pa.centre[0] - rc[0], pa.centre[1] - rc[1], pa.centre[2] - rc[2]] })
+    const t: Xyz = [pa.centre[0] - rc[0], pa.centre[1] - rc[1], pa.centre[2] - rc[2]]
+    out.push({ r, t })
+    // along an axis where the two are not as long (a revision made longer), the
+    // centroids on each other leave the shorter one in the middle, and the fit
+    // slides to the nearer end: the ends on each other are tried too
+    for (let i = 0; i < 3; i++) {
+      // each version's own spread along its own axis (its extent along the start's
+      // axis would change with the few degrees the start's turn is off: a long thin
+      // part's thickness most)
+      const j = [0, 1, 2].find((k) => s[3 * i + k] !== 0)!
+      const la = Math.sqrt(pa.spread[i]), lb = Math.sqrt(pb.spread[j])
+      if (Math.abs(la - lb) <= LONGER * Math.max(la, lb)) continue
+      const axis: Xyz = [pa.axes[i], pa.axes[3 + i], pa.axes[6 + i]]
+      const [alo, ahi] = extent(a, axis, null)
+      const [blo, bhi] = extent(b, axis, { r, t })
+      for (const d of [alo - blo, ahi - bhi]) out.push({ r, t: [t[0] + d * axis[0], t[1] + d * axis[1], t[2] + d * axis[2]] })
+    }
   }
   return out
+}
+
+/** two versions this much apart in their spread along an axis (of the larger one: about their length) are not as long */
+const LONGER = 0.1
+
+/** the points' extent along a unit axis (moved by m first) */
+function extent(pts: Float64Array, axis: Xyz, m: Motion | null): [number, number] {
+  let lo = Infinity, hi = -Infinity
+  for (let i = 0; i < pts.length; i += 3) {
+    let p: Xyz = [pts[i], pts[i + 1], pts[i + 2]]
+    if (m) {
+      const q = turn(m.r, p)
+      p = [q[0] + m.t[0], q[1] + m.t[1], q[2] + m.t[2]]
+    }
+    const v = p[0] * axis[0] + p[1] * axis[1] + p[2] * axis[2]
+    if (v < lo) lo = v
+    if (v > hi) hi = v
+  }
+  return [lo, hi]
 }
 
 /** the open version's triangles: for each, its unit normal (the BVH's geometry, in its index order) */
@@ -230,8 +286,21 @@ interface Target {
   normals: Float64Array
 }
 
-/** each point moved by m, its nearest point on the open version: the distance, and (into near/normal) where and the normal there */
-function nearest(target: Target, m: Motion, pts: Float64Array, near: Float64Array, normal: Float64Array, dist: Float64Array): void {
+/**
+ * each point moved by m, its nearest point on the open version: the distance,
+ * and (into near/normal) where and the normal there; with the points' own
+ * normals (pn), into facing the cosine between the two normals
+ */
+function nearest(
+  target: Target,
+  m: Motion,
+  pts: Float64Array,
+  near: Float64Array,
+  normal: Float64Array,
+  dist: Float64Array,
+  pn?: Float64Array,
+  facing?: Float64Array,
+): void {
   const p = new Vector3()
   const hit = { point: new Vector3(), distance: 0, faceIndex: 0 }
   const r = m.r, t = m.t
@@ -247,8 +316,23 @@ function nearest(target: Target, m: Motion, pts: Float64Array, near: Float64Arra
     normal[3 * i + 1] = target.normals[f + 1]
     normal[3 * i + 2] = target.normals[f + 2]
     dist[i] = hit.distance
+    if (pn && facing) {
+      const nx = pn[3 * i], ny = pn[3 * i + 1], nz = pn[3 * i + 2]
+      facing[i] =
+        (r[0] * nx + r[1] * ny + r[2] * nz) * normal[3 * i] +
+        (r[3] * nx + r[4] * ny + r[5] * nz) * normal[3 * i + 1] +
+        (r[6] * nx + r[7] * ny + r[8] * nz) * normal[3 * i + 2]
+    }
   }
 }
+
+/**
+ * a pair whose normals are further apart than this (the cosine, 60°) is not
+ * the same face: a point of the compared version past the open one's end has
+ * its nearest point on that end's face, and would pull the version along its
+ * length (a revision made longer, Codex on #109)
+ */
+const FACING = 0.5
 
 function median(xs: Float64Array): number {
   const s = Float64Array.from(xs).sort()
@@ -302,19 +386,28 @@ function solve6(A: number[], b: number[]): number[] | null {
  * would put the rest right, and the fit stops short). Last, the points within
  * the tolerance alone (what changed is out of it).
  */
-export function refine(target: Target, m0: Motion, pts: Float64Array, tolerance: number, size: number, reach0?: number): Motion {
+export function refine(
+  target: Target,
+  m0: Motion,
+  pts: Float64Array,
+  tolerance: number,
+  size: number,
+  reach0?: number,
+  pn?: Float64Array,
+): Motion {
   const n = pts.length / 3
   const near = new Float64Array(3 * n), normal = new Float64Array(3 * n), dist = new Float64Array(n), weight = new Float64Array(n)
+  const facing = new Float64Array(n).fill(1)
   let m: Motion = { r: [...m0.r], t: [...m0.t] as Xyz }
   nearest(target, m, pts, near, normal, dist)
   let reach = Math.max(tolerance, reach0 ?? 3 * median(dist))
   let total = 0
   for (let last = false; ; ) {
     for (let round = 0; round < ROUNDS_PER_REACH && total < ROUNDS; round++, total++) {
-      nearest(target, m, pts, near, normal, dist)
+      nearest(target, m, pts, near, normal, dist, pn, facing)
       for (let i = 0; i < n; i++) {
         const d = dist[i]
-        weight[i] = last ? (d <= tolerance ? 1 : 0) : d > 5 * reach ? 0 : 1 / (1 + (d / reach) ** 2)
+        weight[i] = facing[i] < FACING ? 0 : last ? (d <= tolerance ? 1 : 0) : d > 5 * reach ? 0 : 1 / (1 + (d / reach) ** 2)
       }
       const step = stepOf(m, pts, near, normal, weight, size)
       if (!step) break
@@ -416,6 +509,8 @@ export interface AutoStart {
    * and the search from the files' own places and the principal axes
    */
   spin?: { axis: Xyz; at: Xyz } | null
+  /** the datums left every turn free (a point alone): the search too */
+  search?: boolean
 }
 
 /** the steps of the turns about a datum's free axis (degrees) */
@@ -427,7 +522,7 @@ function startsOf(start: AutoStart, a: Surface[], search: Float64Array): Motion[
   const searched = () => [identity, ...axisStarts(samplePoints(a, SEARCH_POINTS, 3), search)]
   const m = start.motion
   if (!m) return searched()
-  if (!start.spin) return [m]
+  if (!start.spin) return start.search ? [m, ...searched()] : [m]
   const { axis, at } = start.spin
   const spun: Motion[] = []
   for (let k = 0; k < 360 / SPIN_STEP; k++) {
@@ -446,13 +541,13 @@ export function autoAlign(a: Surface[], b: Surface[], start: AutoStart, toleranc
   const bvh = bvhOfParts(a)
   const target: Target = { bvh, normals: triangleNormals(bvh) }
   const size = diagonalOf(a, b) || 1
-  const search = samplePoints(b, SEARCH_POINTS, 1)
-  const final = samplePoints(b, FINAL_POINTS, 2)
+  const searchFaces = sampleFaces(b, SEARCH_POINTS, 1), finalFaces = sampleFaces(b, FINAL_POINTS, 2)
+  const search = searchFaces.pts, final = finalFaces.pts
   const starts = startsOf(start, a, search)
   // each start refined on the few points, the distinct placements kept
   const found: Fit[] = []
   for (const s of starts) {
-    const m = refine(target, s, search, tolerance, size)
+    const m = refine(target, s, search, tolerance, size, undefined, searchFaces.normals)
     const f = fitOf(target, m, search, tolerance)
     if (!found.some((g) => samePlace(g.motion, m, size, tolerance))) found.push(f)
   }
@@ -462,7 +557,7 @@ export function autoAlign(a: Surface[], b: Surface[], start: AutoStart, toleranc
   const near = found.filter((f) => f.within >= best - 3 * ALIKE)
   const fits: Fit[] = []
   for (const f of near) {
-    const m = refine(target, f.motion, final, tolerance, size, 4 * tolerance)
+    const m = refine(target, f.motion, final, tolerance, size, 4 * tolerance, finalFaces.normals)
     if (!fits.some((g) => samePlace(g.motion, m, size, tolerance))) fits.push(fitOf(target, m, final, tolerance))
   }
   return { ...ordered(fits, centreOf(final), size), starts: starts.length }

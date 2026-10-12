@@ -158,6 +158,18 @@ test('the starts: the alignment by datums alone when it fixed everything; with a
   const searched = autoAlign([PLATE, STEP], b, { motion: null }, 0.05).starts
   assert.equal(spun, 12 + searched)
   assert.equal(searched, 5, 'the places in the files and the 4 ways round the axes')
+  // a point alone (every turn free): the datums' alignment and the search
+  assert.equal(autoAlign([PLATE, STEP], b, { motion: want, search: true }, 0.05).starts, 1 + searched)
+})
+
+test('a revision made longer (spreads unlike the open version): the axes still matched in order, the placement found', () => {
+  // the plate 30 longer at its far end, the step where it was (Codex on #109)
+  const longer = [moved(box([0, 0, 0], [90, 40, 3]), M), moved(STEP, M)]
+  const a = samplePoints([PLATE, STEP], 4000, 5), bp = samplePoints(longer, 4000, 6)
+  // the 4 ways round, each with its centroids and its two ends along the length on each other
+  assert.equal(axisStarts(a, bp).length, 12)
+  const r = autoAlign([PLATE, STEP], longer, { motion: null }, 0.05)
+  undoes(r.fits[0].motion, M)
 })
 
 test('the principal axes: largest spread first, a turn (det +1)', () => {

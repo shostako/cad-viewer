@@ -2449,10 +2449,11 @@ async function autoAlignCompare(): Promise<void> {
   const gen = ++compareGen
   const tolerance = compareState.tolerance
   setCompareHud(`版の比較: ${compareState.name} を自動で合わせている...`)
-  // the datums left a turn free (a plane alone): about its direction the start is turned in steps, and searched too
-  const free = datums && datums.result.fixed.turn < 3 ? datums.pairs.find((p) => p.open.dir) : undefined
-  const spin = free ? { axis: free.open.dir!, at: free.open.at } : null
-  const run = runAutoAlign(openSurfaces(), compareOther.surfaces, { motion: datums?.motion ?? null, spin }, tolerance)
+  // the datums left a turn free (a plane alone, two points): about its axis the start is turned in steps, and
+  // searched too; every turn (a point alone): searched too (Codex on #109)
+  const spin = datums?.result.spin ?? null
+  const search = !!datums && datums.result.fixed.turn === 0
+  const run = runAutoAlign(openSurfaces(), compareOther.surfaces, { motion: datums?.motion ?? null, spin, search }, tolerance)
   compareRun = run // 比較をやめる cancels it; the buttons wait for it
   showCompareCtls()
   let found: AutoAlignment

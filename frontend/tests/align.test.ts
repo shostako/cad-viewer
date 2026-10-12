@@ -149,6 +149,20 @@ test('an axis alone: its direction either way, the smaller turn', () => {
   assert.deepEqual(a.fixed, { turn: 2, move: 2 })
 })
 
+test('the turn left free: about the plane alone, about the way between two points; none for a point alone or three planes', () => {
+  const plane = align(pairs(M, bottom), centreOf(M))
+  near(plane.spin!.axis, [0, 0, -1], 1e-12, 'about the normal')
+  near(plane.spin!.at, bottom.at, 1e-12, 'through the plane')
+  const pts: Datum[] = [[10, 0, 0], [60, 0, 0]].map((p) => ({ kind: 'point', at: p as Xyz, mark: p as Xyz }))
+  const two = align(pairs(M, ...pts), centreOf(M))
+  near(two.spin!.axis, [1, 0, 0], 1e-12, 'along the way')
+  near(two.spin!.at, [10, 0, 0], 1e-12, 'through the first')
+  const one = align(pairs(M, pts[0]), centreOf(M))
+  assert.equal(one.fixed.turn, 0)
+  assert.equal(one.spin, null)
+  assert.equal(align(pairs(M, bottom, front, left), centreOf(M)).spin, null)
+})
+
 test('datums of two kinds are refused', () => {
   assert.throws(() => align([{ open: bottom, other: hole1 }], [0, 0, 0]), /種類が違う/)
 })

@@ -8,7 +8,8 @@ version placed where it fits the open one best (autoalign.ts).
   changes of the two versions in one frame (test_compare_places.py: added the
   new boss +5 and the raised boss +2, removed the rib -6). What changed does
   not pull the fit. Also from a datum's alignment: the top alone (searched
-  about it too), and three datums (refined from there alone: one placement).
+  about it too), a corner alone (searched too), and three datums (refined
+  from there alone: one placement).
 - tilted_block.step against itself (a block: it fits as well four ways): the
   four are told, the one that does not move it first, 次の置き方 goes round.
 - two STL boxes (a mesh format: no datums), one moved along X: 基準で合わせる
@@ -117,15 +118,18 @@ with nav_session() as nav:
     # ---- from a datum's alignment ----------------------------------------------------
     def by_datums(points):
         """基準で合わせる by these faces (revision_b's own frame: clicked on revision_a as they
-        are, on the compared file where MOVED_B puts them); fewer than 3: Enter after them"""
+        are, on the compared file where MOVED_B puts them); fewer than 3: Enter after them.
+        An entry (p, at) is a vertex at p, clicked at `at` (just inside the outline)"""
         nav.ctl("基準で合わせる").locator("button").click()
+        on = lambda p, side: p if side == "open" else tuple(T_B[i] + sum(R_B[i][j] * p[j] for j in range(3)) for i in range(3))
         for side in ("open", "other"):
-            for k, p in enumerate(points):
+            for k, entry in enumerate(points):
                 nav.settle()
-                q = p if side == "open" else tuple(T_B[i] + sum(R_B[i][j] * p[j] for j in range(3)) for i in range(3))
-                x, y = nav.project(q)
+                p, at, kind = (entry[0], entry[1], "vertex") if isinstance(entry[0], tuple) else (entry, entry, "face")
+                q = on(p, side)
+                x, y = nav.project(on(at, side))
                 got = page.evaluate("([x, y]) => window.__cadAlignPick(x, y)", [x, y])
-                assert got and got["kind"] == "face" and math.dist(got["point"], q) < 0.5, (q, got)
+                assert got and got["kind"] == kind and math.dist(got["point"], q) < 0.5, (q, got)
                 page.mouse.click(x, y)
                 if side == "open":
                     page.wait_for_function("n => window.__cadAlign().counts.open === n || window.__cadAlign().side === 'other'", arg=k + 1, timeout=30000)
@@ -143,6 +147,11 @@ with nav_session() as nav:
     undoes(a, R_B, T_B)
     assert a["auto"]["starts"] > 12, a["auto"]  # the turns about the top, and the search
     assert "基準の合わせから詰めた" in page.inner_text("#compare-legend [data-align]")
+    # a corner alone (every turn free): the search too
+    by_datums([((60, 0, 3), (59.6, 0.4, 3))])
+    a = auto_align("datums")
+    undoes(a, R_B, T_B)
+    assert a["auto"]["starts"] > 1, a["auto"]  # the datums' alignment and the search
     # the top, the old boss's side and the front (every turn and move fixed): refined from
     # there alone, one placement (a symmetric part stays as the datums put it)
     d = by_datums([(5, 5, 3), (15, 16, 7), (30, 0, 1.5)])

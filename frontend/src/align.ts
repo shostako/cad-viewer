@@ -48,6 +48,12 @@ export interface Alignment {
   fixed: { turn: number; move: number }
   /** each pair after the motion: how far apart (mm) and at what angle (degrees) */
   misfit: { distance: number; angle: number }[]
+  /**
+   * the datums fixed one direction alone (2 of the 3 turns): the turn about it
+   * is free, about this axis through `at` (on the open version). null: every
+   * turn fixed, or none (a point alone: every turn free)
+   */
+  spin: { axis: Xyz; at: Xyz } | null
 }
 
 /** the names the screen gives the kinds */
@@ -129,6 +135,8 @@ interface Direction {
   u: Xyz
   v: Xyz
   signed: boolean
+  /** a point of the open version's datum it is from (the first one, for a way between two) */
+  at: Xyz
 }
 
 const hasPlace = (d: Datum) => d.kind !== 'plane'
@@ -137,7 +145,7 @@ const hasPlace = (d: Datum) => d.kind !== 'plane'
 function directionsOf(pairs: DatumPair[]): Direction[] {
   const out: Direction[] = []
   for (const p of pairs) {
-    if (p.open.dir && p.other.dir) out.push({ u: unit(p.other.dir), v: unit(p.open.dir), signed: p.open.kind === 'plane' })
+    if (p.open.dir && p.other.dir) out.push({ u: unit(p.other.dir), v: unit(p.open.dir), signed: p.open.kind === 'plane', at: p.open.at })
   }
   const placed = pairs.filter((p) => hasPlace(p.open))
   if (placed.length > 1) {
@@ -148,7 +156,7 @@ function directionsOf(pairs: DatumPair[]): Direction[] {
       const u = squareTo(sub(p.other.at, first.other.at), lines(first.other, p.other))
       const v = squareTo(sub(p.open.at, first.open.at), lines(first.open, p.open))
       const size = Math.max(1, ...p.open.at.map(Math.abs), ...first.open.at.map(Math.abs))
-      if (norm(u) > 1e-9 * size && norm(v) > 1e-9 * size) out.push({ u: unit(u), v: unit(v), signed: true })
+      if (norm(u) > 1e-9 * size && norm(v) > 1e-9 * size) out.push({ u: unit(u), v: unit(v), signed: true, at: first.open.at })
     }
   }
   return out
@@ -192,7 +200,8 @@ export function align(pairs: DatumPair[], centre: Xyz): Alignment {
   for (const p of pairs) {
     if (p.open.kind !== p.other.kind) throw new Error(`基準の種類が違う（${DATUM_NAMES[p.open.kind]}と${DATUM_NAMES[p.other.kind]}）`)
   }
-  const { r, fixed: turned } = turnOf(directionsOf(pairs))
+  const dirs = directionsOf(pairs)
+  const { r, fixed: turned } = turnOf(dirs)
   // the move: t = the sum of value * direction over a basis made as the datums fix it
   const basis: Xyz[] = []
   const values: number[] = []
@@ -223,7 +232,8 @@ export function align(pairs: DatumPair[], centre: Xyz): Alignment {
   let t: Xyz = [0, 0, 0]
   basis.forEach((b, k) => (t = add(t, scale(b, values[k]))))
   const motion = { r, t }
-  return { motion, fixed: { turn: turned, move: moved }, misfit: pairs.map((p) => misfitOf(p, motion)) }
+  const spin = turned === 2 ? { axis: dirs[0].v, at: dirs[0].at } : null
+  return { motion, fixed: { turn: turned, move: moved }, misfit: pairs.map((p) => misfitOf(p, motion)), spin }
 }
 
 /** the angle between two unit vectors, degrees (atan2: acos loses the last digits near 0) */
