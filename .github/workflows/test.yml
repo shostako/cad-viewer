@@ -81,15 +81,18 @@ jobs:
   # far (docs/designs/web-version.md). No backend runs here. Served by Vite's
   # dev server in web mode, as the checkout's E2E are (some scripts import the
   # app's modules from /src); the unit job builds the Web version.
-  # In 3 parallel jobs, every third script of the list each (one job took 21 min
-  # for 45 scripts in October 2026; the list is 67 since W6).
+  # In 4 parallel jobs, every fourth script of the list each. With 3 (one job
+  # took 21 min for 45 scripts in October 2026), the jobs took 28-30 min for the
+  # list's 73 (2026-10-12: the first one, which also runs the offline build's
+  # test, was stopped at 30). Room for one script that hangs up to its own limit
+  # (E2E_SCRIPT_TIMEOUT), as the checkout's jobs have.
   e2e-web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2]
+        shard: [0, 1, 2, 3]
     name: e2e (web ${{ matrix.shard }})
     steps:
       - uses: actions/checkout@v6
@@ -134,7 +137,7 @@ jobs:
           E2E_SCRIPT_TIMEOUT: 600
           PYTHONUNBUFFERED: '1'
           SHARD: ${{ matrix.shard }}
-          SHARDS: 3
+          SHARDS: 4
         run: |
           (cd frontend && nohup npx vite --mode web --host 127.0.0.1 --port 5183 --strictPort > /tmp/vite.log 2>&1 &)
           for _ in $(seq 1 60); do curl -sf --connect-timeout 1 -m 3 http://127.0.0.1:5183/ >/dev/null && break; sleep 1; done
