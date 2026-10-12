@@ -93,6 +93,14 @@ with nav_session() as nav:
     small, large = 2 * math.pi * 1 * 20, 2 * math.pi * 3 * 20
     assert abs(areas[0] - large) < 0.015 * large and abs(areas[1] - small) < 0.03 * small, areas
 
+    # ---- a new file lets the old model's reach go (its Worker stopped: Codex on #106) -----
+    assert page.evaluate("window.__cadReach()") is not None
+    nav.load(nav.paths["step"])
+    assert page.evaluate("window.__cadReach()") is None, page.evaluate("window.__cadReach()")
+    nav.load(TESTDATA / "undercut_pair.step", props="live")
+    box("一覧を出す").check()
+    wait_list()
+
     # ---- off: no undercut rows, no condition --------------------------------------------
     box("アンダーカットを調べる").uncheck()
     nav.settle()

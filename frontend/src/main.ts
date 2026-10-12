@@ -1682,6 +1682,11 @@ let undercutGen = 0
  * waits on it is a superseded call)
  */
 let reachShared: { key: string; ids: number[]; promise: Promise<Reach>; cancel(): void } | null = null
+/** the shared reach goes (another model: its Worker stops, its result is let go: Codex on #106) */
+function dropReach(): void {
+  reachShared?.cancel()
+  reachShared = null
+}
 function reachNow(): { ids: number[]; promise: Promise<Reach> } | null {
   const key = `${viewer.modelGen}:${pullVector().join(',')}`
   if (reachShared?.key === key) return reachShared
@@ -3621,6 +3626,7 @@ async function loadFile(file: File): Promise<void> {
       measureTool.clearAll()
       stopCompare() // it was the old model's
       stopUndercut()
+      dropReach() // the colours and the list of the old model wait on it no more
       thicknessCache.clear()
       thickCache.clear()
       thicknessInFlight.clear()
@@ -3827,6 +3833,8 @@ testHooks.__cadCheck = () => {
   })
   return { rows: result.rows.map(row), undecided: result.undecided, conditions, current: current ? row(current) : null }
 }
+// the reach the colours and the list share: its key (model and direction), or null
+testHooks.__cadReach = () => reachShared?.key ?? null
 testHooks.__cadView = () => {
   viewer.prepareCamera() // the pose the next frame draws (parallel: the camera's depth)
   return {

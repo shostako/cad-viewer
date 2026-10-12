@@ -204,3 +204,21 @@ test('a wall standing on a floor: its rim is no undercut (the floor beside it is
   for (const v of vertices(parts[0])) assert.notEqual(v.r, 0, `${[v.x, v.y, v.z]} n ${v.n}`)
   assert.equal(undercutArea(parts[0]), 0)
 })
+
+test('a box whose corners share their vertices (an STL indexed as one): no undercut (Codex on #106)', () => {
+  // 8 vertices, each normal the corner's diagonal: the middle of the triangles
+  // around a corner is inside the box, against its normal
+  const P: number[] = [], N: number[] = []
+  for (let k = 0; k < 8; k++) {
+    const c = [k & 1 ? 10 : 0, k & 2 ? 10 : 0, k & 4 ? 10 : 0]
+    P.push(...c)
+    const d = c.map((v) => (v ? 1 : -1) / Math.sqrt(3))
+    N.push(...d)
+  }
+  const quads = [[0, 2, 3, 1], [4, 5, 7, 6], [0, 1, 5, 4], [2, 6, 7, 3], [0, 4, 6, 2], [1, 3, 7, 5]]
+  const I = quads.flatMap(([a, b, c, d]) => [a, b, c, a, c, d])
+  const shared: Surface = { positions: Float32Array.from(P), normals: Float32Array.from(N), indices: Uint32Array.from(I) }
+  const { parts } = reachOf([shared], [0, 0, 1])
+  assert.equal(undercutArea(parts[0]), 0)
+  for (const v of vertices(parts[0])) assert.notEqual(v.r, 0, `${[v.x, v.y, v.z]}`)
+})

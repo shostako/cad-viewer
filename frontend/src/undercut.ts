@@ -53,15 +53,19 @@ export function reachOf(parts: Surface[], dir: readonly [number, number, number]
       const bvh = bvhOfParts([part])
       const into = inward(f.positions, f.indices)
       for (let i = 0; i < n; i++) {
-        // off the surface along the normal, and into its face along it. A point on
-        // a rim or at a corner is moved off it: there a ray along the pull runs
-        // along a border, and meets what is beside it at once (a wall's foot is in
-        // the plane of the floor it stands on; the pocket's corner at its floor saw
-        // the opening's edge): #102 counted the inner edges as undercuts
+        // off the surface along the normal, and into its face along it by a quarter
+        // of that. A point on a rim or at a corner is moved off it: there a ray along
+        // the pull runs along a border, and meets what is beside it at once (a wall's
+        // foot is in the plane of the floor it stands on; the pocket's corner at its
+        // floor saw the opening's edge): #102 counted the inner edges as undercuts.
+        // A quarter, so that the point stays outside its face however `into` points
+        // (at a vertex shared by faces that turn, a box's corner indexed as one, the
+        // middle of the triangles around it is inside the solid: Codex on #106) and
+        // however far the normal leans from the face (to 75°: cos > 1/4)
         ray.origin.set(
-          f.positions[3 * i] + eps * (f.normals[3 * i] + into[3 * i]),
-          f.positions[3 * i + 1] + eps * (f.normals[3 * i + 1] + into[3 * i + 1]),
-          f.positions[3 * i + 2] + eps * (f.normals[3 * i + 2] + into[3 * i + 2]),
+          f.positions[3 * i] + eps * (f.normals[3 * i] + 0.25 * into[3 * i]),
+          f.positions[3 * i + 1] + eps * (f.normals[3 * i + 1] + 0.25 * into[3 * i + 1]),
+          f.positions[3 * i + 2] + eps * (f.normals[3 * i + 2] + 0.25 * into[3 * i + 2]),
         )
         ray.direction.copy(d)
         let r = bvh.raycastFirst(ray, DoubleSide) ? 0 : UP
@@ -77,7 +81,8 @@ export function reachOf(parts: Surface[], dir: readonly [number, number, number]
 
 /**
  * Per vertex, the unit direction into its face: to the middle of the
- * triangles around it (0 where they are all around it alike, inside a face)
+ * triangles around it (inside a face they balance out, to rounding: the
+ * direction there is of no account, a quarter of the offset, see reachOf)
  */
 function inward(P: Float32Array, ix: Uint32Array): Float32Array {
   const n = P.length / 3
@@ -95,8 +100,7 @@ function inward(P: Float32Array, ix: Uint32Array): Float32Array {
     if (!count[v]) continue
     const x = sum[3 * v] / count[v] - P[3 * v], y = sum[3 * v + 1] / count[v] - P[3 * v + 1], z = sum[3 * v + 2] / count[v] - P[3 * v + 2]
     const l = Math.hypot(x, y, z)
-    // a vertex inside a face: the triangles' middles balance out (to rounding)
-    if (l > 1e-9 * (Math.abs(P[3 * v]) + Math.abs(P[3 * v + 1]) + Math.abs(P[3 * v + 2]) + 1)) {
+    if (l > 0) {
       out[3 * v] = x / l
       out[3 * v + 1] = y / l
       out[3 * v + 2] = z / l
