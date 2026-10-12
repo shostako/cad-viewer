@@ -45,9 +45,18 @@ export type ProjectionState =
   | { state: 'ok'; axis: string; area: number }
   | { state: 'error'; axis: string; message: string }
 
+/**
+ * what the weight, the projected area and the clamping force are of (#59 P1):
+ * the parts shown as modelled; a runner, a sprue and the other cavities of a
+ * multi-cavity mould are not in them. The 記録's note, and the values' tooltips
+ */
+export const SCOPE_NOTE = '重量・投影面積・型締力は、表示している部品の分だけ（ランナー・スプルーは入らない。多数個取りなら取り数を掛ける）'
+/** the same on a value's tooltip */
+const SCOPE_TIP = 'ランナー・スプルーの分は入らない（多数個取りなら取り数を掛ける）'
+
 /** what the projected area is, on its row's tooltip */
 export const projectionTitle = (axis: string): string =>
-  `投影面積: 型開き方向（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）`
+  `投影面積: 型開き方向（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）。${SCOPE_TIP}`
 
 /** 1.19 / 1.20 / 0.90 / 1.234: three decimals, one trailing zero dropped */
 export function fmtDensity(d: number): string {
@@ -281,8 +290,8 @@ export class PropertiesPanel {
         )
       }
     }
-    const note = [v.title, ...v.notes].filter(Boolean).join(' ／ ')
-    const tables: ReportTable[] = [{ title: '体積・重量', note: note || undefined, head: ['項目', '値', '単位', '出どころ'], rows }]
+    const note = [v.title, ...v.notes, SCOPE_NOTE].filter(Boolean).join(' ／ ')
+    const tables: ReportTable[] = [{ title: '体積・重量', note, head: ['項目', '値', '単位', '出どころ'], rows }]
     if (v.rows?.length) {
       tables.push({
         title: '部品ごとの体積・重量',
@@ -407,6 +416,7 @@ export class PropertiesPanel {
     }
     this.totalArea.textContent = t.area !== null ? `${fmtNum(t.area / 100, 2)} cm²` : '—'
     this.totalMass.textContent = t.volume !== null ? `${fmtNum(massGrams(t.volume, this.density), 2)} g` : '—'
+    this.totalMass.title = `表示している部品の重量。ショット重量には、${SCOPE_TIP}`
     this.renderProjection()
 
     this.noteEl.textContent = v.notes.join(' ／ ')
@@ -439,7 +449,7 @@ export class PropertiesPanel {
       const f = clampForce(p.area, this.pressure)
       this.totalClamp.replaceChildren(`${fmtNum(f.kN, 1)} kN`, sub(`（${fmtNum(f.tf, 1)} tf・${mpa}）`))
       // the folded row's value stays at hand
-      this.totalClamp.title = `投影面積 ${cm2}（${p.axis}・目安）× 型内圧 ${mpa}`
+      this.totalClamp.title = `投影面積 ${cm2}（${p.axis}・目安）× 型内圧 ${mpa}。${SCOPE_TIP}`
     } else {
       const what = p.state === 'loading' ? '計算中…' : '計算できない'
       this.totalProj.replaceChildren(what, sub(`（${p.axis}・目安）`))
