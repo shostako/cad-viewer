@@ -19,6 +19,7 @@ from nav_common import TESTDATA, nav_session
 
 BOSS_TOP = (30, 30, 8)
 RIB_TOP = (45, 26, 9)
+RIB_FRONT = (45, 8, 6)  # its face toward the view: behind it the plate's top (both versions have it)
 
 with nav_session() as nav:
     page = nav.page
@@ -84,6 +85,14 @@ with nav_session() as nav:
     page.mouse.move(rx, ry)
     page.wait_for_function("document.querySelector('#cursor-tip').textContent.includes('前の版の面')", timeout=5000)
     assert "削られた −6.00 mm（前の版の面）" in page.inner_text("#cursor-tip"), page.inner_text("#cursor-tip")
+    # the rib's front right of the line: the new version's face behind it there (it has no
+    # rib: the plate's top, where the ray goes on to), not the old rib in front of it
+    fx, fy = nav.project(RIB_FRONT)
+    drag_to(fx - 80)
+    page.mouse.move(fx, fy + 1)
+    page.mouse.move(fx, fy)
+    page.wait_for_function("document.querySelector('#cursor-tip').textContent.includes('新しい版の面')", timeout=5000)
+    assert "前の版の面" not in page.inner_text("#cursor-tip"), page.inner_text("#cursor-tip")
     bx, by = nav.project(BOSS_TOP)
     drag_to(bx - 80)  # the new boss's top right of it: the new version's
     page.mouse.move(bx, by)
