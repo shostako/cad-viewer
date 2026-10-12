@@ -318,19 +318,21 @@ function nearest(
     dist[i] = hit.distance
     if (pn && facing) {
       const nx = pn[3 * i], ny = pn[3 * i + 1], nz = pn[3 * i + 2]
-      facing[i] =
+      // either way round: a face wound the other way (loose faces of an IGES) is the same face
+      facing[i] = Math.abs(
         (r[0] * nx + r[1] * ny + r[2] * nz) * normal[3 * i] +
-        (r[3] * nx + r[4] * ny + r[5] * nz) * normal[3 * i + 1] +
-        (r[6] * nx + r[7] * ny + r[8] * nz) * normal[3 * i + 2]
+          (r[3] * nx + r[4] * ny + r[5] * nz) * normal[3 * i + 1] +
+          (r[6] * nx + r[7] * ny + r[8] * nz) * normal[3 * i + 2],
+      )
     }
   }
 }
 
 /**
- * a pair whose normals are further apart than this (the cosine, 60°) is not
- * the same face: a point of the compared version past the open one's end has
- * its nearest point on that end's face, and would pull the version along its
- * length (a revision made longer, Codex on #109)
+ * a pair whose normals are further apart than this (the cosine, 60°; either
+ * way round) is not the same face: a point of the compared version past the
+ * open one's end has its nearest point on that end's face, and would pull the
+ * version along its length (a revision made longer, Codex on #109)
  */
 const FACING = 0.5
 

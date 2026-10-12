@@ -172,6 +172,16 @@ test('a revision made longer (spreads unlike the open version): the axes still m
   undoes(r.fits[0].motion, M)
 })
 
+test('faces wound the other way (loose faces of an IGES): the same faces, the placement found', () => {
+  const flipped = (x: Surface): Surface => {
+    const ix = Uint32Array.from(x.indices)
+    for (let t = 0; t < ix.length; t += 3) [ix[t + 1], ix[t + 2]] = [ix[t + 2], ix[t + 1]]
+    return { ...x, indices: ix, normals: x.normals.map((v) => -v) }
+  }
+  const r = autoAlign([PLATE, STEP], [flipped(moved(PLATE, M)), flipped(moved(STEP, M))], { motion: null }, 0.05)
+  undoes(r.fits[0].motion, M)
+})
+
 test('the principal axes: largest spread first, a turn (det +1)', () => {
   const p = principal(samplePoints([box([0, 0, 0], [40, 30, 10])], 4000))
   assert.ok(p.spread[0] > p.spread[1] && p.spread[1] > p.spread[2], `${p.spread}`)
