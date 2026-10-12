@@ -317,6 +317,27 @@ body,
   display: none;
 }
 
+/* folded (cardfold.ts): the title alone; 面の変化 folded: its line alone */
+#compare-legend.folded > :not(.compare-fold),
+.face-changes.folded > :not(.face-fold) {
+  display: none;
+}
+
+.compare-fold,
+.face-fold {
+  pointer-events: auto; /* the HUD lets the pointer through to the model: the folds take it */
+  text-align: left;
+}
+
+.compare-fold .thick-title {
+  margin-bottom: 0;
+}
+
+.compare-fold:hover .thick-title,
+.face-fold:hover .compare-note {
+  color: var(--cv-text);
+}
+
 /* アンダーカットの候補's legend (undercutview.ts): rows as the draft legend's */
 #undercut-legend {
   margin: 2px 0 4px;

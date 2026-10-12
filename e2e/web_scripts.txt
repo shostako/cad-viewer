@@ -93,3 +93,4 @@ test_compare_align.py
 test_compare_auto_align.py
 test_compare_faces.py
 test_compare_swipe.py
+test_compare_narrow.py

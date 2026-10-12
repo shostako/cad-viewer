@@ -6,11 +6,13 @@
  */
 import { ICON, icon } from './icons'
 
-export function loadFolded(key: string): boolean {
+/** whether the card was left folded; never folded or unfolded yet: `fallback` */
+export function loadFolded(key: string, fallback = false): boolean {
   try {
-    return localStorage.getItem(key) === '1'
+    const v = localStorage.getItem(key)
+    return v === null ? fallback : v === '1'
   } catch {
-    return false // storage unavailable (private window, blocked site data)
+    return fallback // storage unavailable (private window, blocked site data)
   }
 }
 
@@ -28,7 +30,7 @@ function saveFolded(key: string, on: boolean): void {
  * (its look stays the panels' heading's). The column lays itself out again
  * from the card's new size (main.ts observes both cards).
  */
-export function foldButton(card: HTMLElement, title: HTMLElement, key: string): HTMLButtonElement {
+export function foldButton(card: HTMLElement, title: HTMLElement, key: string, fallback = false): HTMLButtonElement {
   const b = document.createElement('button')
   b.type = 'button'
   b.className = 'card-fold'
@@ -38,7 +40,7 @@ export function foldButton(card: HTMLElement, title: HTMLElement, key: string): 
     b.setAttribute('aria-expanded', String(!folded))
     b.title = folded ? 'ひらく' : 'たたむ（見出しの行だけにする）'
   }
-  card.classList.toggle('folded', loadFolded(key))
+  card.classList.toggle('folded', loadFolded(key, fallback))
   show()
   b.addEventListener('click', () => {
     const on = !card.classList.contains('folded')

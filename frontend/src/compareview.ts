@@ -13,6 +13,7 @@
  */
 import * as THREE from 'three'
 
+import { foldButton } from './cardfold.ts'
 import { FACE_CHANGE_NAMES, type FaceComparison } from './facecompare.ts'
 import { placesOfParts, type Comparison, type Place, type Sampled, type Surface } from './compare.ts'
 import type { CompareReply } from './compareworker.ts'
@@ -332,9 +333,12 @@ export function renderCompareLegend(
   const s = view.stats()
   const max = Math.max(s.added, -s.removed, view.tolerance)
   const tol = view.tolerance
-  const title = document.createElement('div')
+  const title = document.createElement('span')
   title.className = 'thick-title'
   title.textContent = `版の比較（新しい版 ${names[view.newSide]}、前の版 ${names[view.oldSide]}）`
+  // folds to its title (a low window: the legend would cover the model)
+  const fold = foldButton(el, title, LEGEND_FOLDED)
+  fold.classList.add('compare-fold')
   const bar = document.createElement('div')
   bar.className = 'thick-bar'
   const c = new THREE.Color()
@@ -389,7 +393,7 @@ export function renderCompareLegend(
     return r
   }
   const rows = [
-    title,
+    fold,
     bar,
     ticks,
     row(theme.added, `足された（新しい版にだけある）最大 ${signed(s.added)} mm`, 'added'),
@@ -416,6 +420,12 @@ export interface FaceRows {
   go: (i: number) => void
 }
 
+/** whether the legend, and its 面の変化, were left folded (cardfold.ts) */
+export const LEGEND_FOLDED = 'cad-viewer:compare-legend-folded'
+export const FACES_FOLDED = 'cad-viewer:face-changes-folded'
+/** a window lower than this (px) starts with 面の変化 folded */
+export const FOLD_BELOW = 800
+
 /** rows of the legend shown at most (the rest are in the 記録) */
 export const FACE_ROWS = 5
 
@@ -428,11 +438,14 @@ export const FACE_ROWS = 5
 function faceRows(f: FaceRows): HTMLDivElement {
   const box = document.createElement('div')
   box.className = 'face-changes'
-  const head = document.createElement('div')
+  const head = document.createElement('span')
   head.className = 'compare-note'
   const n = f.comparison.changes.length
   head.textContent = `面の変化（B-rep の面）: 同じ ${f.comparison.same} 面${n ? `・変わった ${n}` : '・変わった面は無い'}`
-  box.append(head)
+  // folds to its line; never folded or unfolded yet: folded in a low window (FOLD_BELOW)
+  const fold = foldButton(box, head, FACES_FOLDED, window.innerHeight < FOLD_BELOW)
+  fold.classList.add('face-fold')
+  box.append(fold)
   const colors = compareColors()
   f.comparison.changes.slice(0, FACE_ROWS).forEach((c, i) => {
     const r = document.createElement('button')

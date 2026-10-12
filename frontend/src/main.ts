@@ -2253,7 +2253,8 @@ async function compareWith(file: File): Promise<void> {
     compareFailed(file.name, e)
     return
   }
-  await runComparison(null, gen)
+  // the model where the legend leaves room (a low window: it would cover the model, #59 P2)
+  if ((await runComparison(null, gen)) === 'shown') viewer.fitToView()
 }
 /** the comparison could not be made: the line says why (nothing of it is left) */
 function compareFailed(name: string, e: unknown): void {
