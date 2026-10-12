@@ -21,6 +21,7 @@ import {
   type ModelMeta,
   type ModelProperties,
   type ThickPart,
+  measureFaces,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { foldButton } from './cardfold'
@@ -45,6 +46,7 @@ import type { Place, Surface } from './compare'
 import { DATUM_NAMES, align, movedSurfaces, shiftOf, turnAngle, type Alignment, type DatumPair, type Motion, type Xyz } from './align'
 import { AlignTool, runAutoAlign, type AlignSide } from './aligntool'
 import type { AutoAlignment } from './autoalign'
+import { FACE_CHANGE_NAMES, compareFaces, type FaceComparison, type PartFaces } from './facecompare'
 import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
 import { undercutPlaces, type Reach } from './undercut'
 import { SpotNav } from './spotnav'
@@ -713,6 +715,15 @@ function buildReport(at: Date, image: string | null): Report {
       rows,
       empty: '許容より大きい差は無かった',
     })
+    if (faceChanges) {
+      tables.push({
+        title: `面の変化（${faceChanges.changes.length} 件）`,
+        note: `B-rep の面を 2 つの版で組にした（同じ面 ${faceChanges.same}）。場所は面の重心（部品は面の重心の平均）`,
+        head: ['種類', '何が', 'X', 'Y', 'Z'],
+        rows: faceChanges.changes.map((c): Cell[] => [FACE_CHANGE_NAMES[c.kind], c.text, ...c.at.map((v): Cell => ({ n: v, d: 3 }))]),
+        empty: '変わった面は無かった',
+      })
+    }
   }
   return {
     fileName: shownFileName,
@@ -2282,12 +2293,74 @@ function redrawCompare(): void {
   compareView.tolerance = compareState.tolerance
   viewer.setStandIn(compareView.build())
   dropCompareSpot() // the places were of the last role, show and tolerance
-  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText())
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
   compareLegend.classList.remove('hidden')
   const s = compareView.stats()
   setCompareHud(`版の比較: 足された 最大 ${signed(s.added)} mm、削られた 最大 ${signed(s.removed)} mm`)
   showCompareCtls()
   probe.refresh()
+  void updateFaceChanges()
+}
+// ---- 面の変化 (docs/designs/compare-faces.md, facecompare.ts): the B-rep faces of the two
+// versions paired (STEP・IGES どうし): the same, changed (moved, resized, reshaped), of one alone
+/** each model's faces (measure "faces"), asked once */
+const facesCache = new Map<string, Promise<PartFaces[]>>()
+let faceChanges: FaceComparison | null = null
+/** the change gone to (-1: none) */
+let faceAt = -1
+/** counts the asks: a late answer for an older comparison is dropped */
+let faceGen = 0
+function facesOf(modelId: string, names: Map<number, string>): Promise<PartFaces[]> {
+  let p = facesCache.get(modelId)
+  if (!p) {
+    p = measureFaces(modelId).then((r) => r.parts.map((q) => ({ partId: q.partId, name: names.get(q.partId) ?? `部品 ${q.partId}`, faces: q.faces })))
+    facesCache.set(modelId, p)
+    p.catch(() => facesCache.delete(modelId))
+  }
+  return p
+}
+/** the faces' changes for the comparison shown, made again (its role, tolerance and alignment); then the legend */
+async function updateFaceChanges(): Promise<void> {
+  const gen = ++faceGen
+  faceChanges = null
+  faceAt = -1
+  const other = compareOther
+  if (!compareView || !other?.brep || !frameTool.available || !currentModelId) return
+  const modelId = currentModelId
+  try {
+    const [a, b] = await Promise.all([facesOf(modelId, checkPartNames), facesOf(other.modelId, new Map(other.parts.map((p) => [p.id, p.name])))])
+    if (gen !== faceGen || !compareView || compareOther !== other) return
+    const aNew = compareView.newSide === 'a'
+    faceChanges = compareFaces(aNew ? b : a, aNew ? a : b, aNew ? { old: 'b', new: 'a' } : { old: 'a', new: 'b' }, compareAlign?.motion ?? IDENTITY_MOTION, compareView.tolerance)
+    renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
+  } catch {
+    // no faces to tell (the legend stays without them)
+  }
+}
+const IDENTITY_MOTION: Motion = { r: [1, 0, 0, 0, 1, 0, 0, 0, 1], t: [0, 0, 0] }
+/** the legend's 面の変化 (null: none to tell) */
+function faceRowsNow() {
+  return faceChanges ? { comparison: faceChanges, at: faceAt, go: (i: number) => goToFace(i) } : null
+}
+/** a change of a face: the view on it, a ring and what it is */
+function goToFace(i: number): void {
+  const c = faceChanges?.changes[i]
+  if (!compareView || !c) return
+  faceAt = i
+  compareAt.added = compareAt.removed = -1
+  const h = Math.max(Math.sqrt(c.area) / 2, 1)
+  compareSpot = {
+    partId: -1,
+    faceId: null,
+    at: c.at,
+    normal: [0, 0, 1],
+    min: [c.at[0] - h, c.at[1] - h, c.at[2] - h],
+    max: [c.at[0] + h, c.at[1] + h, c.at[2] + h],
+    value: c.amount,
+    area: c.area,
+  }
+  viewer.goToSpot(compareSpot, c.text)
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
 }
 // 変わった所へ (the legend's buttons): the places that changed, made at the first
 // look (compareview.ts places), and where each kind's presses are
@@ -2317,7 +2390,8 @@ function goToChange(kind: 'added' | 'removed'): void {
   const q = list[compareAt[kind]]
   compareSpot = { partId: -1, faceId: null, at: q.at, normal: q.normal, min: q.min, max: q.max, value: q.peak, area: q.area }
   viewer.goToSpot(compareSpot, changeText(kind, q))
-  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText())
+  faceAt = -1
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
 }
 /** the places go (made again at the next look), and the ring if it is still theirs */
 function dropCompareSpot(): void {
@@ -2334,6 +2408,8 @@ function stopCompare(): void {
   stopAlignPick()
   compareOther = null
   compareAlign = null
+  faceGen++
+  faceChanges = null
   if (compareView) {
     viewer.setStandIn(null)
     compareView.dispose()
@@ -4266,6 +4342,8 @@ testHooks.__cadAlignPick = (clientX: number, clientY: number) => {
   const r = alignPicker()?.pick(toNdc(clientX, clientY), 'any')
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
+// 面の変化: the faces' comparison of the comparison shown (null: none, or not yet)
+testHooks.__cadFaceChanges = () => faceChanges
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.prepareCamera()
   // what a click there takes: a frame's clicks take any kind (the 選択 is the measurement's)

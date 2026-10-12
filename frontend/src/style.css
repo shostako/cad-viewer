@@ -333,6 +333,56 @@ body,
   color: var(--cv-text-2);
 }
 
+/* 面の変化 (compareview.ts faceRows): a line each, the whole of it a button: the kind's tag, then what it is */
+.face-changes {
+  margin-top: 4px;
+  max-width: 34em;
+}
+
+.face-change {
+  pointer-events: auto; /* the HUD lets the pointer through to the model: the lines take it */
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  margin-top: 2px;
+  padding: 1px 4px;
+  border: none;
+  border-radius: var(--cv-r-sm);
+  background: none;
+  color: var(--cv-text-2);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.face-change:hover,
+.face-change.current {
+  background: var(--cv-hover);
+  color: var(--cv-text);
+}
+
+.face-tag {
+  flex: none;
+  min-width: 6.5em;
+  padding: 0 4px;
+  border: 1px solid var(--cv-border-strong);
+  border-radius: var(--cv-r-sm);
+  font-size: var(--cv-fs-xs);
+  text-align: center;
+}
+
+.face-change[data-kind='moved'] .face-tag,
+.face-change[data-kind='resized'] .face-tag {
+  border-color: var(--cv-warn);
+}
+
+.face-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .thick-title {
   color: var(--cv-text-2);
   margin-bottom: 3px;

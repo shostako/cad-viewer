@@ -73,6 +73,7 @@ export class Measurer {
     }
     if (mtype === 'edge_info') return this.edgeInfo(request.ref, near(request.near))
     if (mtype === 'face_info') return this.faceInfo(request.ref, near(request.near))
+    if (mtype === 'faces') return this.faces()
     if (mtype === 'vertex_info') return this.vertexInfo(request.ref)
     throw new MeasureError(`unknown measurement type: ${mtype}`)
   }
@@ -456,12 +457,25 @@ export class Measurer {
     return { localRadius: 1 / c, at: xyz(k(props.Value())) }
   }
 
-  private faceInfo(ref: any, q: Xyz | null): Answer {
+  /** every face of every part as faceInfo tells each, with its id (measure.py faces) */
+  private faces(): Answer {
+    const parts = this.meshes.map((m) => {
+      const listed: Answer[] = []
+      for (let i = 1; i <= m.faceMap.Extent(); i++) {
+        const { type: _type, ...info } = this.faceInfo({ partId: m.part.id, kind: 'face', id: i }, null)
+        listed.push({ id: i, ...info })
+      }
+      return { partId: m.part.id, faces: listed }
+    })
+    return { type: 'faces', parts }
+  }
+
+    private faceInfo(ref: any, q: Xyz | null): Answer {
     const oc = this.oc, k = this.k
     const face = k(oc.TopoDS.Face(this.resolve(ref)))
     const props = k(new oc.GProp_GProps())
     oc.BRepGProp.SurfaceProperties(face, props, false, false)
-    const out: Answer = { type: 'face', area: props.Mass(), ...this.loops(face) }
+    const out: Answer = { type: 'face', area: props.Mass(), centroid: xyz(k(props.CentreOfMass())), ...this.loops(face) }
     const surf = k(new oc.BRepAdaptor_Surface(face, true))
     const stype = surf.GetType()
     const kinds: Record<string, [string, () => any]> = {

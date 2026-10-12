@@ -589,7 +589,7 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
 
     props = GProp_GProps()
     BRepGProp.SurfaceProperties_s(face, props)
-    out: dict[str, Any] = {"type": "face", "area": props.Mass(), **_loops(face)}
+    out: dict[str, Any] = {"type": "face", "area": props.Mass(), "centroid": _xyz(props.CentreOfMass()), **_loops(face)}
     surf = BRepAdaptor_Surface(face)
     stype = surf.GetType()
     kinds = {
@@ -671,6 +671,22 @@ def _loops(face: TopoDS_Face) -> dict[str, Any]:
     return {"perimeter": _loop_length(outer, face), "holes": sorted(holes, reverse=True)}
 
 
+def faces(meshes: list[PartMesh]) -> dict[str, Any]:
+    """Every face of every part, as face_info tells each (its kind and sizes,
+    its area and centroid, its loops) with its id: 版の比較's 面の変化 pairs
+    the faces of two versions by them (docs/designs/compare-faces.md)."""
+    out = []
+    for m in meshes:
+        pid = m.part.part_id
+        listed = []
+        for i in range(1, m.face_map.Extent() + 1):
+            info = face_info({"partId": pid, "kind": "face", "id": i}, meshes)
+            info.pop("type", None)
+            listed.append({"id": i, **info})
+        out.append({"partId": pid, "faces": listed})
+    return {"type": "faces", "parts": out}
+
+
 def vertex_info(ref: dict, meshes: list[PartMesh]) -> dict[str, Any]:
     """A vertex's point, from the B-rep (the display mesh's copy is float32).
 
@@ -711,6 +727,8 @@ def run(request: dict[str, Any], meshes: list[PartMesh]) -> dict[str, Any]:
         return edge_info(request["ref"], meshes, _near(request.get("near")))
     if mtype == "face_info":
         return face_info(request["ref"], meshes, _near(request.get("near")))
+    if mtype == "faces":
+        return faces(meshes)
     if mtype == "vertex_info":
         return vertex_info(request["ref"], meshes)
     raise MeasureError(f"unknown measurement type: {mtype}")

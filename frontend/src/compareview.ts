@@ -13,6 +13,7 @@
  */
 import * as THREE from 'three'
 
+import { FACE_CHANGE_NAMES, type FaceComparison } from './facecompare.ts'
 import { placesOfParts, type Comparison, type Place, type Sampled, type Surface } from './compare.ts'
 import type { CompareReply } from './compareworker.ts'
 import { palette } from './theme.ts'
@@ -311,6 +312,7 @@ export function renderCompareLegend(
   note: string,
   nav: CompareNav | null = null,
   aligned = '',
+  faces: FaceRows | null = null,
 ): void {
   const s = view.stats()
   const max = Math.max(s.added, -s.removed, view.tolerance)
@@ -379,6 +381,7 @@ export function renderCompareLegend(
     row(theme.removed, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`, 'removed'),
     row(theme.same, `変わっていない（許容 ±${tol} mm の中）`),
   ]
+  if (faces) rows.push(faceRows(faces))
   // the alignment (main.ts alignText), then the note
   for (const text of [aligned, note]) {
     if (!text) continue
@@ -389,4 +392,62 @@ export function renderCompareLegend(
     rows.push(n)
   }
   el.replaceChildren(...rows)
+}
+
+/** 面の変化 in the legend: the comparison of the faces, the row gone to (-1: none), a press on a row */
+export interface FaceRows {
+  comparison: FaceComparison
+  at: number
+  go: (i: number) => void
+}
+
+/** rows of the legend shown at most (the rest are in the 記録) */
+export const FACE_ROWS = 5
+
+/**
+ * 面の変化 (facecompare.ts) as the legend lists it: how many faces are the
+ * same and how many changed, then the changes (the first FACE_ROWS), a line
+ * each: its kind and what it is in short (the whole of it on hover and in the
+ * 記録). A press on a line goes to the face.
+ */
+function faceRows(f: FaceRows): HTMLDivElement {
+  const box = document.createElement('div')
+  box.className = 'face-changes'
+  const head = document.createElement('div')
+  head.className = 'compare-note'
+  const n = f.comparison.changes.length
+  head.textContent = `面の変化（B-rep の面）: 同じ ${f.comparison.same} 面${n ? `・変わった ${n}` : '・変わった面は無い'}`
+  box.append(head)
+  const colors = compareColors()
+  f.comparison.changes.slice(0, FACE_ROWS).forEach((c, i) => {
+    const r = document.createElement('button')
+    r.type = 'button'
+    r.className = 'face-change'
+    r.dataset.go = `face-${i}`
+    r.dataset.kind = c.kind
+    r.title = `${c.text}（押すとその面へ寄る）`
+    if (i === f.at) r.classList.add('current')
+    const tag = document.createElement('span')
+    tag.className = 'face-tag'
+    tag.textContent = FACE_CHANGE_NAMES[c.kind]
+    // the comparison's colours for what one version alone has
+    if (c.kind === 'added') tag.style.borderColor = css(colors.added)
+    if (c.kind === 'removed') tag.style.borderColor = css(colors.removed)
+    const t = document.createElement('span')
+    t.className = 'face-text'
+    t.textContent = c.short
+    r.append(tag, t)
+    r.addEventListener('click', (e) => {
+      e.stopPropagation()
+      f.go(i)
+    })
+    box.append(r)
+  })
+  if (n > FACE_ROWS) {
+    const more = document.createElement('div')
+    more.className = 'compare-note'
+    more.textContent = `ほか ${n - FACE_ROWS} 件（確認の記録に全部載る）`
+    box.append(more)
+  }
+  return box
 }

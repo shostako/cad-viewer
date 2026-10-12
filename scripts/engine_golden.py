@@ -86,6 +86,8 @@ def measures(meshes) -> list[dict]:
         reqs.append({"type": "distance", "a": {"partId": a, "kind": "part", "id": 0}, "b": {"partId": b, "kind": "part", "id": 0}})
         reqs.append({"type": "distance", "a": {"partId": a, "kind": "part", "id": 0}, "b": {"partId": b, "kind": "face", "id": 1}, "mode": "centre"})
         reqs.append({"type": "distance", "a": {"partId": a, "kind": "face", "id": 1}, "b": {"partId": b, "kind": "face", "id": 1}})
+    # every face at once (版の比較's 面の変化)
+    reqs.append({"type": "faces"})
     # the errors, worded as the backend words them
     reqs += [
         {"type": "face_info", "ref": {"partId": 0, "kind": "face", "id": 9999}},
