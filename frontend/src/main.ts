@@ -508,6 +508,9 @@ const reportPop = new ReportPop(document.querySelector<HTMLDivElement>('#report-
 function showReportPop(on: boolean): void {
   if (!on) return reportPop.hide()
   if (!contentShown) return
+  // datums being clicked: the comparison is not on screen, so the 記録 would not
+  // be of what is shown; the choice ends and the comparison is back (Codex on #108)
+  if (alignTool.active) giveUpAlign()
   reportPop.show(review)
   placeBesideColumn(reportPop.el, reportCtl.domElement)
 }

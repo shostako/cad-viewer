@@ -15,7 +15,7 @@ Steps: the files as they are; the datums on the open version (Backspace takes
 one back); on the compared one (a datum of another kind is refused); the
 motion and the places; the legend and the 記録; again by the top, the boss's
 foot (a circle) and a corner (a point); one plane alone (Enter): what it leaves
-free; 位置合わせを外す; Esc gives a choice up.
+free; 位置合わせを外す; Esc gives a choice up; so does opening the 記録.
 """
 import csv
 import io
@@ -228,4 +228,15 @@ with nav_session() as nav:
     s = align_state()
     assert s["side"] is None and s["aligned"] is None, s
     assert page.locator("#compare-legend").is_visible() and page.locator(".align-label").count() == 0
+
+    # ---- the 記録 opened while datums are clicked: the choice ends, the comparison is back
+    # (the 記録 is of the comparison on screen, Codex on #108) ---------------------------
+    nav.ctl("基準で合わせる").locator("button").click()
+    click_datum(TOP)
+    gui_common.ctl(page, "確認の記録…").locator("button").click()
+    page.wait_for_selector("#report-pop:not(.hidden)")
+    s = align_state()
+    assert s["side"] is None and s["aligned"] is None, s
+    assert page.locator("#compare-legend").is_visible() and page.locator(".align-label").count() == 0
+    page.keyboard.press("Escape")
     print("OK: 版の比較の位置合わせ")
