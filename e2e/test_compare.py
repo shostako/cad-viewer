@@ -19,7 +19,7 @@ import math
 import re
 
 import gui_common
-from nav_common import DXF, STEP_SRC, TESTDATA, nav_session
+from nav_common import DXF, SLOW_SCENE_TIMEOUT, STEP_SRC, TESTDATA, nav_session
 
 NEW = TESTDATA / "revision_b.step"
 OLD = TESTDATA / "revision_a.step"
@@ -47,7 +47,7 @@ def hue(rgb):
     return "?"
 
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
     nav.load(NEW)
 

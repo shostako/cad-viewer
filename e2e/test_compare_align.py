@@ -23,7 +23,7 @@ import math
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, nav_session
 
 OPEN = TESTDATA / "revision_a.step"
 OTHER = TESTDATA / "revision_b_moved.step"
@@ -59,7 +59,7 @@ def moved(p):
 TOP, BOSS, FRONT = (5, 5, 3), (15, 16, 7), (30, 0, 1.5)
 FOOT, CORNER, NEAR_CORNER = (15, 16, 3), (60, 0, 3), (59.6, 0.4, 3)
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
     nav.load(OPEN, props="live")
 

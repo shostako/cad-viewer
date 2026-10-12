@@ -19,7 +19,7 @@ import math
 from pathlib import Path
 
 import gui_common
-from nav_common import TESTDATA, nav_session
+from nav_common import SLOW_SCENE_TIMEOUT, TESTDATA, nav_session
 
 NEW = TESTDATA / "revision_b.step"
 OLD = TESTDATA / "revision_a.step"
@@ -27,7 +27,7 @@ NEW_BOSS = math.pi * 9 + 2 * math.pi * 3 * 5
 RAISED = math.pi * 16 + 2 * math.pi * 4 * 2
 RIB = 36 + 288 + 18
 
-with nav_session() as nav:
+with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     page = nav.page
     nav.load(NEW, props="live")
 
