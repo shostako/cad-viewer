@@ -1004,6 +1004,11 @@ body,
   box-shadow: 0 0 0 3px rgba(74, 158, 110, 0.25);
 }
 
+/* 位置合わせ: the datums' markers (1 平面, 2 軸, ...): the measurement's labels, not taking clicks */
+.align-label {
+  pointer-events: none;
+}
+
 .dim-label {
   color: var(--cv-on-measure);
   background: var(--cv-measure);

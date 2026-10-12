@@ -45,30 +45,43 @@ const EDGE_SNAP_PX = 10
 /** px: how near a vertex or an edge a click takes it when that kind alone may be picked (farther: nothing) */
 const FILTER_SNAP_PX = 24
 
+/**
+ * What a Picker picks on: the viewer's model (the viewer itself, the default),
+ * or meshes of parts that are not the model's (位置合わせ picks on the compared
+ * version: viewer.ts standInParts).
+ */
+export type PickSource = Pick<Viewer, 'getPartMesh' | 'hasEdgeLines' | 'hasCurveLines' | 'isPartVisible' | 'seeThrough'>
+
 export class Picker {
   /** what a click may take (PickFilter); the hover preselection asks the same pick, so it shows the same */
   filter: PickFilter = 'any'
   private raycaster = new THREE.Raycaster()
   private parts = new Map<number, PartData>()
   private meshes: THREE.Mesh[] = []
+  /** each mesh's part (the source's meshes are its own: nothing is written on them) */
+  private partOf = new Map<THREE.Object3D, number>()
 
   private viewer: Viewer
+  private source: PickSource
 
-  constructor(viewer: Viewer) {
+  /** source: what the picks are on (the camera and the screen are the viewer's) */
+  constructor(viewer: Viewer, source: PickSource = viewer) {
     this.viewer = viewer
+    this.source = source
   }
 
   setModel(parts: PartData[]): void {
     this.parts.clear()
     this.meshes = []
+    this.partOf.clear()
     for (const part of parts) {
       this.parts.set(part.id, part)
-      const mesh = this.viewer.getPartMesh(part.id)
+      const mesh = this.source.getPartMesh(part.id)
       if (mesh) {
         // indirect: keep the original index order — faceRanges (triStart/triCount)
         // map triangles to B-rep faceIds and must never be reshuffled
         mesh.geometry.computeBoundsTree({ indirect: true })
-        mesh.userData.partId = part.id
+        this.partOf.set(mesh, part.id)
         this.meshes.push(mesh)
       }
     }
@@ -78,6 +91,7 @@ export class Picker {
     for (const m of this.meshes) m.geometry.disposeBoundsTree()
     this.meshes = []
     this.parts.clear()
+    this.partOf.clear()
   }
 
   /**
@@ -129,7 +143,7 @@ export class Picker {
     const ws = w ? [Math.max(w.x, 0), Math.max(w.y, 0), Math.max(w.z, 0)] : [1, 1, 1]
     const sum = ws[0] + ws[1] + ws[2]
     return {
-      partId: hit.object.userData.partId as number,
+      partId: this.partOf.get(hit.object)!,
       triangle: hit.faceIndex,
       vertices: [a, b, c],
       weights: [ws[0] / sum, ws[1] / sum, ws[2] / sum],
@@ -150,14 +164,14 @@ export class Picker {
 
   /** the part under the cursor (partAt) and the point on it: a whole-part pick (選択: 部品) takes it */
   private partHit(ndc: THREE.Vector2): { partId: number; point: THREE.Vector3 } | null {
-    const seeThrough = this.viewer.seeThrough
+    const seeThrough = this.source.seeThrough
     const line = this.snapDrawnLines(ndc, seeThrough ? undefined : (part) => part.indices.length === 0, true)
     if (line && seeThrough) return line
     const hit = this.firstVisibleHit(ndc)
     if (line && (!hit || this.depth(line.point) <= this.depth(hit.point) + 2 * this.pxScale(hit.point))) {
       return line
     }
-    return hit ? { partId: hit.object.userData.partId as number, point: hit.point.clone() } : null
+    return hit ? { partId: this.partOf.get(hit.object)!, point: hit.point.clone() } : null
   }
 
   /** how far in front of the camera a point is, along the view */
@@ -182,14 +196,14 @@ export class Picker {
       const at = this.partHit(ndc)
       return at && this.parts.has(at.partId) ? { partId: at.partId, kind: 'part', id: 0, point: at.point } : null
     }
-    if (this.viewer.seeThrough && f !== 'face') {
+    if (this.source.seeThrough && f !== 'face') {
       const drawn = this.snapDrawnLines(ndc, undefined, false, f === 'any' ? 'any' : f)
       if (drawn) return drawn
       if (f !== 'any') return null // a vertex or an edge alone: none near
     }
     const hit = this.firstVisibleHit(ndc)
     if (!hit) return null
-    const partId = hit.object.userData.partId as number
+    const partId = this.partOf.get(hit.object)!
     const part = this.parts.get(partId)
     if (!part || hit.faceIndex === undefined || hit.faceIndex === null) return null
 
@@ -286,9 +300,9 @@ export class Picker {
     for (const part of this.parts.values()) {
       if (only && !only(part)) continue
       // (loose curves count only for partAt: a click does not take them)
-      const drawn = this.viewer.hasEdgeLines(part.id) || (curves && this.viewer.hasCurveLines(part.id))
-      if (!drawn || !this.viewer.isPartVisible(part.id)) continue
-      const mat = this.viewer.getPartMesh(part.id)?.material as
+      const drawn = this.source.hasEdgeLines(part.id) || (curves && this.source.hasCurveLines(part.id))
+      if (!drawn || !this.source.isPartVisible(part.id)) continue
+      const mat = this.source.getPartMesh(part.id)?.material as
         | (THREE.Material & { clippingPlanes?: THREE.Plane[] | null })
         | undefined
       const clip = mat?.clippingPlanes ?? []

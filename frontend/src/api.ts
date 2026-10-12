@@ -134,6 +134,8 @@ export interface FaceInfoResult {
   axis?: Xyz
   /** a plane's normal, out of the solid */
   normal?: Xyz
+  /** a point of a plane (its own origin: it may lie outside the face) */
+  origin?: Xyz
   /** a cylinder: a whole turn (⌀) or a part of one (R) */
   full?: boolean
   /** a cone: its half angle, degrees */

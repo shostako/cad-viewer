@@ -88,3 +88,4 @@ test_compare.py
 test_undercut.py
 test_pull_dir.py
 test_compare_places.py
+test_compare_align.py

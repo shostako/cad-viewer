@@ -34,7 +34,7 @@ import { LENGTH_UNIT, MeasureTool, type EntryData } from './measure'
 import { LIST_HEAD, copyText, drawingRow, entryRow, labelText, listText, recordCells, rowElement, type RowView } from './measurelist'
 import { DIGITS_DEFAULT, DIGITS_MAX, DIGITS_MIN, LENGTH_UNITS, fmt, setFrame, setShown, shown, type Frame, type LengthUnit } from './sizes'
 import { FrameTool } from './frame'
-import { toModelData, type ModelData } from './model'
+import { toModelData, type ModelData, type PartData } from './model'
 import { Picker, type FaceHit, type PickFilter, type PickResult } from './picking'
 import { InfoCache, Preselect } from './preselect'
 import { PropertiesPanel, REASON_TEXT, fmtDensity } from './properties'
@@ -42,6 +42,8 @@ import { SectionTool, type Axis } from './section'
 import { CheckPanel, runChecks, type CheckConditions, type CheckRow } from './checklist'
 import { CompareView, changeText, renderCompareLegend, runCompare, signed, startTolerance, type CompareNav, type CompareRole, type CompareShow } from './compareview'
 import type { Place, Surface } from './compare'
+import { DATUM_NAMES, align, movedSurfaces, shiftOf, turnAngle, type Alignment, type DatumPair, type Xyz } from './align'
+import { AlignTool, type AlignSide } from './aligntool'
 import { UndercutView, renderUndercutLegend, runReach } from './undercutview'
 import { undercutPlaces, type Reach } from './undercut'
 import { SpotNav } from './spotnav'
@@ -700,7 +702,9 @@ function buildReport(at: Date, image: string | null): Report {
     }
     tables.push({
       title: `版の比較（${rows.length} 所）`,
-      note: `新しい版 ${compareNames[n]}・前の版 ${compareNames[o]}・許容 ±${compareView.tolerance} mm（それより小さい差は変わっていないとする）`,
+      note: [`新しい版 ${compareNames[n]}・前の版 ${compareNames[o]}・許容 ±${compareView.tolerance} mm（それより小さい差は変わっていないとする）`, alignText()]
+        .filter(Boolean)
+        .join('。'),
       head: ['種類', '最大の差', '単位', '面積 (mm²)', 'X', 'Y', 'Z', '出どころ'],
       rows,
       empty: '許容より大きい差は無かった',
@@ -983,6 +987,12 @@ function onNavigationKey(e: KeyboardEvent): void {
       e.preventDefault()
       return
     }
+    // 位置合わせ: Esc gives the datums up (the comparison as it was)
+    if (alignTool.active) {
+      giveUpAlign()
+      e.preventDefault()
+      return
+    }
     // choosing a frame: Esc gives it up (the frame shown stays)
     if (frameTool.active) {
       frameTool.stop()
@@ -1011,6 +1021,15 @@ function onNavigationKey(e: KeyboardEvent): void {
   // and 周長, 長さ) goes on the list, and the next click is a first point again.
   // A control the keyboard moved to (Tab: a part tree row's button) keeps its
   // Enter; one that only kept the focus after a mouse click (a row's copy) does not
+  // 位置合わせ: Enter goes on to the compared version, Backspace takes the last datum back
+  if (alignTool.active && (e.key === 'Enter' || e.key === 'Backspace') && !keyboardOnControl(e.target)) {
+    if (!e.repeat) {
+      if (e.key === 'Enter') alignTool.next()
+      else alignTool.back()
+    }
+    e.preventDefault()
+    return
+  }
   if (e.key === 'Enter' && state.mode === '計測' && !is2D && measureTool.hasPending && !keyboardOnControl(e.target)) {
     if (!e.repeat && measureTool.recordPending()) showModeHint()
     e.preventDefault()
@@ -1077,6 +1096,7 @@ const frameActions = {
       hudInfo.textContent = '座標系は STEP・IGES のモデルだけ（メッシュ形式には B-rep の頂点・稜線・面が無い）'
       return
     }
+    if (alignTool.active) giveUpAlign()
     forgetHoverPick()
     frameTool.start()
     probe.refresh()
@@ -1648,6 +1668,7 @@ function startPullPick(): void {
     hudInfo.textContent = '型開き方向を面・稜線から選べるのは STEP・IGES のモデルだけ（メッシュ形式には B-rep の面・稜線が無い）'
     return
   }
+  if (alignTool.active) giveUpAlign()
   forgetHoverPick()
   frameTool.startPull((dir) => {
     pickedDir = [dir[0], dir[1], dir[2]]
@@ -2040,6 +2061,14 @@ let compareNote = ''
 /** the open model's display mesh deflection (mesh.bin's header; 0 for a mesh file) */
 let shownDeflection = 0
 let compareHud = ''
+/**
+ * the compared version as read, in its file's coordinates (a new alignment
+ * compares it again): its model (the datums are asked of it), whether it is
+ * a B-rep, its parts and surfaces, its box's centre
+ */
+let compareOther: { modelId: string; brep: boolean; parts: PartData[]; surfaces: Surface[]; centre: Xyz } | null = null
+/** the alignment the comparison is made in (null: the files' own places) */
+let compareAlign: { pairs: DatumPair[]; result: Alignment } | null = null
 const compareFolder = gui.addFolder('版の比較')
 compareFolder.close()
 const compareActions = {
@@ -2065,14 +2094,25 @@ const compareTolCtl = compareFolder
   .name('許容 (mm)')
   .onChange(() => redrawCompare())
 compareTolCtl.domElement.title = 'この差より小さい所は「変わっていない」（灰色）にする'
+const alignActions = { start: () => startAlign(), reset: () => resetAlign() }
+const alignStartCtl = compareFolder.add(alignActions, 'start').name('基準で合わせる…')
+alignStartCtl.domElement.title = '両方の版で同じ基準（平らな面・穴の軸・円・頂点）を同じ順に選び、比べる版を開いている版に重ねる'
+const alignResetCtl = compareFolder.add(alignActions, 'reset').name('位置合わせを外す')
+alignResetCtl.domElement.title = '比べる版をファイルのままの位置に戻して比べ直す'
 const compareStopCtl = compareFolder.add(compareActions, 'stop').name('比較をやめる')
 function showCompareCtls(): void {
   compareNameCtl.show(compareState.name !== '')
+  // (not while a comparison is being made: its end would show it over the datums' clicks)
+  alignStartCtl.show(compareView !== null && compareOther !== null && compareRun === null)
+  alignResetCtl.show(compareView !== null && compareAlign !== null)
   compareStopCtl.show(compareView !== null || compareRun !== null)
 }
 showCompareCtls()
 // the comparison's colours are the theme's (theme.ts): made again in the new one
-onTheme(() => redrawCompare())
+// (while datums are clicked it is not shown: it is made when they are done)
+onTheme(() => {
+  if (!alignTool.active) redrawCompare()
+})
 compareInput.addEventListener('change', () => {
   const file = compareInput.files?.[0]
   if (file) void compareWith(file)
@@ -2098,7 +2138,7 @@ function openSurfaces(): Surface[] {
   }
   return out
 }
-/** read another version and compare the open model with it */
+/** read another version and compare the open model with it (in the files' own places) */
 async function compareWith(file: File): Promise<void> {
   if (!contentShown || is2D) return
   stopCompare()
@@ -2116,15 +2156,72 @@ async function compareWith(file: File): Promise<void> {
     const pack = await fetchMesh(meta.id)
     if (gen !== compareGen || modelGen !== viewer.modelGen) return
     const other = toModelData(pack)
-    const b: Surface[] = other.parts.filter((p) => p.indices.length).map((p) => ({ positions: p.positions, normals: p.normals, indices: p.indices }))
-    const a = openSurfaces()
-    if (!a.length || !b.length) throw new Error('面の無いモデルとは比べられない')
-    setCompareHud(`版の比較: ${file.name} と比べている...`)
-    const run = runCompare(a, b)
-    compareRun = run
-    showCompareCtls()
+    const parts = other.parts.filter((p) => p.indices.length)
+    const b: Surface[] = parts.map((p) => ({ positions: p.positions, normals: p.normals, indices: p.indices }))
+    if (!openSurfaces().length || !b.length) throw new Error('面の無いモデルとは比べられない')
+    const deflB = Number(pack.header.deflection ?? 0)
+    compareOther = { modelId: meta.id, brep: meta.format === 'brep', parts, surfaces: b, centre: centreOf(b) }
+    compareAlign = null
+    compareState.tolerance = startTolerance(shownDeflection, deflB)
+    compareTolCtl.updateDisplay()
+    compareNames = { a: shownFileName, b: file.name }
+    compareNote =
+      shownDeflection + deflB > 0
+        ? `表示用の形の上の目安。曲面は、形の粗さ（${Number((shownDeflection + deflB).toPrecision(2))} mm）より小さい差を見分けられない`
+        : '表示用の形の上の目安'
+  } catch (e) {
+    if (gen !== compareGen) return
+    compareFailed(file.name, e)
+    return
+  }
+  await runComparison(null, gen)
+}
+/** the comparison could not be made: the line says why (nothing of it is left) */
+function compareFailed(name: string, e: unknown): void {
+  compareRun = null
+  compareOther = null
+  compareAlign = null
+  compareState.name = ''
+  compareNameCtl.updateDisplay()
+  showCompareCtls()
+  setCompareHud(`版の比較: ${name} と比べられなかった — ${e instanceof Error ? e.message : e}`)
+}
+/** the box's centre of surfaces (the compared version's: what an alignment leaves free keeps it in place) */
+function centreOf(parts: Surface[]): Xyz {
+  const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity]
+  for (const s of parts) {
+    for (let i = 0; i < s.positions.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        lo[k] = Math.min(lo[k], s.positions[i + k])
+        hi[k] = Math.max(hi[k], s.positions[i + k])
+      }
+    }
+  }
+  return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2]
+}
+/**
+ * Compare the open model with the version read (compareOther), moved by the
+ * alignment `next` (null: in its file's place), and show it; the alignment is
+ * the comparison's from then on. gen: the comparison's (a new one from here
+ * when not given: a new alignment). 'dropped': another comparison came after
+ * it (or none is on any more); 'failed': the last one stays as it was.
+ */
+async function runComparison(
+  next: typeof compareAlign,
+  gen = ++compareGen,
+): Promise<'shown' | 'failed' | 'dropped'> {
+  const other = compareOther
+  if (!other) return 'dropped'
+  const modelGen = viewer.modelGen
+  compareRun?.cancel()
+  const b = next ? movedSurfaces(other.surfaces, next.result.motion) : other.surfaces
+  setCompareHud(`版の比較: ${compareState.name} と比べている...`)
+  const run = runCompare(openSurfaces(), b)
+  compareRun = run
+  showCompareCtls()
+  try {
     const result = await run.promise
-    if (gen !== compareGen || modelGen !== viewer.modelGen) return
+    if (gen !== compareGen || modelGen !== viewer.modelGen) return 'dropped'
     compareRun = null
     // the comparison's colours take over: the heatmap and the draft go
     if (thicknessState.enabled) {
@@ -2138,34 +2235,34 @@ async function compareWith(file: File): Promise<void> {
     viewer.clearVertexColors()
     colorOwner = 'compare'
     setMode('なし')
-    const deflB = Number(pack.header.deflection ?? 0)
-    compareState.tolerance = startTolerance(shownDeflection, deflB)
-    compareTolCtl.updateDisplay()
-    compareNames = { a: shownFileName, b: file.name }
-    compareNote =
-      shownDeflection + deflB > 0
-        ? `表示用の形の上の目安。曲面は、形の粗さ（${Number((shownDeflection + deflB).toPrecision(2))} mm）より小さい差を見分けられない`
-        : '表示用の形の上の目安'
+    compareView?.dispose()
     compareView = new CompareView(result, compareState.tolerance)
+    compareAlign = next
     redrawCompare()
+    return 'shown'
   } catch (e) {
-    if (gen !== compareGen) return
-    compareRun = null
-    compareState.name = ''
-    compareNameCtl.updateDisplay()
-    showCompareCtls()
-    setCompareHud(`版の比較: ${file.name} と比べられなかった — ${e instanceof Error ? e.message : e}`)
+    if (gen !== compareGen) return 'dropped'
+    if (compareView) {
+      // a new alignment's run: the last comparison stays as it was
+      compareRun = null
+      showCompareCtls()
+      setCompareHud(`版の比較: 比べ直せなかった — ${e instanceof Error ? e.message : e}`)
+      return 'failed'
+    }
+    compareFailed(compareState.name, e)
+    return 'failed'
   }
 }
 /** the comparison's meshes, legend and line for the role, show and tolerance now */
 function redrawCompare(): void {
   if (!compareView) return
+  if (alignTool.active) stopAlignPick() // a control of the comparison changed while datums were clicked
   compareView.role = compareState.role
   compareView.show = compareState.show
   compareView.tolerance = compareState.tolerance
   viewer.setStandIn(compareView.build())
   dropCompareSpot() // the places were of the last role, show and tolerance
-  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav)
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText())
   compareLegend.classList.remove('hidden')
   const s = compareView.stats()
   setCompareHud(`版の比較: 足された 最大 ${signed(s.added)} mm、削られた 最大 ${signed(s.removed)} mm`)
@@ -2200,7 +2297,7 @@ function goToChange(kind: 'added' | 'removed'): void {
   const q = list[compareAt[kind]]
   compareSpot = { partId: -1, faceId: null, at: q.at, normal: q.normal, min: q.min, max: q.max, value: q.peak, area: q.area }
   viewer.goToSpot(compareSpot, changeText(kind, q))
-  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav)
+  renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText())
 }
 /** the places go (made again at the next look), and the ring if it is still theirs */
 function dropCompareSpot(): void {
@@ -2214,6 +2311,9 @@ function stopCompare(): void {
   compareGen++
   compareRun?.cancel()
   compareRun = null
+  stopAlignPick()
+  compareOther = null
+  compareAlign = null
   if (compareView) {
     viewer.setStandIn(null)
     compareView.dispose()
@@ -2229,6 +2329,114 @@ function stopCompare(): void {
   if (compareHud && hudInfo.textContent === compareHud) hudInfo.textContent = modelSummary
   compareHud = ''
   showCompareCtls()
+}
+
+// ---- 位置合わせ (docs/designs/align.md, align.ts): the compared version moved onto the open one
+// by datums clicked on both (aligntool.ts), in the order of precedence they were clicked in
+const alignTool = new AlignTool({
+  say: (text) => setCompareHud(text),
+  show: (side) => showAlignSide(side),
+  marks: (list) => setAlignMarks(list),
+  done: (pairs) => void alignBy(pairs),
+})
+/** the compared version's faces and lines while its datums are clicked, and the picker on them */
+let alignShown: { objects: THREE.Object3D[]; dispose(): void; picker: Picker } | null = null
+let alignMarks: THREE.Object3D[] = []
+function startAlign(): void {
+  if (!compareView || !compareOther || !currentModelId) return
+  if (!frameTool.available || !compareOther.brep) {
+    setCompareHud('位置合わせ: 基準で合わせられるのは STEP・IGES どうしだけ（メッシュ形式には B-rep の面・稜線が無い）')
+    return
+  }
+  stopPullPick()
+  frameTool.stop()
+  forgetHoverPick()
+  alignTool.start(currentModelId, compareOther.modelId)
+}
+/** a version on screen for its datums: the open model as it is, or the compared one in its file's place */
+function showAlignSide(side: AlignSide): void {
+  dropCompareSpot()
+  compareLegend.classList.add('hidden')
+  if (side === 'open') viewer.setStandIn(null)
+  else {
+    if (!alignShown && compareOther) {
+      const made = viewer.standInParts(compareOther.parts)
+      const picker = new Picker(viewer, made.source)
+      picker.setModel(compareOther.parts)
+      alignShown = { ...made, picker }
+    }
+    viewer.setStandIn(alignShown?.objects ?? null)
+  }
+  viewer.fitToView()
+  forgetHoverPick()
+  preselect.hide()
+  probe.refresh()
+}
+/** the picker of the side shown (null: no datums are being clicked) */
+function alignPicker(): Picker | null {
+  if (alignTool.side === 'open') return picker
+  return alignTool.side === 'other' ? (alignShown?.picker ?? null) : null
+}
+function setAlignMarks(list: { at: Xyz; text: string }[]): void {
+  for (const m of alignMarks) viewer.disposeOverlayObject(m)
+  alignMarks = list.map((d) => {
+    const label = viewer.makeLabel(d.text, new THREE.Vector3(...d.at), 'dim-label align-label')
+    viewer.overlay.add(label)
+    return label
+  })
+}
+/** the choice of datums ends: its markers and the compared version's faces go (what is shown is the caller's) */
+function stopAlignPick(): void {
+  alignTool.stop()
+  setAlignMarks([])
+  if (alignShown) {
+    alignShown.picker.clear()
+    alignShown.dispose()
+    alignShown = null
+  }
+  forgetHoverPick()
+}
+/** Esc while the datums are clicked: the comparison as it was */
+function giveUpAlign(): void {
+  stopAlignPick()
+  redrawCompare()
+  viewer.fitToView()
+}
+/** every datum has its partner: the compared version moved by them, compared again */
+async function alignBy(pairs: DatumPair[]): Promise<void> {
+  stopAlignPick()
+  if (!compareOther) return
+  let result: Alignment
+  try {
+    result = align(pairs, compareOther.centre)
+  } catch (e) {
+    redrawCompare()
+    setCompareHud(`位置合わせ: ${e instanceof Error ? e.message : e}`)
+    return
+  }
+  redrawCompare() // the last comparison while the new one is made
+  if ((await runComparison({ pairs, result })) === 'shown') viewer.fitToView()
+}
+/** 位置合わせを外す: the compared version in its file's place again */
+function resetAlign(): void {
+  if (compareAlign) void runComparison(null).then((r) => r === 'shown' && viewer.fitToView())
+}
+/** (0.000, 0.000, 1.000): a direction for the screen */
+const dirText = (d: readonly number[]) => `(${d.map((v) => (Math.abs(v) < 5e-4 ? 0 : v).toFixed(3)).join(', ')})`
+/** the alignment as the legend and the 記録 tell it ('' for none) */
+function alignText(): string {
+  if (!compareAlign || !compareOther) return ''
+  const { pairs, result } = compareAlign
+  const kinds = pairs.map((p) => DATUM_NAMES[p.open.kind]).join('・')
+  const { angle, axis } = turnAngle(result.motion.r)
+  const turned = angle < 5e-3 ? '回さず' : `回転 ${angle.toFixed(2)}°（軸 ${dirText(axis)}）`
+  const shift = shiftOf(result.motion, compareOther.centre)
+  const far = Math.max(...result.misfit.map((f) => f.distance))
+  const off = Math.max(...result.misfit.map((f) => f.angle))
+  let text = `位置合わせ: 基準 ${kinds}。比べる版を${turned}、真ん中を ${modelPoint(shift)} mm 動かした。基準のずれ 最大 ${fmt(far)} mm・${off.toFixed(2)}°`
+  const turnFree = 3 - result.fixed.turn, moveFree = 3 - result.fixed.move
+  if (turnFree || moveFree) text += `。基準で決まらない動き（回転 ${turnFree}・移動 ${moveFree}）は、比べる版の真ん中を動かさない`
+  return text
 }
 
 /** while 判定の基準 follows the material: its threshold and draft (their own onChange recomputes) */
@@ -2304,7 +2512,14 @@ probe.onStop(() => {
   partTree.markFrom3D(null)
 })
 function underCursor(clientX: number, clientY: number): TipContent {
-  if (compareView && viewer.standingIn && !is2D) {
+  if (alignTool.side === 'other') {
+    // 位置合わせ on the compared version: its faces are not the open model's (no names of them to ask)
+    preselect.hide()
+    infoCache.rest(null)
+    partTree.markFrom3D(null)
+    return null
+  }
+  if (compareView && viewer.standingIn && !is2D && !alignTool.active) {
     // 版の比較: the change where the cursor is (the open model is hidden)
     preselect.hide()
     infoCache.rest(null)
@@ -2317,7 +2532,7 @@ function underCursor(clientX: number, clientY: number): TipContent {
     infoCache.rest(null)
     return undercutView.valueAt(toNdc(clientX, clientY), viewer.camera)
   }
-  if ((state.mode !== 'なし' || frameTool.active) && !is2D && contentShown) {
+  if ((state.mode !== 'なし' || frameTool.active || alignTool.active) && !is2D && contentShown) {
     const picked = pickUnderCursor(clientX, clientY)
     if (picked !== null) {
       partTree.markFrom3D(null) // 計測 / 注記 point at faces, edges and vertices, not at parts
@@ -2398,8 +2613,8 @@ function pickUnderCursor(clientX: number, clientY: number): TipContent {
       hoverPickTimer = setTimeout(() => probe.refresh(), hoverPickReady - now)
       return lastPickTip
     }
-    // a frame's clicks are not the measurement's: they take any kind (frame.ts says which can be used)
-    pick = picker.pick(toNdc(clientX, clientY), frameTool.active ? 'any' : picker.filter)
+    // a frame's clicks are not the measurement's: they take any kind (frame.ts says which can be used; 位置合わせ's too)
+    pick = picker.pick(toNdc(clientX, clientY), frameTool.active || alignTool.active ? 'any' : picker.filter)
     const end = performance.now()
     hoverPickReady = viewer.seeThrough ? end + HOVER_PICK_WAIT * (end - now) : 0
   }
@@ -3452,6 +3667,13 @@ viewport.addEventListener('pointerup', (e) => {
   const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1])
   downAt = null
   if (e.button === 0) clickTravels = [clickTravels[1], Math.max(travel, moved)]
+  // 位置合わせ: a click is a datum on the version shown
+  if (alignTool.active) {
+    if (moved > DRAG_PX || e.button !== 0) return
+    const pick = alignPicker()?.pick(toNdc(e.clientX, e.clientY), 'any')
+    if (pick) void alignTool.pick(pick)
+    return
+  }
   // choosing a frame: a click is its origin or an axis, whatever the mode
   if (frameTool.active) {
     if (moved > DRAG_PX || e.button !== 0) return
@@ -3935,6 +4157,29 @@ testHooks.__cadStallProjection = (ms: number) => __stallNextProjection(ms)
 // how long a load waits for the 体積・重量 values before its fit (no argument: the app's own)
 testHooks.__cadPropsWait = (ms?: number) => {
   propsWaitMs = ms ?? PROPS_WAIT_MS
+}
+// 位置合わせ: the side being clicked and the datums so far; the alignment made (its motion, what it fixed, its misfits)
+testHooks.__cadAlign = () => {
+  const a = compareAlign
+  return {
+    side: alignTool.side,
+    counts: alignTool.counts,
+    aligned: a && {
+      kinds: a.pairs.map((p) => p.open.kind),
+      r: a.result.motion.r,
+      t: a.result.motion.t,
+      fixed: a.result.fixed,
+      misfit: a.result.misfit,
+      ...turnAngle(a.result.motion.r),
+      shift: compareOther ? shiftOf(a.result.motion, compareOther.centre) : null,
+    },
+  }
+}
+// what a click there would take on the version whose datums are being clicked (null: none, or not choosing)
+testHooks.__cadAlignPick = (clientX: number, clientY: number) => {
+  viewer.prepareCamera()
+  const r = alignPicker()?.pick(toNdc(clientX, clientY), 'any')
+  return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
 testHooks.__cadPick = (clientX: number, clientY: number) => {
   viewer.prepareCamera()

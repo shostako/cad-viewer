@@ -11,6 +11,7 @@ import type { FaceRange, ModelData, PartData } from './model'
 import type { Frame } from './sizes'
 import { paintLabels, type ExportBackground } from './snapshot'
 import type { Spot, SpotPart } from './spots'
+import type { PickSource } from './picking'
 import { deviationColors, thicknessColors, type DeviationBands } from './thickness'
 import { onTheme, palette } from './theme'
 
@@ -785,17 +786,78 @@ export class Viewer {
    * (setPartVisible). The model stays pickable underneath (its parts' groups
    * keep their own visibility).
    */
-  setStandIn(meshes: THREE.Mesh[] | null): void {
+  setStandIn(meshes: THREE.Object3D[] | null): void {
     this.wake()
     this.standInGroup.clear()
     for (const m of meshes ?? []) {
-      ;(m.material as THREE.Material).clippingPlanes = this.clipping
+      m.traverse((o) => {
+        if (o instanceof THREE.Mesh || o instanceof LineSegments2) (o.material as THREE.Material).clippingPlanes = this.clipping
+      })
       const id = m.userData.partId as number | undefined
       if (id !== undefined) m.visible = this.isPartVisible(id)
       this.standInGroup.add(m)
     }
     this.modelGroup.visible = !this.standingIn
     this.updateDepthSphere()
+  }
+
+  /**
+   * Faces and B-rep lines for parts that are not the model's (位置合わせ shows
+   * the compared version with them, setStandIn, and picks on it: a Picker with
+   * the source). Drawn as the model's are in the shaded style. dispose() frees them.
+   */
+  standInParts(parts: PartData[]): { objects: THREE.Object3D[]; source: PickSource; dispose(): void } {
+    const meshes = new Map<number, THREE.Mesh>()
+    const lined = new Set<number>()
+    const objects: THREE.Object3D[] = []
+    const mats: LineMaterial[] = []
+    const size = new THREE.Vector2()
+    this.renderer.getSize(size)
+    for (const part of parts) {
+      if (!part.indices.length) continue
+      const group = new THREE.Group()
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.BufferAttribute(part.positions, 3))
+      geo.setAttribute('normal', new THREE.BufferAttribute(part.normals, 3))
+      geo.setIndex(new THREE.BufferAttribute(part.indices, 1))
+      const color = part.color ? new THREE.Color().setRGB(part.color[0], part.color[1], part.color[2]) : new THREE.Color(DEFAULT_PART_COLOR)
+      const mesh = new THREE.Mesh(
+        geo,
+        new THREE.MeshStandardMaterial({ color, metalness: 0.1, roughness: 0.65, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 }),
+      )
+      group.add(mesh)
+      meshes.set(part.id, mesh)
+      if (part.edges.length >= 6) {
+        const edgeGeo = new LineSegmentsGeometry()
+        edgeGeo.setPositions(part.edges)
+        const mat = new LineMaterial({ color: EDGE_COLOR, linewidth: 1.5 })
+        mat.resolution.copy(size)
+        mats.push(mat)
+        this.lineMaterials.push(mat)
+        group.add(new LineSegments2(edgeGeo, mat))
+        lined.add(part.id)
+      }
+      objects.push(group)
+    }
+    const source: PickSource = {
+      getPartMesh: (id) => meshes.get(id),
+      hasEdgeLines: (id) => lined.has(id),
+      hasCurveLines: () => false,
+      isPartVisible: (id) => meshes.has(id),
+      seeThrough: false,
+    }
+    const dispose = () => {
+      this.lineMaterials = this.lineMaterials.filter((m) => !mats.includes(m))
+      for (const g of objects) {
+        g.traverse((o) => {
+          if (o instanceof THREE.Mesh || o instanceof LineSegments2) {
+            o.geometry.dispose()
+            ;(o.material as THREE.Material).dispose()
+          }
+        })
+      }
+    }
+    return { objects, source, dispose }
   }
 
   /** Create a screen-space label attached to a 3D point. */

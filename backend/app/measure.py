@@ -620,6 +620,9 @@ def face_info(ref: dict, meshes: list[PartMesh], near=None) -> dict[str, Any]:
         # out of the solid: the plane's own normal, turned when the face is reversed
         n = geom.Axis().Direction()
         out["normal"] = _xyz(n.Reversed() if face.Orientation() == TopAbs_REVERSED else n)
+        # a point of the plane (its own origin: it may lie outside the face), for
+        # a plane to align by (版の比較's 位置合わせ)
+        out["origin"] = _xyz(geom.Location())
     elif name == "torus":
         out.update(
             radius=geom.MinorRadius(),
