@@ -2253,9 +2253,13 @@ async function compareWith(file: File): Promise<void> {
     compareFailed(file.name, e)
     return
   }
-  // the model where the legend leaves room (a low window: it would cover the model, #59 P2)
+  // the model where the legend leaves room (a low window: it would cover the model, #59 P2);
+  // once more when 面の変化 has filled the legend (it comes later, Codex on #115)
+  fitWhenFaces = true
   if ((await runComparison(null, gen)) === 'shown') viewer.fitToView()
 }
+/** a comparison just shown: fit again once its 面の変化 is in the legend */
+let fitWhenFaces = false
 /** the comparison could not be made: the line says why (nothing of it is left) */
 function compareFailed(name: string, e: unknown): void {
   compareRun = null
@@ -2383,6 +2387,10 @@ async function updateFaceChanges(): Promise<void> {
     const aNew = compareView.newSide === 'a'
     faceChanges = compareFaces(aNew ? b : a, aNew ? a : b, aNew ? { old: 'b', new: 'a' } : { old: 'a', new: 'b' }, compareAlign?.motion ?? IDENTITY_MOTION, compareView.tolerance)
     renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
+    if (fitWhenFaces) {
+      fitWhenFaces = false
+      viewer.fitToView()
+    }
   } catch {
     // no faces to tell (the legend stays without them)
   }
@@ -2458,6 +2466,7 @@ function stopCompare(): void {
   stopAlignPick()
   compareOther = null
   compareAlign = null
+  fitWhenFaces = false
   faceGen++
   faceChanges = null
   if (compareView) {

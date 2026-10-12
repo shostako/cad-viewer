@@ -5,8 +5,9 @@ In an 800 x 600 window, revision_b against revision_a: 面の変化 starts folde
 (its line alone: the window is lower than 800); the view is fitted again once
 the comparison is shown, where the legend leaves room (the model's middle not
 under it, most of its outline clear of it). The legend folds to its title,
-and that is kept over a reload. 面の変化 opened is kept too; in a tall window
-it starts open.
+and that is kept over a reload. 面の変化 opened is kept too; in a window of
+800 or more it starts open, and the view is fitted again once it has filled
+the legend.
 """
 from nav_common import TESTDATA, nav_session
 
@@ -57,6 +58,7 @@ with nav_session() as nav:
     share, (cx, cy) = covered()
     l, t, r, b = legend_rect()
     assert not (l <= cx <= r and t <= cy <= b), ("the model's middle under the legend", (cx, cy), (l, t, r, b))
+    # (the window leaves little room: about a quarter stays under it; not fitted again, a third)
     assert share < 0.3, share
 
     # ---- the legend folds to its title; kept over a reload -------------------------------
@@ -81,10 +83,16 @@ with nav_session() as nav:
     compare(800, 600)
     assert "folded" not in page.locator("#compare-legend .face-changes").get_attribute("class")
 
-    # ---- a tall window, never folded or opened: 面の変化 open ---------------------------------
+    # ---- a window of 800 or more, never folded or opened: 面の変化 open ------------------------
     page.evaluate("localStorage.removeItem('cad-viewer:face-changes-folded')")
     page.reload()
-    compare(1280, 1000)
+    compare(900, 820)
     assert "folded" not in page.locator("#compare-legend .face-changes").get_attribute("class")
     assert page.locator("#compare-legend .face-change").first.is_visible()
+    # fitted again once 面の変化 filled the legend (it comes after the comparison, Codex on #115)
+    nav.settle()
+    share, (cx, cy) = covered()
+    l, t, r, b = legend_rect()
+    # (fitted once only, before 面の変化, the full legend covered some 15 % of the outline here)
+    assert not (l <= cx <= r and t <= cy <= b) and share < 0.05, (share, (cx, cy), (l, t, r, b))
     print("OK: 版の比較の凡例（低い窓）")
