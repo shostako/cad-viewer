@@ -2109,7 +2109,7 @@ compareFolder
   .name('新しいのは')
   .onChange(() => redrawCompare())
 compareFolder
-  .add(compareState, 'show', { '重ねる（変わった所）': 'overlay', 新しい版だけ: 'new', 前の版だけ: 'old' })
+  .add(compareState, 'show', { '重ねる（変わった所）': 'overlay', 新しい版だけ: 'new', 前の版だけ: 'old', 左右に見比べる: 'swipe' })
   .name('見せ方')
   .onChange(() => redrawCompare())
 const compareTolCtl = compareFolder
@@ -2128,6 +2128,54 @@ nextFitCtl.domElement.title = '同じくらい合う置き方（対称な形）�
 const alignResetCtl = compareFolder.add(alignActions, 'reset').name('位置合わせを外す')
 alignResetCtl.domElement.title = '比べる版をファイルのままの位置に戻して比べ直す'
 const compareStopCtl = compareFolder.add(compareActions, 'stop').name('比較をやめる')
+// 左右に見比べる (as Autodesk Docs's Compare Files side by side): the old version left of a
+// line, the new one right of it, one camera (viewer.ts setSplit). The line is dragged
+let swipeAt = 0.5
+const swipeBar = document.createElement('div')
+swipeBar.id = 'swipe-bar'
+swipeBar.className = 'hidden'
+swipeBar.title = '左右に動かして見比べる'
+for (const [side, text] of [['left', '前の版'], ['right', '新しい版']] as const) {
+  const label = document.createElement('span')
+  label.className = `swipe-label ${side}`
+  label.textContent = text
+  swipeBar.append(label)
+}
+viewport.append(swipeBar)
+/** the line where the split is (its labels with it) */
+function placeSwipeBar(): void {
+  swipeBar.style.left = `${(swipeAt * 100).toFixed(3)}%`
+}
+swipeBar.addEventListener('pointerdown', (e) => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  e.stopPropagation()
+  swipeBar.setPointerCapture(e.pointerId)
+  swipeBar.classList.add('dragging')
+})
+swipeBar.addEventListener('pointermove', (e) => {
+  if (!swipeBar.hasPointerCapture(e.pointerId)) return
+  const r = viewport.getBoundingClientRect()
+  swipeAt = Math.min(0.98, Math.max(0.02, (e.clientX - r.left) / Math.max(r.width, 1)))
+  viewer.setSplitAt(swipeAt)
+  placeSwipeBar()
+  probe.refresh()
+})
+const endSwipeDrag = (e: PointerEvent) => {
+  if (swipeBar.hasPointerCapture(e.pointerId)) swipeBar.releasePointerCapture(e.pointerId)
+  swipeBar.classList.remove('dragging')
+}
+swipeBar.addEventListener('pointerup', endSwipeDrag)
+swipeBar.addEventListener('pointercancel', endSwipeDrag)
+/** 左右に見比べる on (the comparison's meshes split at the line) or off */
+function applySwipe(): void {
+  const sides = compareView?.swipeSides() ?? null
+  if (sides) {
+    viewer.setSplit({ at: swipeAt, left: [sides.left], right: [sides.right] })
+    placeSwipeBar()
+  } else viewer.setSplit(null)
+  swipeBar.classList.toggle('hidden', !sides)
+}
 function showCompareCtls(): void {
   compareNameCtl.show(compareState.name !== '')
   // (not while a comparison is being made: its end would show it over the datums' clicks)
@@ -2292,6 +2340,7 @@ function redrawCompare(): void {
   compareView.show = compareState.show
   compareView.tolerance = compareState.tolerance
   viewer.setStandIn(compareView.build())
+  applySwipe()
   dropCompareSpot() // the places were of the last role, show and tolerance
   renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
   compareLegend.classList.remove('hidden')
@@ -2415,6 +2464,8 @@ function stopCompare(): void {
     compareView.dispose()
     compareView = null
   }
+  swipeBar.classList.add('hidden')
+  swipeAt = 0.5 // the next comparison's line starts in the middle (kept only within one, Codex on #112)
   dropCompareSpot()
   releaseColors('compare')
   compareLegend.classList.add('hidden')
@@ -2453,6 +2504,7 @@ function startAlign(): void {
 function showAlignSide(side: AlignSide): void {
   dropCompareSpot()
   compareLegend.classList.add('hidden')
+  swipeBar.classList.add('hidden')
   if (side === 'open') viewer.setStandIn(null)
   else {
     if (!alignShown && compareOther) {
@@ -2680,7 +2732,11 @@ function underCursor(clientX: number, clientY: number): TipContent {
     preselect.hide()
     infoCache.rest(null)
     partTree.markFrom3D(null)
-    return compareView.valueAt(toNdc(clientX, clientY), viewer.camera)
+    // 左右に見比べる: the version drawn on the cursor's side of the line
+    const at = viewer.splitAt
+    const r = viewport.getBoundingClientRect()
+    const side = at === null ? undefined : (clientX - r.left) / Math.max(r.width, 1) < at ? 'old' : 'new'
+    return compareView.valueAt(toNdc(clientX, clientY), viewer.camera, side)
   }
   if (undercutView && viewer.standingIn && !is2D && state.mode === 'なし') {
     // アンダーカットの候補: the class where the cursor is
@@ -4342,6 +4398,8 @@ testHooks.__cadAlignPick = (clientX: number, clientY: number) => {
   const r = alignPicker()?.pick(toNdc(clientX, clientY), 'any')
   return r ? { partId: r.partId, kind: r.kind, id: r.id, point: r.point.toArray() } : null
 }
+// 左右に見比べる: where the line is (a fraction of the width; null: not split) and whether it is shown
+testHooks.__cadSwipe = () => ({ at: viewer.splitAt, shown: !swipeBar.classList.contains('hidden') })
 // 面の変化: the faces' comparison of the comparison shown (null: none, or not yet)
 testHooks.__cadFaceChanges = () => faceChanges
 testHooks.__cadPick = (clientX: number, clientY: number) => {
