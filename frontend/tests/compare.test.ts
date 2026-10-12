@@ -7,7 +7,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 
-import { bvhOfParts, compare, diagonalOf, partEdges, signedDistances, subdivide, type Surface } from '../src/compare.ts'
+import { bvhOfParts, compare, diagonalOf, partEdges, placesOfParts, signedDistances, subdivide, type Surface } from '../src/compare.ts'
 
 type V = [number, number, number]
 
@@ -172,4 +172,26 @@ test('a small part beside a large one, far off, keeps its own resolution (Codex 
   const walls = [...vertices(sa)].filter(([x, y, z]) => z > 0.001 && z < 0.199 && ((Math.abs(x - 0.4) < 1e-6 && y > 0.4) || (Math.abs(y - 0.4) < 1e-6 && x > 0.4)))
   assert.ok(walls.length > 20, `${walls.length} points on the notch's walls`)
   for (const [x, y, z, o] of walls) assert.ok(Math.abs(o + Math.min(z, 0.2 - z, x, 1 - x, y, 1 - y)) < 1e-4, `wall ${[x, y, z]}: ${o}`)
+})
+
+test("a small part's change beside a large one is a place of its own size (Codex on #107)", () => {
+  // the notch filled at a 1/10 scale (b's top, bottom and walls over it are outside a),
+  // and a 1 m box 10 m away the same in both: the largest edge (the box's,
+  // 11.5 mm) would make the smallest place 66 mm², over the whole small part
+  const scale = (s: Surface, k: number): Surface => ({ ...s, positions: s.positions.map((v) => v * k) })
+  const L: [number, number][] = [[0, 0], [10, 0], [10, 4], [4, 4], [4, 10], [0, 10]]
+  const big = box([10000, 0, 0], [11000, 1000, 1000])
+  const a = [scale(prism(L, 2), 0.1), big]
+  const b = [scale(box([0, 0, 0], [10, 10, 2]), 0.1), big]
+  const { b: sb } = compare(a, b)
+  assert.equal(sb.parts.length, 2)
+  const places = placesOfParts(sb, (i) => sb.offset[i] > 0.01, (i) => sb.offset[i])
+  assert.equal(places.length, 1, JSON.stringify(places))
+  const [q] = places
+  // over the notch, b's top and bottom 0.36 mm² each and its two outer walls
+  // 0.12 mm² each, less the foot band (the tolerance and half a finer edge)
+  assert.ok(q.area > 0.85 && q.area <= 0.96, `${q.area} mm²`)
+  for (let k = 0; k < 2; k++) assert.ok(q.min[k] >= 0.4 - 1e-6 && q.max[k] <= 1 + 1e-6, `within the notch: ${q.min} ${q.max}`)
+  // the far corner's edge is 0.6 from the notch's walls
+  assert.ok(Math.abs(q.peak - 0.6) < 1e-4, `the farthest: ${q.peak}`)
 })

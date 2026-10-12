@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three'
 
-import { placesOf, type Comparison, type Place, type Sampled, type Surface } from './compare.ts'
+import { placesOfParts, type Comparison, type Place, type Sampled, type Surface } from './compare.ts'
 import type { CompareReply } from './compareworker.ts'
 import { palette } from './theme.ts'
 
@@ -166,8 +166,8 @@ export class CompareView {
     const ch = this.changes()
     const tol = this.tolerance
     const n = this.newSide, o = this.oldSide
-    const added = placesOf(this.result[n], (i) => ch[n][i] > tol, this.result.edge, (i) => ch[n][i]).sort((a, b) => b.peak - a.peak)
-    const removed = placesOf(this.result[o], (i) => ch[o][i] < -tol, this.result.edge, (i) => -ch[o][i])
+    const added = placesOfParts(this.result[n], (i) => ch[n][i] > tol, (i) => ch[n][i]).sort((a, b) => b.peak - a.peak)
+    const removed = placesOfParts(this.result[o], (i) => ch[o][i] < -tol, (i) => -ch[o][i])
       .map((q) => ({ ...q, peak: -q.peak }))
       .sort((a, b) => a.peak - b.peak)
     return { added, removed }

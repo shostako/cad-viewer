@@ -39,12 +39,23 @@ export interface Sampled {
    * - inside it (0 on it, to the last 1e-6 of the size)
    */
   offset: Float32Array
+  /**
+   * each part's run (the parts follow each other): its first vertex, its first
+   * index (of `indices`), and the edge length its triangles were cut to
+   */
+  parts: SampledPart[]
+}
+
+export interface SampledPart {
+  start: number
+  triStart: number
+  edge: number
 }
 
 export interface Comparison {
   a: Sampled
   b: Sampled
-  /** the longest edge length a part's triangles were cut to */
+  /** the longest edge length a part's triangles were cut to (each part's own: Sampled.parts) */
   edge: number
 }
 
@@ -130,10 +141,14 @@ export const tinyOf = (s: Surface): number => Math.max(diagonalOf([s]) * 1e-6, 1
  * the same segment, cut alike or not: no gap in the surface). Normals are the
  * display normals blended across each triangle.
  */
-export function subdivide(parts: Surface[], L: number | readonly number[]): Omit<Sampled, 'offset'> & { starts: number[] } {
+export function subdivide(
+  parts: Surface[],
+  L: number | readonly number[],
+): Omit<Sampled, 'offset' | 'parts'> & { starts: number[]; triStarts: number[] } {
   const ns = cuts(parts, typeof L === 'number' ? parts.map(() => L) : L)
-  /** where each part's vertices start (they run together, a part after the other) */
+  /** where each part's vertices start (they run together, a part after the other), and its indices */
   const starts: number[] = []
+  const triStarts: number[] = []
   const nv = finerVertices(parts, ns)
   let nt = 0
   for (const list of ns) for (const n of list) nt += n * n
@@ -156,6 +171,7 @@ export function subdivide(parts: Surface[], L: number | readonly number[]): Omit
     // the part's own vertices first, at base + their index
     const base = v
     starts.push(v)
+    triStarts.push(t)
     for (let i = 0; i < P.length / 3; i++) put(P[3 * i], P[3 * i + 1], P[3 * i + 2], N[3 * i], N[3 * i + 1], N[3 * i + 2])
     ns[pi].forEach((n, k) => {
       const a = ix[3 * k], b = ix[3 * k + 1], c = ix[3 * k + 2]
@@ -192,7 +208,7 @@ export function subdivide(parts: Surface[], L: number | readonly number[]): Omit
       }
     })
   })
-  return { positions, normals, indices, starts }
+  return { positions, normals, indices, starts, triStarts }
 }
 
 /** one BVH over all of a version's parts (their triangles in order) */
@@ -301,7 +317,13 @@ function measured(parts: Surface[], edges: number[], other: Surface[]): Sampled 
       offset.set(signedDistances(f.positions.subarray(3 * from, 3 * to), bvh, tinyOf(s)), from)
     })
   }
-  return { positions: f.positions, normals: f.normals, indices: f.indices, offset }
+  return {
+    positions: f.positions,
+    normals: f.normals,
+    indices: f.indices,
+    offset,
+    parts: parts.map((_, k) => ({ start: f.starts[k], triStart: f.triStarts[k], edge: edges[k] })),
+  }
 }
 
 /** both versions cut finer and measured against each other */
@@ -432,4 +454,25 @@ export function placesOf(
     }
   }
   return [...places.values()].filter((q) => q.area >= (edge * edge) / 2).map(({ best: _best, ...q }) => q)
+}
+
+/**
+ * placesOf for each part of a sampled version on its own, with the edge its
+ * triangles were cut to (a small part beside a large one keeps its own: with
+ * the largest edge, a small part's places would be under the smallest place
+ * and dropped, Codex on #107). `flagged` and `value` take the version's vertex
+ * numbers. A place is never of two parts.
+ */
+export function placesOfParts(s: Sampled, flagged: (i: number) => boolean, value?: (i: number) => number): Place[] {
+  const n = s.positions.length / 3
+  const out: Place[] = []
+  s.parts.forEach((part, k) => {
+    const from = part.start, to = k + 1 < s.parts.length ? s.parts[k + 1].start : n
+    const t0 = part.triStart, t1 = k + 1 < s.parts.length ? s.parts[k + 1].triStart : s.indices.length
+    const indices = new Uint32Array(t1 - t0)
+    for (let j = 0; j < indices.length; j++) indices[j] = s.indices[t0 + j] - from
+    const view = { positions: s.positions.subarray(3 * from, 3 * to), normals: s.normals.subarray(3 * from, 3 * to), indices }
+    out.push(...placesOf(view, (i) => flagged(i + from), part.edge, value && ((i) => value(i + from))))
+  })
+  return out
 }
