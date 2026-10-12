@@ -2494,7 +2494,9 @@ function alignText(): string {
   if (!a || !compareOther) return ''
   const { angle, axis } = turnAngle(a.motion.r)
   const turned = angle < 5e-3 ? '回さず' : `回転 ${angle.toFixed(2)}°（軸 ${dirText(axis)}）`
-  const moved = `比べる版を${turned}、真ん中を ${modelPoint(shiftOf(a.motion, compareOther.centre))} mm 動かした`
+  // (a move under the last digit shown is 0: not -0.000)
+  const shift = shiftOf(a.motion, compareOther.centre).map((v) => (Math.abs(v) < 5e-4 ? 0 : v))
+  const moved = `比べる版を${turned}、真ん中を ${modelPoint(shift)} mm 動かした`
   if (a.kind === 'auto') {
     const f = a.found.fits[a.at]
     const from = a.from === 'datums' ? '基準の合わせから詰めた。' : ''
