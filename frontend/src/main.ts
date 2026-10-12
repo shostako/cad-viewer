@@ -22,6 +22,7 @@ import {
   type ModelProperties,
   type ThickPart,
   measureFaces,
+  __stallNextFaces,
 } from './api'
 import { CursorTip, HoverProbe, type TipContent } from './cursortip'
 import { foldButton } from './cardfold'
@@ -2253,7 +2254,11 @@ async function compareWith(file: File): Promise<void> {
     compareFailed(file.name, e)
     return
   }
-  await runComparison(null, gen)
+  // the model where the legend leaves room (a low window: it would cover the model, #59 P2);
+  // once more when 面の変化 has filled the legend (it comes later, Codex on #115)
+  fitWhenFaces = true
+  if ((await runComparison(null, gen)) === 'shown') viewer.fitToView()
+  else fitWhenFaces = false
 }
 /** the comparison could not be made: the line says why (nothing of it is left) */
 function compareFailed(name: string, e: unknown): void {
@@ -2359,6 +2364,8 @@ let faceChanges: FaceComparison | null = null
 let faceAt = -1
 /** counts the asks: a late answer for an older comparison is dropped */
 let faceGen = 0
+/** a comparison just shown: fit again once its 面の変化 is in the legend (not if the view was moved since) */
+let fitWhenFaces = false
 function facesOf(modelId: string, names: Map<number, string>): Promise<PartFaces[]> {
   let p = facesCache.get(modelId)
   if (!p) {
@@ -2374,7 +2381,10 @@ async function updateFaceChanges(): Promise<void> {
   faceChanges = null
   faceAt = -1
   const other = compareOther
-  if (!compareView || !other?.brep || !frameTool.available || !currentModelId) return
+  if (!compareView || !other?.brep || !frameTool.available || !currentModelId) {
+    fitWhenFaces = false // no 面の変化 to wait for
+    return
+  }
   const modelId = currentModelId
   try {
     const [a, b] = await Promise.all([facesOf(modelId, checkPartNames), facesOf(other.modelId, new Map(other.parts.map((p) => [p.id, p.name])))])
@@ -2382,6 +2392,11 @@ async function updateFaceChanges(): Promise<void> {
     const aNew = compareView.newSide === 'a'
     faceChanges = compareFaces(aNew ? b : a, aNew ? a : b, aNew ? { old: 'b', new: 'a' } : { old: 'a', new: 'b' }, compareAlign?.motion ?? IDENTITY_MOTION, compareView.tolerance)
     renderCompareLegend(compareLegend, compareView, compareNames, compareNote, compareNav, alignText(), faceRowsNow())
+    if (fitWhenFaces) {
+      fitWhenFaces = false
+      // the view turned or zoomed while 面の変化 was asked for: it stays (Claude on #115)
+      if (viewer.atLastFit) viewer.fitToView()
+    }
   } catch {
     // no faces to tell (the legend stays without them)
   }
@@ -2457,6 +2472,7 @@ function stopCompare(): void {
   stopAlignPick()
   compareOther = null
   compareAlign = null
+  fitWhenFaces = false
   faceGen++
   faceChanges = null
   if (compareView) {
@@ -4305,6 +4321,8 @@ testHooks.__cadProject = (x: number, y: number, z: number) => {
   }
 }
 testHooks.__cadStallMeasure = (ms: number) => __stallNextMeasure(ms)
+// the next 面の変化's faces come this much later
+testHooks.__cadStallFaces = (ms: number) => __stallNextFaces(ms)
 /** the place a legend's button went to last (spotnav.ts), or null */
 testHooks.__cadSpot = () => spotNav.current()
 /** the problem list on screen: its rows (kind, part, value, place), what could not be judged, the row gone to */
