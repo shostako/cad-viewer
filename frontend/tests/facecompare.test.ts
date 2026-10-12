@@ -69,6 +69,14 @@ test('a hole made larger: its radius +0.50', () => {
   assert.equal(r.changes[0].text, '円筒 R3.00 → R3.50: 半径 +0.50 mm')
 })
 
+test('a torus whose large radius changed: told by it (Codex on #111)', () => {
+  const torus = (R: number, r: number): FaceInfo => ({ id: next++, surface: 'torus', axis: [0, 0, 1], center: [0, 0, 3], radius: r, majorRadius: R, area: 4 * Math.PI ** 2 * R * r, perimeter: 0, centroid: [0, 0, 3] })
+  const r = compareFaces([part('boss', [torus(10, 2)])], [part('boss', [torus(12, 2)])], ab, I, 0.15, 100)
+  assert.deepEqual(kinds(r), ['resized'])
+  assert.equal(r.changes[0].text, '円環 R2.00: 大きい方の半径 R10.00 → R12.00（+2.00 mm）')
+  assert.ok(Math.abs(r.changes[0].amount - 2) < 1e-12)
+})
+
 test('a part taken away and one added: told as parts, not their faces paired across', () => {
   const plate = boxFaces([0, 0, 0], [60, 40, 3])
   const pin = [hole(50, 30, 2, 10), rect([0, 0, 1], [48, 28, 13], [4, 0, 0], [0, 4, 0]), rect([0, 0, -1], [48, 28, 3], [4, 0, 0], [0, 4, 0])]

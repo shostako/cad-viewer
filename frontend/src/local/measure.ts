@@ -461,7 +461,7 @@ export class Measurer {
   private faces(): Answer {
     const parts = this.meshes.map((m) => {
       const listed: Answer[] = []
-      for (let i = 1; i <= m.faceMap.Extent(); i++) {
+      for (let i = 1; i <= m.faceMap.Size(); i++) {
         const { type: _type, ...info } = this.faceInfo({ partId: m.part.id, kind: 'face', id: i }, null)
         listed.push({ id: i, ...info })
       }

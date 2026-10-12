@@ -235,12 +235,25 @@ function changeOf(o: FaceInfo, n: FaceInfo, tol: number): { kind: FaceChangeKind
         }
       }
       const dr = n.radius! - o.radius!
+      const cost = Math.abs(dr) + norm(sub(n.centroid, o.centroid))
+      // a torus whose large radius changed (Codex on #111): told by it (with the small one if it changed too)
+      const dR = o.surface === 'torus' ? n.majorRadius! - o.majorRadius! : 0
+      if (Math.abs(dR) > tol) {
+        const small = Math.abs(dr) > tol ? `、小さい方 R${o.radius!.toFixed(2)} → R${n.radius!.toFixed(2)}（${signed(dr)} mm）` : ''
+        return {
+          kind: 'resized',
+          text: `${faceName(o)}: 大きい方の半径 R${o.majorRadius!.toFixed(2)} → R${n.majorRadius!.toFixed(2)}（${signed(dR)} mm）${small}`,
+          short: `${faceName(o)}: 大きい方 R${o.majorRadius!.toFixed(2)} → R${n.majorRadius!.toFixed(2)}`,
+          amount: Math.max(Math.abs(dR), Math.abs(dr)),
+          cost: cost + Math.abs(dR),
+        }
+      }
       return {
         kind: 'resized',
         text: `${faceName(o)} → R${n.radius!.toFixed(2)}: 半径 ${signed(dr)} mm`,
         short: `${faceName(o)} → R${n.radius!.toFixed(2)}`,
         amount: Math.abs(dr),
-        cost: Math.abs(dr) + norm(sub(n.centroid, o.centroid)),
+        cost,
       }
     }
     case 'cone': {
