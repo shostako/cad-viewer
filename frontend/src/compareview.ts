@@ -13,7 +13,7 @@
  */
 import * as THREE from 'three'
 
-import type { Comparison, Sampled, Surface } from './compare.ts'
+import { placesOfParts, type Comparison, type Place, type Sampled, type Surface } from './compare.ts'
 import type { CompareReply } from './compareworker.ts'
 import { palette } from './theme.ts'
 
@@ -155,6 +155,24 @@ export class CompareView {
     return statsOf([ch.a, ch.b])
   }
 
+  /**
+   * The places that changed, the largest change first: what was added, on the
+   * new version's surface where it is outside the old one; what was removed,
+   * on the old version's where it is outside the new one (each change once:
+   * the other side of it is inside the other version, hidden). Their peak is
+   * the largest change there (removed: negative).
+   */
+  places(): { added: Place[]; removed: Place[] } {
+    const ch = this.changes()
+    const tol = this.tolerance
+    const n = this.newSide, o = this.oldSide
+    const added = placesOfParts(this.result[n], (i) => ch[n][i] > tol, (i) => ch[n][i]).sort((a, b) => b.peak - a.peak)
+    const removed = placesOfParts(this.result[o], (i) => ch[o][i] < -tol, (i) => -ch[o][i])
+      .map((q) => ({ ...q, peak: -q.peak }))
+      .sort((a, b) => a.peak - b.peak)
+    return { added, removed }
+  }
+
   /** the scale's end: the largest change either way (both versions, one scale) */
   private scaleMax(): number {
     const s = this.stats()
@@ -271,12 +289,27 @@ function meshOf(s: Sampled, change: Float32Array, tol: number, max: number, ghos
   return mesh
 }
 
+/** a changed place's line: 「足された +2.00 mm（100.5 mm²）」 */
+export function changeText(kind: 'added' | 'removed', q: Place): string {
+  return `${kind === 'added' ? '足された' : '削られた'} ${signed(q.peak)} mm（${q.area.toFixed(1)} mm²）`
+}
+
+/** the legend's 変わった所へ: a press goes to the next place of the kind; its state beside the button */
+export interface CompareNav {
+  go(kind: 'added' | 'removed'): void
+  /** 「2/3 ・ +2.00 mm」, or '' before the first press */
+  state(kind: 'added' | 'removed'): string
+  /** how many places of the kind (0: no button) */
+  count(kind: 'added' | 'removed'): number
+}
+
 /** the legend: the colour bar from the largest removal to the largest addition, and what the colours mean */
 export function renderCompareLegend(
   el: HTMLElement,
   view: CompareView,
   names: { a: string; b: string },
   note: string,
+  nav: CompareNav | null = null,
 ): void {
   const s = view.stats()
   const max = Math.max(s.added, -s.removed, view.tolerance)
@@ -308,7 +341,7 @@ export function renderCompareLegend(
     tick.textContent = text
     ticks.appendChild(tick)
   }
-  const row = (color: THREE.Color, text: string) => {
+  const row = (color: THREE.Color, text: string, kind?: 'added' | 'removed') => {
     const r = document.createElement('div')
     r.className = 'draft-row'
     const sw = document.createElement('span')
@@ -317,14 +350,32 @@ export function renderCompareLegend(
     const t = document.createElement('span')
     t.textContent = text
     r.append(sw, t)
+    if (kind && nav && nav.count(kind) > 0) {
+      // 変わった所へ (as the other legends' この色の面へ: spotnav.ts)
+      const b = document.createElement('button')
+      b.type = 'button'
+      b.className = 'go-btn'
+      b.dataset.go = `compare-${kind}`
+      b.textContent = '変わった所へ'
+      b.title = `${kind === 'added' ? '足された' : '削られた'}所へ、差の大きい順に寄る（押すたびに次。${nav.count(kind)} 所）`
+      b.addEventListener('click', (e) => {
+        e.stopPropagation()
+        nav.go(kind)
+      })
+      const st = document.createElement('span')
+      st.className = 'go-state'
+      st.dataset.go = `compare-${kind}`
+      st.textContent = nav.state(kind)
+      r.append(b, st)
+    }
     return r
   }
   const rows = [
     title,
     bar,
     ticks,
-    row(theme.added, `足された（新しい版にだけある）最大 ${signed(s.added)} mm`),
-    row(theme.removed, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`),
+    row(theme.added, `足された（新しい版にだけある）最大 ${signed(s.added)} mm`, 'added'),
+    row(theme.removed, `削られた（前の版にだけある）最大 ${signed(s.removed)} mm`, 'removed'),
     row(theme.same, `変わっていない（許容 ±${tol} mm の中）`),
   ]
   if (note) {

@@ -39,12 +39,23 @@ export interface Sampled {
    * - inside it (0 on it, to the last 1e-6 of the size)
    */
   offset: Float32Array
+  /**
+   * each part's run (the parts follow each other): its first vertex, its first
+   * index (of `indices`), and the edge length its triangles were cut to
+   */
+  parts: SampledPart[]
+}
+
+export interface SampledPart {
+  start: number
+  triStart: number
+  edge: number
 }
 
 export interface Comparison {
   a: Sampled
   b: Sampled
-  /** the longest edge length a part's triangles were cut to */
+  /** the longest edge length a part's triangles were cut to (each part's own: Sampled.parts) */
   edge: number
 }
 
@@ -130,10 +141,14 @@ export const tinyOf = (s: Surface): number => Math.max(diagonalOf([s]) * 1e-6, 1
  * the same segment, cut alike or not: no gap in the surface). Normals are the
  * display normals blended across each triangle.
  */
-export function subdivide(parts: Surface[], L: number | readonly number[]): Omit<Sampled, 'offset'> & { starts: number[] } {
+export function subdivide(
+  parts: Surface[],
+  L: number | readonly number[],
+): Omit<Sampled, 'offset' | 'parts'> & { starts: number[]; triStarts: number[] } {
   const ns = cuts(parts, typeof L === 'number' ? parts.map(() => L) : L)
-  /** where each part's vertices start (they run together, a part after the other) */
+  /** where each part's vertices start (they run together, a part after the other), and its indices */
   const starts: number[] = []
+  const triStarts: number[] = []
   const nv = finerVertices(parts, ns)
   let nt = 0
   for (const list of ns) for (const n of list) nt += n * n
@@ -156,6 +171,7 @@ export function subdivide(parts: Surface[], L: number | readonly number[]): Omit
     // the part's own vertices first, at base + their index
     const base = v
     starts.push(v)
+    triStarts.push(t)
     for (let i = 0; i < P.length / 3; i++) put(P[3 * i], P[3 * i + 1], P[3 * i + 2], N[3 * i], N[3 * i + 1], N[3 * i + 2])
     ns[pi].forEach((n, k) => {
       const a = ix[3 * k], b = ix[3 * k + 1], c = ix[3 * k + 2]
@@ -192,7 +208,7 @@ export function subdivide(parts: Surface[], L: number | readonly number[]): Omit
       }
     })
   })
-  return { positions, normals, indices, starts }
+  return { positions, normals, indices, starts, triStarts }
 }
 
 /** one BVH over all of a version's parts (their triangles in order) */
@@ -301,7 +317,13 @@ function measured(parts: Surface[], edges: number[], other: Surface[]): Sampled 
       offset.set(signedDistances(f.positions.subarray(3 * from, 3 * to), bvh, tinyOf(s)), from)
     })
   }
-  return { positions: f.positions, normals: f.normals, indices: f.indices, offset }
+  return {
+    positions: f.positions,
+    normals: f.normals,
+    indices: f.indices,
+    offset,
+    parts: parts.map((_, k) => ({ start: f.starts[k], triStart: f.triStarts[k], edge: edges[k] })),
+  }
 }
 
 /** both versions cut finer and measured against each other */
@@ -309,4 +331,148 @@ export function compare(a: Surface[], b: Surface[], budget = SAMPLE_BUDGET): Com
   const ea = partEdges(a, budget)
   const eb = partEdges(b, budget)
   return { a: measured(a, ea, b), b: measured(b, eb, a), edge: Math.max(0, ...ea, ...eb) }
+}
+
+/** a place on a finer mesh (spots.ts Spot's fields) */
+export interface Place {
+  /** the marker: the vertex of the place's largest value, or (no values) the one nearest its middle; and its normal */
+  at: [number, number, number]
+  normal: [number, number, number]
+  min: [number, number, number]
+  max: [number, number, number]
+  /** mm²: the finer triangles by the share of their corners that are in it */
+  area: number
+  /** the largest value of its vertices (0 without values) */
+  peak: number
+}
+
+/**
+ * The places of the flagged vertices of a finer mesh (subdivide): those
+ * joined by its triangles' edges, and by nearness (closer than the finer
+ * mesh's edge `edge`: the rims of two display triangles are cut into points of
+ * their own, apart by less than that). A place under half a finer triangle
+ * (edge² / 2) is a point where two kinds meet, not a place. `value`: what the
+ * place's peak and marker are taken from (the largest); without it, the marker
+ * is the vertex nearest the place's middle. In no order.
+ */
+export function placesOf(
+  p: { positions: ArrayLike<number>; normals: ArrayLike<number>; indices: ArrayLike<number> },
+  flagged: (i: number) => boolean,
+  edge: number,
+  value?: (i: number) => number,
+): Place[] {
+  const n = p.positions.length / 3
+  const P = p.positions
+  const up = new Int32Array(n).fill(-1)
+  const find = (i: number): number => {
+    let r = i
+    while (up[r] !== r) r = up[r]
+    while (up[i] !== r) {
+      const next = up[i]
+      up[i] = r
+      i = next
+    }
+    return r
+  }
+  const join = (a: number, b: number) => {
+    const ra = find(a), rb = find(b)
+    if (ra !== rb) up[ra] = rb
+  }
+  for (let i = 0; i < n; i++) if (flagged(i)) up[i] = i
+  const ix = p.indices
+  for (let t = 0; t < ix.length; t += 3) {
+    for (const [a, b] of [[ix[t], ix[t + 1]], [ix[t + 1], ix[t + 2]], [ix[t + 2], ix[t]]]) if (up[a] >= 0 && up[b] >= 0) join(a, b)
+  }
+  // nearness: a grid of cells `edge` across; a point and those of the cells around it
+  const reach = edge * 1.01
+  const cell = (v: number) => Math.floor(v / reach)
+  const cells = new Map<string, number[]>()
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const key = `${cell(P[3 * i])},${cell(P[3 * i + 1])},${cell(P[3 * i + 2])}`
+    const list = cells.get(key)
+    if (list) list.push(i)
+    else cells.set(key, [i])
+  }
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const cx = cell(P[3 * i]), cy = cell(P[3 * i + 1]), cz = cell(P[3 * i + 2])
+    for (let dx = -1; dx <= 1; dx++)
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dz = -1; dz <= 1; dz++) {
+          for (const j of cells.get(`${cx + dx},${cy + dy},${cz + dz}`) ?? []) {
+            if (j <= i) continue
+            const d = Math.hypot(P[3 * j] - P[3 * i], P[3 * j + 1] - P[3 * i + 1], P[3 * j + 2] - P[3 * i + 2])
+            if (d <= reach) join(i, j)
+          }
+        }
+  }
+  // each place's area and its middle (area-weighted)
+  const area = new Map<number, number>()
+  const mid = new Map<number, [number, number, number]>()
+  for (let t = 0; t < ix.length; t += 3) {
+    const tri = [ix[t], ix[t + 1], ix[t + 2]]
+    const zero = tri.filter((v) => up[v] >= 0)
+    if (!zero.length) continue
+    const [a, b, c] = tri
+    const ux = P[3 * b] - P[3 * a], uy = P[3 * b + 1] - P[3 * a + 1], uz = P[3 * b + 2] - P[3 * a + 2]
+    const vx = P[3 * c] - P[3 * a], vy = P[3 * c + 1] - P[3 * a + 1], vz = P[3 * c + 2] - P[3 * a + 2]
+    const w = (Math.hypot(uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx) / 2) * (zero.length / 3)
+    const r = find(zero[0])
+    area.set(r, (area.get(r) ?? 0) + w)
+    const m = mid.get(r) ?? [0, 0, 0]
+    for (let k = 0; k < 3; k++) m[k] += (w * (P[3 * a + k] + P[3 * b + k] + P[3 * c + k])) / 3
+    mid.set(r, m)
+  }
+  const places = new Map<number, Place & { best: number }>()
+  for (let i = 0; i < n; i++) {
+    if (up[i] < 0) continue
+    const r = find(i)
+    const a = area.get(r) ?? 0
+    if (!(a > 0)) continue
+    const at: [number, number, number] = [P[3 * i], P[3 * i + 1], P[3 * i + 2]]
+    // the marker's measure: the value (the largest wins), or nearness to the middle
+    let score: number
+    if (value) score = -value(i)
+    else {
+      const m = mid.get(r)!
+      score = Math.hypot(at[0] - m[0] / a, at[1] - m[1] / a, at[2] - m[2] / a)
+    }
+    let place = places.get(r)
+    if (!place) {
+      place = { at, normal: [p.normals[3 * i], p.normals[3 * i + 1], p.normals[3 * i + 2]], min: [...at], max: [...at], area: a, peak: value ? value(i) : 0, best: score }
+      places.set(r, place)
+    } else if (score < place.best) {
+      place.at = at
+      place.normal = [p.normals[3 * i], p.normals[3 * i + 1], p.normals[3 * i + 2]]
+      place.best = score
+      if (value) place.peak = value(i)
+    }
+    for (let k = 0; k < 3; k++) {
+      place.min[k] = Math.min(place.min[k], at[k])
+      place.max[k] = Math.max(place.max[k], at[k])
+    }
+  }
+  return [...places.values()].filter((q) => q.area >= (edge * edge) / 2).map(({ best: _best, ...q }) => q)
+}
+
+/**
+ * placesOf for each part of a sampled version on its own, with the edge its
+ * triangles were cut to (a small part beside a large one keeps its own: with
+ * the largest edge, a small part's places would be under the smallest place
+ * and dropped, Codex on #107). `flagged` and `value` take the version's vertex
+ * numbers. A place is never of two parts.
+ */
+export function placesOfParts(s: Sampled, flagged: (i: number) => boolean, value?: (i: number) => number): Place[] {
+  const n = s.positions.length / 3
+  const out: Place[] = []
+  s.parts.forEach((part, k) => {
+    const from = part.start, to = k + 1 < s.parts.length ? s.parts[k + 1].start : n
+    const t0 = part.triStart, t1 = k + 1 < s.parts.length ? s.parts[k + 1].triStart : s.indices.length
+    const indices = new Uint32Array(t1 - t0)
+    for (let j = 0; j < indices.length; j++) indices[j] = s.indices[t0 + j] - from
+    const view = { positions: s.positions.subarray(3 * from, 3 * to), normals: s.normals.subarray(3 * from, 3 * to), indices }
+    out.push(...placesOf(view, (i) => flagged(i + from), part.edge, value && ((i) => value(i + from))))
+  })
+  return out
 }
