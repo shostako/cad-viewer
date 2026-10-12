@@ -9,6 +9,8 @@ and that is kept over a reload. 面の変化 opened is kept too; in a window of
 800 or more it starts open, and the view is fitted again once it has filled
 the legend.
 """
+import math
+
 from nav_common import TESTDATA, nav_session
 
 # revision_b's box (testdata/make_step_assembly.py make_revisions): the plate and the bosses
@@ -95,4 +97,21 @@ with nav_session() as nav:
     l, t, r, b = legend_rect()
     # (fitted once only, before 面の変化, the full legend covered some 15 % of the outline here)
     assert not (l <= cx <= r and t <= cy <= b) and share < 0.05, (share, (cx, cy), (l, t, r, b))
+    # ---- the view turned while 面の変化 is asked for: not fitted back (Claude on #115) ------------
+    # (two models not asked for their faces yet: each model's are asked once)
+    nav.load(TESTDATA / "compare_hole_b.step", props="live")
+    page.evaluate("window.__cadStallFaces(4000)")
+    with page.expect_file_chooser() as fc:
+        nav.ctl("別の版と比べる").locator("button").click()
+    fc.value.set_files(str(TESTDATA / "compare_hole_a.step"))
+    page.wait_for_function("document.querySelector('#hud-info').textContent.includes('足された')", timeout=120000)
+    assert page.locator("#compare-legend .face-changes").count() == 0, "面の変化 not yet in"
+    page.locator("#viewport canvas").focus()
+    page.keyboard.press("ArrowLeft")  # the view turned
+    nav.settle()
+    turned = page.evaluate("window.__cadView().position")
+    page.wait_for_selector("#compare-legend .face-changes", timeout=60000)
+    nav.settle()
+    now = page.evaluate("window.__cadView().position")
+    assert math.dist(now, turned) < 1e-6, ("the turned view fitted back", turned, now)
     print("OK: 版の比較の凡例（低い窓）")

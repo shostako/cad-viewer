@@ -154,8 +154,18 @@ export interface FacesResult {
   type: 'faces'
   parts: { partId: number; faces: FaceInfo[] }[]
 }
-export function measureFaces(modelId: string) {
+export async function measureFaces(modelId: string) {
+  if (_stallNextFacesMs > 0) {
+    const ms = _stallNextFacesMs
+    _stallNextFacesMs = 0
+    await new Promise((r) => setTimeout(r, ms))
+  }
   return measureRequest<FacesResult>(modelId, { type: 'faces' })
+}
+/** E2E: the next faces' answer comes this much later (版の比較's 面の変化 kept waiting) */
+let _stallNextFacesMs = 0
+export function __stallNextFaces(ms: number): void {
+  _stallNextFacesMs = ms
 }
 
 async function measureRequest<T>(modelId: string, body: unknown): Promise<T> {
