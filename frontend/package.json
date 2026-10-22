@@ -16,7 +16,7 @@
     "@types/three": "^0.185.0",
     "dejavu-fonts-ttf": "2.37.3",
     "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "vite": "^8.1.6"
   },
   "dependencies": {
     "libcascade": "3.0.2",
