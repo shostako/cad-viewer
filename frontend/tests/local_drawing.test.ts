@@ -27,8 +27,14 @@ const PY = path.join(FRONT, 'web-public', 'py') + path.sep
 const TMP = fs.mkdtempSync(path.join(os.tmpdir(), 'cad-viewer-drawing-'))
 // a drawing with nothing drawn: the backend's own error
 fs.writeFileSync(path.join(TMP, 'empty.dxf'), '0\nSECTION\n2\nENTITIES\n0\nENDSEC\n0\nEOF\n')
-// japanese_drawing.dxf last: the drawings before it must not need the Japanese font
-const FILES = [...['plate_drawing.dxf', 'colours_drawing.dxf'].map((f) => path.join(ROOT, 'testdata', f)), path.join(TMP, 'empty.dxf'), path.join(ROOT, 'testdata', 'japanese_drawing.dxf')]
+// the Japanese ones last: the drawings before them must not need the Japanese font.
+// sjis_drawing.dxf: Shift_JIS naming no code page, and SPLINEs ezdxf cannot make a curve of
+const JAPANESE = ['japanese_drawing.dxf', 'sjis_drawing.dxf']
+const FILES = [
+  ...['plate_drawing.dxf', 'colours_drawing.dxf'].map((f) => path.join(ROOT, 'testdata', f)),
+  path.join(TMP, 'empty.dxf'),
+  ...JAPANESE.map((f) => path.join(ROOT, 'testdata', f)),
+]
 /** a drawing's routes besides its SVG (the 3D ones, a wrong one, its sidecar) */
 const ROUTES = [
   'GET mesh.bin', 'POST measure', 'GET thickness.bin', 'GET thickness.bin?method=ball', 'GET thick', 'GET thick.bin',
@@ -97,9 +103,9 @@ const JAPANESE_FONT = 'NotoSansJP-Regular.otf'
 for (const file of FILES) {
   test(`${path.basename(file)}: as the backend draws it`, { skip: !ready && 'no backend venv, testdata or web-public/py' }, async () => {
     const want = golden[file]
-    const japanese = path.basename(file) === 'japanese_drawing.dxf'
+    const japanese = JAPANESE.includes(path.basename(file))
     const up = await backend!.handle('POST', '/api/models', { name: path.basename(file), bytes: new Uint8Array(fs.readFileSync(file)).buffer })
-    // the Japanese font read for a drawing with Japanese in it only, once
+    // the Japanese font read for a drawing with Japanese in it only, once (for the first)
     assert.equal(reads.filter((f) => f === JAPANESE_FONT).length, japanese ? 1 : 0, `${JAPANESE_FONT} read`)
     if (want.error) {
       assert.equal(up.status, 422)

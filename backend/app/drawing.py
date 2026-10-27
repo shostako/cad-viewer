@@ -16,6 +16,16 @@ Japanese in it, a style whose font has none of it is given a font that has
 (CJK_FONTS, the first found). CAD_VIEWER_FONT_DIRS (folders, os.pathsep
 between) adds fonts to the PC's: the tests' and the Web version's (Noto Sans JP).
 
+A DXF before R2007 that names no code page ($DWGCODEPAGE) is read as
+ANSI_1252; Japanese CAD writes such files in Shift_JIS. One whose text is
+Shift_JIS with kana or full-width characters in it is read as ANSI_932
+(_declare_codepage).
+
+A SPLINE whose curve ezdxf cannot make (fit points with one repeated: a
+ZeroDivisionError) stopped the whole drawing. It is made drawable, or left out
+(_repair_splines); any other failure in drawing is a DrawingLoadError, said in
+words, not an internal error.
+
 DWG requires the free ODA File Converter (not redistributable); when absent
 we fail with an actionable message. It is looked for on PATH, and on Windows
 also where its installer puts it (C:\\Program Files\\ODA\\ODAFileConverter
@@ -24,6 +34,7 @@ also where its installer puts it (C:\\Program Files\\ODA\\ODAFileConverter
 from __future__ import annotations
 
 import glob
+import logging
 import os
 import re
 import shutil
@@ -38,6 +49,8 @@ from ezdxf import recover
 from ezdxf.addons.drawing import Frontend, RenderContext, layout
 from ezdxf.addons.drawing.svg import SVGBackend
 from ezdxf.fonts import fonts
+from ezdxf.math import Vec3
+from ezdxf.path import make_path
 
 MAX_SNAP_POINTS = 50000
 
@@ -234,9 +247,72 @@ def _fit_fonts(doc) -> None:
                 _fit_mtext(e, used, cjk, family)
 
 
+# A DXF before R2007 (AC1021) is in the code page its $DWGCODEPAGE names, and ezdxf reads one
+# that names none as ANSI_1252. Japanese CAD writes some without it, in Shift_JIS (a mold
+# drawing, AC1014): every Japanese text garbled. Read as ANSI_932 when its text is all
+# Shift_JIS with kana or full-width characters in it (a Western file read as Shift_JIS
+# hardly gives those: they are Shift_JIS's leads 0x81-0x84, rare or unused in ANSI_1252)
+_ACADVER = re.compile(rb"\$ACADVER[ \t]*(\r?\n)[ \t]*1[ \t]*\r?\n[ \t]*(AC\d{4})[ \t]*\r?\n")
+_KANA_OR_FULL_WIDTH = re.compile("[\u3000-\u30ff\uff01-\uff60]")
+
+
+def _declare_codepage(data: bytes) -> bytes:
+    """a DXF (bytes) that names no code page and is in Shift_JIS (above): $DWGCODEPAGE
+    ANSI_932 put after its $ACADVER. Any other: as it is"""
+    if data.startswith(b"AutoCAD Binary DXF") or b"$DWGCODEPAGE" in data:
+        return data
+    m = _ACADVER.search(data)
+    if m is None or m.group(2) >= b"AC1021":
+        return data  # R2007 and after: UTF-8 whatever it names
+    try:
+        text = [line.decode("cp932") for line in data.splitlines() if not line.isascii()]
+    except UnicodeDecodeError:
+        return data
+    if not any(_KANA_OR_FULL_WIDTH.search(t) for t in text):
+        return data
+    nl = m.group(1)
+    return data[: m.end()] + b"  9" + nl + b"$DWGCODEPAGE" + nl + b"  3" + nl + b"ANSI_932" + nl + data[m.end() :]
+
+
+def _curve_ok(spline) -> bool:
+    """ezdxf makes the SPLINE's curve (what the drawing and its extents are made of)"""
+    try:
+        make_path(spline)
+    except Exception:  # noqa: BLE001 — any: the drawing would not open
+        return False
+    return True
+
+
+def _repair_splines(doc) -> None:
+    """the SPLINEs drawn whose curve ezdxf cannot make, made drawable. Japanese CAD writes fit
+    points with one repeated (two at the same place: a step of zero, ZeroDivisionError): the
+    repeated one dropped. Still not: a polyline through its points (the control points, else
+    the fit points; ezdxf draws a SPLINE of degree 1 rounded at its corners), in its place
+    with its layer, colour and line. Fewer than 2 points: left out"""
+    for e in [e for e in _drawn_entities(doc) if e.dxftype() == "SPLINE" and not _curve_ok(e)]:
+        by_fit = not e.control_point_count()
+        points = Vec3.list(e.fit_points if by_fit else e.control_points)
+        distinct = points[:1]
+        for p in points[1:]:
+            if not p.isclose(distinct[-1], abs_tol=1e-9):
+                distinct.append(p)
+        if by_fit:
+            e.fit_points = distinct
+            if _curve_ok(e):
+                continue
+        layout = e.get_layout()
+        if layout is None:
+            continue
+        if len(distinct) >= 2:
+            layout.add_polyline3d(distinct, dxfattribs=e.graphic_properties())
+        layout.delete_entity(e)
+
+
 def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
     """bytes -> (svg string, meta with snap points and bbox)."""
     ext = filename.rsplit(".", 1)[-1].lower()
+    if ext != "dwg":
+        data = _declare_codepage(data)
     with tempfile.TemporaryDirectory() as tmpdir:
         path = os.path.join(tmpdir, f"input.{ext}")
         with open(path, "wb") as f:
@@ -272,6 +348,19 @@ def load_drawing(data: bytes, filename: str) -> tuple[str, dict[str, Any]]:
                 # recovered with errors — still usable, but note it
                 pass
 
+    try:
+        return _draw(doc)
+    except DrawingLoadError:
+        raise
+    except Exception as e:
+        # an internal error said in words (the upload says "Internal Server Error" only)
+        logging.getLogger(__name__).exception("drawing %s failed", filename)
+        raise DrawingLoadError(f"図面の描画に失敗: {type(e).__name__}: {e}") from e
+
+
+def _draw(doc) -> tuple[str, dict[str, Any]]:
+    """a drawing read: (svg, meta) (load_drawing's)"""
+    _repair_splines(doc)
     _fit_fonts(doc)
     msp = doc.modelspace()
     extents = ezbbox.extents(msp, fast=True)
