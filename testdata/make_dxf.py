@@ -19,8 +19,17 @@ SHX fonts with a big font "注記" at (0,10); an MTEXT with a font change
 (0,30); a dimension 0..50 at y=-10 "全長 <>". And "GATE B" at (60,0) in a style
 on a missing font with Latin only (it keeps its font). Inside a 100x45 outline.
 
+sjis_drawing.dxf: a DXF as a Japanese CAD wrote one that did not open (R2000,
+CRLF): in Shift_JIS without $DWGCODEPAGE (read as ANSI_932, backend/app/drawing.py),
+"樹脂キャップ" at (5,35) and "２．８個取り" at (5,25) in a 100x50 outline, and
+SPLINEs ezdxf cannot make a curve of: fit points (60,10) (70,20) (80,15) (90,25)
+with (90,25) twice (drawn without the repeat), fit points all at (50,5) (left
+out), control points (10,5) (20,15) (30,5) (40,15) with knots all 0 (drawn as
+straight lines through them).
+
 `python make_dxf.py` writes them all; `python make_dxf.py colours_drawing` only that one.
 """
+import io
 import sys
 from pathlib import Path
 
@@ -71,13 +80,42 @@ def japanese_drawing() -> ezdxf.document.Drawing:
     return doc
 
 
-DRAWINGS = {"plate_drawing": plate_drawing, "colours_drawing": colours_drawing, "japanese_drawing": japanese_drawing}
+def sjis_drawing() -> bytes:
+    doc = ezdxf.new("R2000")
+    msp = doc.modelspace()
+    msp.add_lwpolyline([(0, 0), (100, 0), (100, 50), (0, 50)], close=True)
+    msp.add_text("樹脂キャップ", height=5).set_placement((5, 35))
+    msp.add_text("２．８個取り", height=5).set_placement((5, 25))
+    msp.add_spline(fit_points=[(60, 10), (70, 20), (80, 15), (90, 25), (90, 25)])
+    msp.add_spline(fit_points=[(50, 5), (50, 5), (50, 5)])
+    knots = msp.add_spline()
+    knots.dxf.degree = 3
+    knots.control_points = [(10, 5), (20, 15), (30, 5), (40, 15)]
+    knots.knots = [0] * 8
+    s = io.StringIO()
+    doc.write(s)
+    text = s.getvalue()
+    codepage = "  9\n$DWGCODEPAGE\n  3\nANSI_1252\n"
+    assert text.count(codepage) == 1
+    return text.replace(codepage, "").replace("\n", "\r\n").encode("cp932")
+
+
+DRAWINGS = {
+    "plate_drawing": plate_drawing,
+    "colours_drawing": colours_drawing,
+    "japanese_drawing": japanese_drawing,
+    "sjis_drawing": sjis_drawing,
+}
 
 
 def main(names: list[str]) -> None:
     for name in names or list(DRAWINGS):
         path = OUT / f"{name}.dxf"
-        DRAWINGS[name]().saveas(path)
+        drawing = DRAWINGS[name]()
+        if isinstance(drawing, bytes):
+            path.write_bytes(drawing)
+        else:
+            drawing.saveas(path)
         print(f"wrote {path}")
 
 
