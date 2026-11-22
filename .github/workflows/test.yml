@@ -12,22 +12,27 @@ name: test
 
 on:
   pull_request:
-    # a change that touches only Markdown (logs/, docs/, README, CLAUDE.md)
-    # runs nothing: no test reads those files. CHANGELOG.md stays in, because
+    # a change that touches only these Markdown files runs nothing: no test
+    # reads them. CHANGELOG.md is not listed, because
     # backend/tests/test_version.py checks it against the version numbers.
-    # Later patterns override earlier ones. master has no required checks, so
-    # a skipped run does not leave a PR waiting.
-    paths:
-      - '**'
-      - '!**/*.md'
-      - 'CHANGELOG.md'
+    # Named one by one: a '**' + '!**/*.md' filter in `paths` did not match
+    # .github/workflows/test.yml, and the PR that tried it got no run at all.
+    # master has no required checks, so a skipped run leaves no PR waiting.
+    paths-ignore:
+      - 'logs/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'CLAUDE.md'
+      - 'e2e/README.md'
   push:
     branches: [master]
-    # the same filter as for PRs
-    paths:
-      - '**'
-      - '!**/*.md'
-      - 'CHANGELOG.md'
+    # the same list as for PRs
+    paths-ignore:
+      - 'logs/**'
+      - 'docs/**'
+      - 'README.md'
+      - 'CLAUDE.md'
+      - 'e2e/README.md'
 
 permissions:
   contents: read
