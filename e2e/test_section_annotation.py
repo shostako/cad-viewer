@@ -25,6 +25,8 @@ from nav_common import empty_sidecar
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 
 tmp = tempfile.mkdtemp(prefix="cad_section_note_")
 STEP = os.path.join(tmp, "mini_mold.step")
@@ -34,7 +36,7 @@ KEEP = (20, 10, 15)  # on the plate's top, on the side it keeps (the block is be
 
 
 def load_model(page):
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", STEP)
     page.wait_for_function(
@@ -56,7 +58,7 @@ try:
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         empty_sidecar(page, STEP)  # a run that failed half way may have left its note
         load_model(page)
 

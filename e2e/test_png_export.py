@@ -44,6 +44,8 @@ COLOURS_DXF = TESTDATA / "colours_drawing.dxf"
 if not COLOURS_DXF.exists():
     subprocess.run([str(BACKEND_PY), str(TESTDATA / "make_dxf.py"), "colours_drawing"], check=True)
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 # 全体表示 frames the model clear of the panels (README), so a smaller window
 # draws the mold too small: its dimension and note labels would touch
 VIEW_W, VIEW_H, DPR = 1280, 800, 2
@@ -114,10 +116,10 @@ try:
         page.on("pageerror", lambda e: errors.append(str(e)))
         page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
         page.on("download", lambda d: downloads.append(d))
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         # a fresh context has empty storage; this only guards against a reused profile
         page.evaluate("localStorage.removeItem('cad-viewer:export'); localStorage.removeItem('cad-viewer:view')")
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
 
         def settle():

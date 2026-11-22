@@ -31,8 +31,6 @@ export const FRAME_PROMPTS: Record<FrameStep, string> = {
 
 /** the prompt's own part, after its "座標系: " / "型開き方向: " */
 const promptBody = (step: FrameStep) => FRAME_PROMPTS[step].replace(/^[^:]+: /, '')
-/** what the status line says a step is about */
-const stepName = (step: FrameStep) => (step === 'pull' ? '型開き方向' : '座標系')
 
 /** an axis closer to Z than this (the sine of the angle) cannot make X */
 const PARALLEL_SIN = 1e-6
@@ -103,6 +101,8 @@ export class FrameTool {
   private z: Xyz | null = null
   /** 'pull': what the direction is for */
   private onPull: ((dir: Xyz) => void) | null = null
+  /** what the direction picked is for, on the status line (startPull) */
+  private pullName = '型開き方向'
   /** a click being answered: the next one waits (it is dropped) */
   private asking = false
   /** bumped by a new model and by stop(): a late answer for the old one is dropped */
@@ -142,14 +142,25 @@ export class FrameTool {
    * out of the solid, a straight edge, the axis of a cylinder, a cone or a
    * circle, as the frame's axes are taken. `done` gets it (a unit vector).
    */
-  startPull(done: (dir: Xyz) => void): void {
+  startPull(done: (dir: Xyz) => void, name = '型開き方向'): void {
     if (!this.modelId) return
     this.session++
     this.step = 'pull'
+    this.pullName = name
     this.origin = this.z = null
     this.onPull = done
     this.asking = false
-    this.hooks.say(FRAME_PROMPTS.pull)
+    this.hooks.say(this.prompt('pull'))
+  }
+
+  /** what the status line says a step is about: 座標系, or what the direction picked is for (startPull's name) */
+  private stepName(step: FrameStep): string {
+    return step === 'pull' ? this.pullName : '座標系'
+  }
+
+  /** the line that asks for the step's click (FRAME_PROMPTS, the direction's under its name) */
+  private prompt(step: FrameStep): string {
+    return step === 'pull' ? `${this.pullName}: ${promptBody('pull')}` : FRAME_PROMPTS[step]
   }
 
   /** what the clicks are for now (null: nothing is being chosen) */
@@ -178,7 +189,7 @@ export class FrameTool {
       const got = step === 'origin' ? await originOf(modelId, ref) : await axisOf(modelId, ref)
       if (session !== this.session) return
       // why not, and the step's prompt again: 「座標系: この稜線に中心はない — 原点をクリック（…）」
-      if (typeof got === 'string') return this.hooks.say(`${stepName(step)}: ${got} — ${promptBody(step)}`)
+      if (typeof got === 'string') return this.hooks.say(`${this.stepName(step)}: ${got} — ${promptBody(step)}`)
       if (step === 'pull') {
         const done = this.onPull
         this.step = null
@@ -200,7 +211,7 @@ export class FrameTool {
       this.step = null
       this.hooks.changed(frame)
     } catch (e) {
-      if (session === this.session) this.hooks.say(`${stepName(step)}: 調べられなかった（${e instanceof Error ? e.message : e}）`)
+      if (session === this.session) this.hooks.say(`${this.stepName(step)}: 調べられなかった（${e instanceof Error ? e.message : e}）`)
     } finally {
       if (session === this.session) this.asking = false
     }

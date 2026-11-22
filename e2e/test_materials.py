@@ -3,8 +3,9 @@
 The specification, written out here (not read from the code):
 - 用途 and 材料 are the operation panel's first rows (a 3D model's). 射出成形
   (at first): the seven resins, PMMA at first. 一般: the eight metals, then
-  the resins, SS400 at first; 抜き勾配, 問題の一覧, 型内圧 and the projected
-  area / clamping force rows are not shown (and the list goes off).
+  the resins, SS400 at first; 抜き勾配, 問題の一覧, 型内圧 and the clamping
+  force rows are not shown (and the list goes off); the projected area stays,
+  along 投影の向き. (The 用途 row itself is shown with ?molding only: APP_URL.)
 - Each material starts at the general standards (docs/material-basis.md):
   STANDARD below. 判定の基準 follows the material at first (材料に合わせる):
   the 閾値 and the 必要な勾配 are the material's, the conditions name it and
@@ -37,7 +38,7 @@ import tempfile
 from pathlib import Path
 
 import gui_common
-from nav_common import BASE_URL, TESTDATA, nav_session
+from nav_common import APP_URL, TESTDATA, nav_session
 
 STANDARD = {
     "PMMA": (1.19, 0.64, 0.5), "PC": (1.2, 1.0, 0.5), "ABS": (1.05, 1.14, 0.5), "PP": (0.9, 0.89, 0.5),
@@ -317,7 +318,8 @@ with nav_session() as n:
     assert not row_shown("型内圧 (MPa)") and row_shown("比重 (g/cm³)")
     assert not shown("#check-panel"), "the list goes off"
     page.wait_for_function("document.querySelector('#props-total-mass').textContent !== ''", timeout=10000)
-    assert not shown("#props-total-proj") and not shown("#props-total-clamp"), "no projected area, no clamping force"
+    page.wait_for_function("document.querySelector('#props-total-proj')?.textContent.includes('cm²')", timeout=30000)
+    assert shown("#props-total-proj") and not shown("#props-total-clamp"), "the projected area, no clamping force"
     # the imported SS400 gravity was saved with the card (7.87)
     assert page.inner_text("#props-density") == "SS400 7.87 g/cm³" and mass() == grams(7.87), (page.inner_text("#props-density"), mass())
     assert number("閾値 (mm)") == 0.8
@@ -360,7 +362,7 @@ with nav_session() as n:
     # ================= what the app kept before materials comes along
     ctx = page.context.browser.new_context(viewport={"width": 1280, "height": 800})
     old = ctx.new_page()
-    old.goto(BASE_URL)
+    old.goto(APP_URL)
     old.evaluate(
         """() => {
             localStorage.removeItem('cad-viewer:materials')

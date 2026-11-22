@@ -21,6 +21,8 @@ import engine_net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 DXF = str(TESTDATA / "plate_drawing.dxf")
 PREFS = "cad-viewer:props"
 MATERIALS = "cad-viewer:materials"
@@ -91,7 +93,7 @@ try:
             pg = browser.new_page(viewport={"width": 1280, "height": 900})
             pg.on("pageerror", lambda e: errors.append(str(e)))
             pg.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-            pg.goto(BASE_URL)
+            pg.goto(APP_URL)
             pg.wait_for_load_state("networkidle")
             return pg
 
@@ -101,7 +103,7 @@ try:
         r = engine_net.api(page, "PUT", f"/api/models/{r.json()['id']}/sidecar", {"version": 1, "entries": []})
         assert r.ok, ("empty sidecar", r.status, r.text())
         page.evaluate(f"localStorage.removeItem('{PREFS}'); localStorage.removeItem('{MATERIALS}')")
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
 
         def ctl(name):
@@ -273,7 +275,7 @@ try:
 
         # 7. the material and the gravity typed survive a reload
         page.wait_for_timeout(1000)  # let the sidecar save settle
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
         load(STEP)
         wait_values()

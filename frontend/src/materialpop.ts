@@ -47,6 +47,7 @@ export const MATERIALS_FILE_NAME = 'cad-viewer-材料の基準.json'
 export class MaterialPop {
   readonly el: HTMLElement
   private readonly hooks: MaterialPopHooks
+  private readonly table = document.createElement('table')
   private readonly tbody = document.createElement('tbody')
   private readonly note: HTMLElement
   private readonly lead: HTMLElement
@@ -65,7 +66,7 @@ export class MaterialPop {
     title.textContent = '材料の基準'
     this.lead = document.createElement('div')
     this.lead.className = 'basis-lead'
-    const table = document.createElement('table')
+    const table = this.table
     table.className = 'basis-table'
     const head = document.createElement('tr')
     for (const h of ['材料', '比重', '肉厚 mm', '勾配 °', '厚肉 倍', '根拠', '']) {
@@ -127,11 +128,14 @@ export class MaterialPop {
    * material's: the file and 保存 carry the others along unchanged). `saved`:
    * the file of the values kept (materials.ts materialsFile), what 書き出す writes.
    */
-  show(names: readonly string[], values: Record<string, MaterialValues>, saved: string): void {
+  show(names: readonly string[], values: Record<string, MaterialValues>, saved: string, molding = true): void {
     this.working = Object.fromEntries(Object.entries(values).map(([k, v]) => [k, { ...v }]))
     this.savedFile = saved
-    this.lead.textContent =
-      '材料ごとの比重、肉厚の下限、必要な勾配と厚肉の倍率（樹脂）と根拠。初めは一般的な基準（出典は根拠に）。社内の基準などで直せる。直した行には印が付き、↺ でその行を既定に戻せる'
+    // 一般: the moulding's columns (勾配, 厚肉) are hidden; their values stay and are saved as they were
+    this.table.classList.toggle('no-mold', !molding)
+    this.lead.textContent = molding
+      ? '材料ごとの比重、肉厚の下限、必要な勾配と厚肉の倍率（樹脂）と根拠。初めは一般的な基準（出典は根拠に）。社内の基準などで直せる。直した行には印が付き、↺ でその行を既定に戻せる'
+      : '材料ごとの比重、肉厚の下限と根拠。初めは一般的な基準（出典は根拠に）。社内の基準などで直せる。直した行には印が付き、↺ でその行を既定に戻せる'
     this.tbody.replaceChildren()
     this.rows.clear()
     // 金属 and 樹脂 under a heading each, when both are there (一般)

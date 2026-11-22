@@ -27,7 +27,7 @@ from PIL import Image
 from playwright.sync_api import sync_playwright
 
 from draft_cases import F_DRAFT, FTOP, XW, YW, frustum_stl
-from nav_common import BASE_URL, STEP_SRC, TESTDATA, Nav
+from nav_common import APP_URL, STEP_SRC, TESTDATA, Nav
 from engine_net import Net
 
 STL = str(TESTDATA / "ribbed_plate.stl")
@@ -159,7 +159,7 @@ def main():
                 "**/sidecar",
                 lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
             )
-            page.goto(BASE_URL)
+            page.goto(APP_URL)
             page.evaluate("localStorage.removeItem('cad-viewer:view'); localStorage.removeItem('cad-viewer:draft')")
             page.reload()
             page.wait_for_load_state("networkidle")

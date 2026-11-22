@@ -26,6 +26,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 STL = str(TESTDATA / "ribbed_plate.stl")
 DXF = str(TESTDATA / "plate_drawing.dxf")
@@ -44,7 +46,7 @@ with sync_playwright() as p:
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     # sidecars stay in the page: nothing reaches the shared backend's files
     Net.of(page).route(
@@ -307,7 +309,7 @@ with sync_playwright() as p:
     Net.of(page).unroute("**/mesh.bin")
     meshes[0].continue_()
     wait_until("document.querySelector('#hud-info').textContent.includes('三角形')")
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     assert visible("#empty-hint") and not centred_left_of_panel("#empty-hint")
     assert above_panel("#empty-hint"), "6 the open card under the panel"

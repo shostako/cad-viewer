@@ -47,6 +47,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 # nav_session gives each script a private copy of this (nav.paths["step"])
 STEP_SRC = TESTDATA / "mini_mold.step"
 DXF = str(TESTDATA / "plate_drawing.dxf")
@@ -574,12 +576,13 @@ SLOW_SCENE_TIMEOUT = 90_000
 
 
 @contextmanager
-def nav_session(boxes=(), timeout=None):
+def nav_session(boxes=(), timeout=None, molding=True):
     """A fresh page on the app with cleared view preferences.
 
     boxes: names from BOXES to write as STL files (nav.paths[name]). The page
     must log no errors; the files are removed afterwards. timeout: each step's
     limit in ms (Playwright's 30 s when None; SLOW_SCENE_TIMEOUT for a heavy scene).
+    molding: open APP_URL (the moulding's checks shown); False: BASE_URL, as a user opens it.
 
     nav.paths["step"] is a private copy of mini_mold.step (three trailing
     newlines: its own content hash, so its own sidecar), emptied here. Other
@@ -601,9 +604,10 @@ def nav_session(boxes=(), timeout=None):
             nav = Nav(page, paths)
             page.on("pageerror", lambda e: nav.errors.append(str(e)))
             page.on("console", lambda m: nav.errors.append(m.text) if m.type == "error" else None)
-            page.goto(BASE_URL)
+            url = APP_URL if molding else BASE_URL
+            page.goto(url)
             page.evaluate("localStorage.removeItem('cad-viewer:view')")
-            page.goto(BASE_URL)
+            page.goto(url)
             page.wait_for_load_state("networkidle")
             empty_sidecar(page, paths["step"])
             yield nav

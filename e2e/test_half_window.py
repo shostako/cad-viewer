@@ -38,6 +38,8 @@ import engine_net
 ROOT = Path(__file__).resolve().parents[1]
 TESTDATA = ROOT / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 DXF = str(TESTDATA / "plate_drawing.dxf")
 VERSION = json.loads((ROOT / "frontend" / "package.json").read_text(encoding="utf-8"))["version"]
@@ -60,7 +62,7 @@ with sync_playwright() as p:
     )
 
     def goto():
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
 
     def load(path, done="三角形"):

@@ -2502,6 +2502,13 @@ body.panels-hidden #corner-br {
   color: var(--cv-text-3);
   font-size: var(--cv-fs-xs);
 }
+/* 一般: the moulding's columns (勾配 °, 厚肉 倍) are hidden */
+.basis-table.no-mold thead th:nth-child(4),
+.basis-table.no-mold thead th:nth-child(5),
+.basis-table.no-mold tbody td:nth-child(4),
+.basis-table.no-mold tbody td:nth-child(5) {
+  display: none;
+}
 .basis-table td.basis-none {
   color: var(--cv-text-3);
   text-align: center;

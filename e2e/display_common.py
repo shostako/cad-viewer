@@ -40,7 +40,7 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
-from nav_common import BASE_URL, BG, TESTDATA, box_stl, cross, dot, sub  # noqa: F401 (BG, box_stl: re-exported)
+from nav_common import APP_URL, BASE_URL, BG, TESTDATA, box_stl, cross, dot, sub  # noqa: F401 (BG, box_stl: re-exported)
 import gui_common
 
 MOLD_SRC = TESTDATA / "mini_mold.step"
@@ -509,9 +509,9 @@ def display_session():
             d = Disp(page, tmp, mold)
             page.on("pageerror", lambda e: d.errors.append(str(e)))
             page.on("console", lambda m: d.errors.append(m.text) if m.type == "error" else None)
-            page.goto(BASE_URL)
+            page.goto(APP_URL)
             page.evaluate("localStorage.removeItem('cad-viewer:view')")
-            page.goto(BASE_URL)
+            page.goto(APP_URL)
             page.wait_for_load_state("networkidle")
             yield d
             page.evaluate("localStorage.removeItem('cad-viewer:view'); localStorage.removeItem('cad-viewer:export')")

@@ -33,6 +33,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 BLOCK_TOP = (50, 30, 35)
 PLATE_TOP = (90, 10, 15)
@@ -72,7 +74,7 @@ with sync_playwright() as p:
     Net.of(page).route("**/sidecar", sidecar)
 
     def load():
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
         page.set_input_files("#file-input", STEP)
         page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)

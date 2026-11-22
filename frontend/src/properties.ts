@@ -51,12 +51,17 @@ export type ProjectionState =
  * multi-cavity mould are not in them. The 記録's note, and the values' tooltips
  */
 export const SCOPE_NOTE = '重量・投影面積・型締力は、表示している部品の分だけ（ランナー・スプルーは入らない。多数個取りなら取り数を掛ける）'
+/** the same without the mould (一般: no clamping force, no runner) */
+export const SCOPE_NOTE_GENERAL = '重量・投影面積は、表示している部品の分だけ'
 /** the same on a value's tooltip */
 const SCOPE_TIP = 'ランナー・スプルーの分は入らない（多数個取りなら取り数を掛ける）'
 
-/** what the projected area is, on its row's tooltip */
-export const projectionTitle = (axis: string): string =>
-  `投影面積: 型開き方向（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）。${SCOPE_TIP}`
+/** what the direction is called: the mould's opening (with the clamping force), or the projection's own (一般) */
+const dirWord = (clamp: boolean): string => (clamp ? '型開き方向' : '投影の向き')
+
+/** what the projected area is, on its row's tooltip (`clamp`: for the clamping force, 射出成形) */
+export const projectionTitle = (axis: string, clamp = true): string =>
+  `投影面積: ${dirWord(clamp)}（${axis}）へ投影した、表示している部品の影の面積。表示用メッシュから出す目安（B-rep の真値ではない）。${clamp ? SCOPE_TIP : ''}`
 
 /** 1.19 / 1.20 / 0.90 / 1.234: three decimals, one trailing zero dropped */
 export function fmtDensity(d: number): string {
@@ -170,6 +175,8 @@ export class PropertiesPanel {
   private totalClamp = el('dd', 'props-total-clamp')
   private projection: ProjectionState | null = null
   private pressure = 40
+  /** the clamping force (and the cavity pressure) is shown with the projected area: 射出成形's, not 一般's */
+  private clamp = true
   /** the projected-area row folded away (a short window): the force's row stays */
   private compact = false
   /** that row's height with its gap, last seen while shown */
@@ -275,22 +282,27 @@ export class PropertiesPanel {
     const p = this.projection
     if (p) {
       const mpa = fmtPressure(this.pressure)
+      const along = this.clamp ? `型開き ${p.axis}` : `投影の向き ${p.axis}`
       if (p.state === 'ok') {
         const f = clampForce(p.area, this.pressure)
         rows.push(
-          ['投影面積', { n: p.area / 100, d: 2 }, 'cm²', `${SOURCE.mesh}（型開き ${p.axis}）`],
-          ['型内圧', mpa, 'MPa', SOURCE.input],
-          ['型締力', { n: f.kN, d: 1 }, 'kN', SOURCE.estimate],
-          ['型締力', { n: f.tf, d: 1 }, 'tf', SOURCE.estimate],
+          ['投影面積', { n: p.area / 100, d: 2 }, 'cm²', `${SOURCE.mesh}（${along}）`],
+          ...(this.clamp
+            ? ([
+                ['型内圧', mpa, 'MPa', SOURCE.input],
+                ['型締力', { n: f.kN, d: 1 }, 'kN', SOURCE.estimate],
+                ['型締力', { n: f.tf, d: 1 }, 'tf', SOURCE.estimate],
+              ] satisfies Cell[][])
+            : []),
         )
       } else {
         rows.push(
-          ['投影面積', p.state === 'loading' ? '計算中' : '計算できない', 'cm²', `${SOURCE.mesh}（型開き ${p.axis}）`],
-          ['型内圧', mpa, 'MPa', SOURCE.input],
+          ['投影面積', p.state === 'loading' ? '計算中' : '計算できない', 'cm²', `${SOURCE.mesh}（${along}）`],
+          ...(this.clamp ? ([['型内圧', mpa, 'MPa', SOURCE.input]] satisfies Cell[][]) : []),
         )
       }
     }
-    const note = [v.title, ...v.notes, SCOPE_NOTE].filter(Boolean).join(' ／ ')
+    const note = [v.title, ...v.notes, this.clamp ? SCOPE_NOTE : SCOPE_NOTE_GENERAL].filter(Boolean).join(' ／ ')
     const tables: ReportTable[] = [{ title: '体積・重量', note, head: ['項目', '値', '単位', '出どころ'], rows }]
     if (v.rows?.length) {
       tables.push({
@@ -309,6 +321,13 @@ export class PropertiesPanel {
       })
     }
     return tables
+  }
+
+  /** the clamping force shown with the projected area (射出成形) or not (一般: the projected area alone) */
+  setClamp(shown: boolean): void {
+    if (this.clamp === shown) return
+    this.clamp = shown
+    if (this.data) this.render()
   }
 
   /** cavity pressure (MPa) for the clamping force */
@@ -342,7 +361,15 @@ export class PropertiesPanel {
 
   /** what showing the folded row again would add to the panel (0 when it is not folded) */
   foldedPx(): number {
-    return this.compact && this.projection && this.data && !this.root.classList.contains('hidden') ? this.projRowPx : 0
+    return this.folded && this.projection && this.data && !this.root.classList.contains('hidden') ? this.projRowPx : 0
+  }
+
+  /**
+   * the area's row is folded: asked for (setCompact) while the force's row is
+   * there to keep it on its tooltip; without the force (一般) it is the only row and stays
+   */
+  private get folded(): boolean {
+    return this.compact && this.clamp
   }
 
   /** re-render once for any number of calls in the same task (a tree group toggles its children one by one) */
@@ -416,7 +443,7 @@ export class PropertiesPanel {
     }
     this.totalArea.textContent = t.area !== null ? `${fmtNum(t.area / 100, 2)} cm²` : '—'
     this.totalMass.textContent = t.volume !== null ? `${fmtNum(massGrams(t.volume, this.density), 2)} g` : '—'
-    this.totalMass.title = `表示している部品の重量。ショット重量には、${SCOPE_TIP}`
+    this.totalMass.title = this.clamp ? `表示している部品の重量。ショット重量には、${SCOPE_TIP}` : '表示している部品の重量'
     this.renderProjection()
 
     this.noteEl.textContent = v.notes.join(' ／ ')
@@ -431,8 +458,8 @@ export class PropertiesPanel {
    */
   private renderProjection(): void {
     const p = this.projection
-    for (const e of [this.clampLabel, this.totalClamp]) e.classList.toggle('hidden', !p)
-    for (const e of [this.projLabel, this.totalProj]) e.classList.toggle('hidden', !p || this.compact)
+    for (const e of [this.clampLabel, this.totalClamp]) e.classList.toggle('hidden', !p || !this.clamp)
+    for (const e of [this.projLabel, this.totalProj]) e.classList.toggle('hidden', !p || this.folded)
     if (!p) return
     const sub = (text: string): HTMLSpanElement => {
       const s = el('span', undefined, text)
@@ -442,7 +469,7 @@ export class PropertiesPanel {
     const mpa = `${fmtPressure(this.pressure)} MPa`
     this.projLabel.textContent = '投影' // 投影面積 (the tooltip says so)
     this.clampLabel.textContent = '型締力'
-    this.totalProj.title = projectionTitle(p.axis)
+    this.totalProj.title = projectionTitle(p.axis, this.clamp)
     if (p.state === 'ok') {
       const cm2 = `${fmtNum(p.area / 100, 2)} cm²`
       this.totalProj.replaceChildren(cm2, sub(`（${p.axis}・目安）`))

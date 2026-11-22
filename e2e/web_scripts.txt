@@ -94,3 +94,6 @@ test_compare_auto_align.py
 test_compare_faces.py
 test_compare_swipe.py
 test_compare_narrow.py
+
+# 2026-11-22: the moulding's checks frozen and hidden without ?molding
+test_molding_hidden.py
