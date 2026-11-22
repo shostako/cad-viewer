@@ -1287,8 +1287,13 @@ const materialStore = loadMaterials()
 // The moulding's own checks (抜き勾配, 問題の一覧, 厚肉, the clamping force)
 // are frozen since 2026-11-22: they show only with ?molding in the address,
 // and the 用途 row with them. Without it the model is looked at as 一般 (a
-// 射出成形 kept from before does not come back).
-if (!MOLDING_SHOWN) materialStore.use = 'general'
+// 射出成形 kept from before does not come back). As the 用途's select does, a
+// gravity typed for the material before goes when the material changes with it.
+if (!MOLDING_SHOWN && materialStore.use !== 'general') {
+  const before = current(materialStore)
+  materialStore.use = 'general'
+  if (current(materialStore) !== before) materialStore.density = null
+}
 saveMaterials(materialStore)
 /** the material in use */
 const materialNow = (): string => current(materialStore)
@@ -1648,7 +1653,7 @@ draftFolder
     }
     updateDraft()
   })
-/** the select of the direction (one of the six, or 選んだ向き): 型開き方向 here, 投影の向き in 体積・重量 */
+/** the select of the direction (one of the six, or 選んだ向き): 型開き方向 here, 向き（投影面積） in 体積・重量 (not a name starting 投影: 表示 has 投影) */
 const PULL_DIR_CHOICES = { ...PULL_DIR_OPTIONS, 選んだ向き: 'picked' }
 const pullDirCtl = draftFolder.add(draftState, 'dir', PULL_DIR_CHOICES).name('型開き方向').onChange(choosePull)
 /**
@@ -1695,7 +1700,7 @@ function pullChanged(): void {
   scheduleChecks()
   if (undercutState.enabled) void updateUndercut()
   pullDirCtl.domElement.title = `型開き方向 ${pullLabel()}`
-  if (projDirCtl) projDirCtl.domElement.title = `投影の向き ${pullLabel()}`
+  if (projDirCtl) projDirCtl.domElement.title = `投影面積を出す向き ${pullLabel()}`
 }
 /**
  * 選んだ向き (#59 P2, as SOLIDWORKS's and Fusion's draft analyses take it): a
@@ -3267,8 +3272,8 @@ const pressureCtl = propsFolder
 propsPanel.setPressure(propsPrefs.pressure)
 // 投影の向き: the projected area's direction while 抜き勾配 is hidden (一般),
 // the same as its 型開き方向; 選んだ向き asks for a face or an edge as there
-projDirCtl = propsFolder.add(draftState, 'dir', PULL_DIR_CHOICES).name('投影の向き').onChange(choosePull)
-projDirCtl.domElement.title = `投影の向き ${pullLabel()}`
+projDirCtl = propsFolder.add(draftState, 'dir', PULL_DIR_CHOICES).name('向き（投影面積）').onChange(choosePull)
+projDirCtl.domElement.title = `投影面積を出す向き ${pullLabel()}`
 projPickCtl = propsFolder.add(pullActions, 'pick').name('向きを面・稜線から選ぶ…')
 
 // ---- 用途 and 材料: the first two rows of the operation panel (a 3D model's)

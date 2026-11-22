@@ -29,8 +29,10 @@ TOP = (20, 15 * C - 10 * S, 15 * S + 10 * C)  # the top's middle
 
 with nav_session(molding=False) as nav:
     page = nav.page
-    # 射出成形 kept from before: it must not come back without ?molding
-    page.evaluate("(s) => localStorage.setItem('cad-viewer:materials', s)", json.dumps({"use": "molding"}))
+    # 射出成形 kept from before (PC, with a gravity typed for it): 射出成形 must not come
+    # back without ?molding, and the gravity goes with PC (一般's material is SS400)
+    saved = {"use": "molding", "chosen": {"molding": "PC", "general": "SS400"}, "density": 1.5}
+    page.evaluate("(s) => localStorage.setItem('cad-viewer:materials', s)", json.dumps(saved))
     page.reload()
     page.wait_for_load_state("networkidle")
     nav.load(PART, props="live")
@@ -66,9 +68,10 @@ with nav_session(molding=False) as nav:
         assert folder_shown(name), name
     assert not row_shown("用途"), "the 用途 row is hidden"
     assert row_shown("材料")
+    assert page.inner_text("#props-density") == "SS400 7.85 g/cm³", page.inner_text("#props-density")
 
     # ---- the projected area along 投影の向き (the six; the sign does not matter) ------------
-    direction = nav.ctl("投影の向き").locator("select")
+    direction = nav.ctl("向き（投影面積）").locator("select")
     assert direction.evaluate("s => s.options[s.selectedIndex].text") == "+Z"
     assert shadow() == (12.39, "Z"), shadow()
     no_clamp()
@@ -112,7 +115,7 @@ with nav_session(molding=False) as nav:
     nav.settle()
     for name in ("抜き勾配", "問題の一覧"):
         assert folder_shown(name), name
-    assert not row_shown("投影の向き"), "射出成形 takes the direction from 抜き勾配"
+    assert not row_shown("向き（投影面積）"), "射出成形 takes the direction from 抜き勾配"
     assert row_shown("型内圧")
     page.wait_for_function("document.querySelector('#props-total-clamp')?.offsetParent !== null", timeout=60000)
     assert page.inner_text("#props-clamp-label") == "型締力"
