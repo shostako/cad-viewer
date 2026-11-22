@@ -100,7 +100,7 @@ import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, ty
 /** the moulding's checks are shown (?molding in the address; frozen and hidden otherwise, see materialStore) */
 const MOLDING_SHOWN = new URLSearchParams(location.search).has('molding')
 
-const app =document.querySelector<HTMLDivElement>('#app')!
+const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
   <div id="viewport"></div>
   <div id="viewport2d" class="hidden"></div>
