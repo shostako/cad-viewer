@@ -97,6 +97,9 @@ import { THEME_CHOICES, onTheme, setThemeChoice, themeChoice, type ThemeChoice }
 import { AxisTriad } from './triad'
 import { DISPLAY_STYLES, DRAG_PX, Viewer, type DisplayStyle, type Projection, type RotateMode, type ViewPreset } from './viewer'
 
+/** the moulding's checks are shown (?molding in the address; frozen and hidden otherwise, see materialStore) */
+const MOLDING_SHOWN = new URLSearchParams(location.search).has('molding')
+
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
   <div id="viewport"></div>
@@ -1281,6 +1284,16 @@ const thickState = { ratio: 1.5, nominal: 0 }
 // folder's 必要な勾配, from the start. Kept in this browser (saved once read:
 // what the app kept before materials comes along the first time).
 const materialStore = loadMaterials()
+// The moulding's own checks (抜き勾配, 問題の一覧, 厚肉, the clamping force)
+// are frozen since 2026-11-22: they show only with ?molding in the address,
+// and the 用途 row with them. Without it the model is looked at as 一般 (a
+// 射出成形 kept from before does not come back). As the 用途's select does, a
+// gravity typed for the material before goes when the material changes with it.
+if (!MOLDING_SHOWN && materialStore.use !== 'general') {
+  const before = current(materialStore)
+  materialStore.use = 'general'
+  if (current(materialStore) !== before) materialStore.density = null
+}
 saveMaterials(materialStore)
 /** the material in use */
 const materialNow = (): string => current(materialStore)
@@ -1640,21 +1653,37 @@ draftFolder
     }
     updateDraft()
   })
-const pullDirCtl = draftFolder
-  .add(draftState, 'dir', { ...PULL_DIR_OPTIONS, 選んだ向き: 'picked' })
-  .name('型開き方向')
-  .onChange((dir: PullDir | 'picked') => {
-    // the arrows on the still-focused select move the view (isTextEntry)
-    if (dir === 'picked' && !pickedDir) {
-      // none picked yet: the last of the six stays until one is
-      draftState.dir = lastPreset
-      pullDirCtl.updateDisplay()
-      startPullPick()
-      return
-    }
-    stopPullPick()
-    pullChanged()
-  })
+/** the select of the direction (one of the six, or 選んだ向き): 型開き方向 here, 向き（投影面積） in 体積・重量 (not a name starting 投影: 表示 has 投影) */
+const PULL_DIR_CHOICES = { ...PULL_DIR_OPTIONS, 選んだ向き: 'picked' }
+const pullDirCtl = draftFolder.add(draftState, 'dir', PULL_DIR_CHOICES).name('型開き方向').onChange(choosePull)
+/**
+ * 投影の向き (体積・重量, made with that folder): the same direction as
+ * 型開き方向, for the projected area while the 抜き勾配 folder is hidden (一般)
+ */
+let projDirCtl: ReturnType<typeof gui.add> | null = null
+/** its 面・稜線から選ぶ (体積・重量) */
+let projPickCtl: ReturnType<typeof gui.add> | null = null
+/** what the direction is for: the mould's opening (射出成形), or the projected area's (一般) */
+const pullWord = (): string => (materialStore.use === 'molding' ? '型開き方向' : '投影の向き')
+/** the selects of the direction show draftState.dir again */
+function showPullDir(): void {
+  pullDirCtl.updateDisplay()
+  projDirCtl?.updateDisplay()
+}
+/** one of the selects of the direction chosen */
+function choosePull(dir: PullDir | 'picked'): void {
+  // the arrows on the still-focused select move the view (isTextEntry)
+  if (dir === 'picked' && !pickedDir) {
+    // none picked yet: the last of the six stays until one is
+    draftState.dir = lastPreset
+    showPullDir()
+    startPullPick()
+    return
+  }
+  stopPullPick()
+  showPullDir()
+  pullChanged()
+}
 /** a pick of the direction under way is given up (a direction chosen otherwise: the next click is not a pick, Codex on #105) */
 function stopPullPick(): void {
   if (frameTool.choosing !== 'pull') return
@@ -1667,10 +1696,11 @@ function stopPullPick(): void {
 function pullChanged(): void {
   saveDraftPrefs()
   updateDraft()
-  updateProjection() // the clamping force's projected area follows the direction
+  updateProjection() // the projected area (and the clamping force) follows the direction
   scheduleChecks()
   if (undercutState.enabled) void updateUndercut()
   pullDirCtl.domElement.title = `型開き方向 ${pullLabel()}`
+  if (projDirCtl) projDirCtl.domElement.title = `投影面積を出す向き ${pullLabel()}`
 }
 /**
  * 選んだ向き (#59 P2, as SOLIDWORKS's and Fusion's draft analyses take it): a
@@ -1681,7 +1711,7 @@ function pullChanged(): void {
 function startPullPick(): void {
   if (!contentShown || is2D) return
   if (!frameTool.available) {
-    hudInfo.textContent = '型開き方向を面・稜線から選べるのは STEP・IGES のモデルだけ（メッシュ形式には B-rep の面・稜線が無い）'
+    hudInfo.textContent = `${pullWord()}を面・稜線から選べるのは STEP・IGES のモデルだけ（メッシュ形式には B-rep の面・稜線が無い）`
     return
   }
   if (alignTool.active) giveUpAlign()
@@ -1689,13 +1719,13 @@ function startPullPick(): void {
   frameTool.startPull((dir) => {
     pickedDir = [dir[0], dir[1], dir[2]]
     draftState.dir = 'picked'
-    pullDirCtl.updateDisplay()
+    showPullDir()
     pullChanged()
     forgetHoverPick()
     showModeHint() // the prompt goes
-    hudInfo.textContent = `型開き方向を ${pullLabel()} にした`
+    hudInfo.textContent = `${pullWord()}を ${pullLabel()} にした`
     probe.refresh()
-  })
+  }, pullWord())
   probe.refresh()
 }
 const pullActions = {
@@ -1708,7 +1738,7 @@ const pullActions = {
       const d = draftState.dir === 'picked' ? lastPreset : draftState.dir
       draftState.dir = `${d[0] === '+' ? '-' : '+'}${d[1]}` as PullDir
     }
-    pullDirCtl.updateDisplay()
+    showPullDir()
     pullChanged()
   },
 }
@@ -2695,7 +2725,7 @@ let materialPopAnchor: HTMLElement | null = null
 function showMaterialPop(on: boolean, anchor: HTMLElement): void {
   if (!on) return materialPop.hide()
   materialPopAnchor = anchor
-  materialPop.show(materialsFor(materialStore.use), allMaterialValues(), materialsFile(materialStore))
+  materialPop.show(materialsFor(materialStore.use), allMaterialValues(), materialsFile(materialStore), materialStore.use === 'molding')
   placeBesideColumn(materialPop.el, anchor)
 }
 // a click anywhere else closes it (Esc: its own keys)
@@ -3240,6 +3270,11 @@ const pressureCtl = propsFolder
     savePropsPrefs()
   })
 propsPanel.setPressure(propsPrefs.pressure)
+// 投影の向き: the projected area's direction while 抜き勾配 is hidden (一般),
+// the same as its 型開き方向; 選んだ向き asks for a face or an edge as there
+projDirCtl = propsFolder.add(draftState, 'dir', PULL_DIR_CHOICES).name('向き（投影面積）').onChange(choosePull)
+projDirCtl.domElement.title = `投影面積を出す向き ${pullLabel()}`
+projPickCtl = propsFolder.add(pullActions, 'pick').name('向きを面・稜線から選ぶ…')
 
 // ---- 用途 and 材料: the first two rows of the operation panel (a 3D model's)
 /** the material before a change of the 用途 (a gravity typed was for that material) */
@@ -3320,10 +3355,14 @@ function applyUse(): void {
 function applyUseVisibility(): void {
   const model = modelPanel && !is2D
   const molding = materialStore.use === 'molding'
-  useCtl.show(model)
+  useCtl.show(model && MOLDING_SHOWN)
   materialCtl?.show(model)
   for (const f of [draftFolder, checkFolder]) f.show(model && molding)
   pressureCtl.show(molding)
+  // the direction is 抜き勾配's 型開き方向 there: here only without it
+  projDirCtl?.show(!molding)
+  projPickCtl?.show(!molding)
+  propsPanel.setClamp(molding)
   // 厚肉 is the moulding's (sinks, voids): its rows go with 問題の一覧
   thickRatioCtl.show(molding)
   showNominalRow()
@@ -3350,8 +3389,8 @@ function cancelProjection(): void {
 }
 function updateProjection(): void {
   const modelId = currentModelId
-  // 一般: no mould, no clamping force
-  if (!modelId || is2D || !viewer.hasFaces() || materialStore.use === 'general') {
+  // 一般 too (the projected area along 投影の向き; the clamping force is the moulding's: propsPanel.setClamp)
+  if (!modelId || is2D || !viewer.hasFaces()) {
     cancelProjection()
     return
   }

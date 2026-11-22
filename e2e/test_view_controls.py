@@ -16,6 +16,8 @@ import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 BG = (0x1D, 0x21, 0x26)  # scene background
 
@@ -45,7 +47,7 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
     def load():
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
         page.set_input_files("#file-input", STEP)
         page.wait_for_function(
@@ -99,7 +101,7 @@ with sync_playwright() as p:
         box = img.crop((x0, y0, x1, y1))
         return sum(1 for px in box.getdata() if max(abs(a - b) for a, b in zip(px, BG)) > 6)
 
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.evaluate("localStorage.removeItem('cad-viewer:view')")
     load()
 
@@ -283,7 +285,7 @@ with sync_playwright() as p:
     tctx = browser.new_context(viewport={"width": 1280, "height": 800}, has_touch=True)
     tpage = tctx.new_page()
     tpage.on("pageerror", lambda e: errors.append(str(e)))
-    tpage.goto(BASE_URL)
+    tpage.goto(APP_URL)
     tpage.wait_for_load_state("networkidle")
     tpage.set_input_files("#file-input", STEP)
     tpage.wait_for_function(

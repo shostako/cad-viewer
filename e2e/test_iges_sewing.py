@@ -14,6 +14,8 @@ from playwright.sync_api import sync_playwright
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 IGES = str(TESTDATA / "loose_faces_box.igs")
 BACKEND_PY = Path(__file__).resolve().parents[1] / "backend" / ".venv" / "bin" / "python"
 
@@ -30,7 +32,7 @@ with sync_playwright() as p:
     page.on("pageerror", lambda e: errors.append(str(e)))
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", IGES)
     page.wait_for_function("document.querySelector('#hud-info').textContent.includes('三角形')", timeout=60000)

@@ -13,6 +13,8 @@ import gui_common
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 
 STL = str(TESTDATA / "ribbed_plate.stl")
 
@@ -22,7 +24,7 @@ with sync_playwright() as p:
     errors = []
     page.on("pageerror", lambda e: errors.append(str(e)))
 
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     page.set_input_files("#file-input", STL)
     page.wait_for_function(

@@ -41,6 +41,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 DXF = str(TESTDATA / "plate_drawing.dxf")
 SIZE = (200, 100)  # the drawing's extents (make_dxf.py)
 SMALL, LARGE = (767, 639), (1920, 1080)  # half a screen, a full HD screen
@@ -116,7 +118,7 @@ try:
             "**/sidecar",
             lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {"saved": True}),
         )
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.wait_for_load_state("networkidle")
 
         def settle():

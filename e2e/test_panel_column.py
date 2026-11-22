@@ -29,6 +29,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 # make_step_assembly.py: cavity block top (z 35) and the plate top (z 15)
 CAV_TOP = (50, 30, 35)
@@ -61,9 +63,9 @@ with sync_playwright() as p:
         "**/sidecar",
         lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
     )
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.evaluate("localStorage.clear()")
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
 
     def settle(ms=450):

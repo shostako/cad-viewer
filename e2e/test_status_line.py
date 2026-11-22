@@ -22,7 +22,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from nav_common import BASE_URL, nav_session
+from nav_common import APP_URL, nav_session
 from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
@@ -158,7 +158,7 @@ with nav_session() as n:
         shutil.rmtree(tmp, ignore_errors=True)
 
     # ---- a fresh page, a failed load, the card closed: the empty panel again
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
     bad = Path(tempfile.mkdtemp(prefix="cad_status_bad_")) / "notes.txt"
     try:

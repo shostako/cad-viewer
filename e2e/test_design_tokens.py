@@ -26,6 +26,8 @@ from engine_net import Net
 
 TESTDATA = Path(__file__).resolve().parents[1] / "testdata"
 BASE_URL = os.environ.get("CAD_VIEWER_URL", "http://127.0.0.1:5183")
+# the app with the moulding's checks shown (frozen and hidden without ?molding since 2026-11-22)
+APP_URL = BASE_URL.rstrip("/") + "/?molding"
 STEP = str(TESTDATA / "mini_mold.step")
 
 COLUMN = 264
@@ -51,7 +53,7 @@ with sync_playwright() as p:
         "**/sidecar",
         lambda r: r.fulfill(json={"version": 1, "entries": []} if r.request.method == "GET" else {}),
     )
-    page.goto(BASE_URL)
+    page.goto(APP_URL)
     page.wait_for_load_state("networkidle")
 
     def style(sel, props):

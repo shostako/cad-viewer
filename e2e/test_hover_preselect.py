@@ -26,7 +26,7 @@ import numpy as np
 from PIL import Image
 from playwright.sync_api import sync_playwright
 
-from nav_common import BASE_URL, DXF, STEP_SRC, TESTDATA, Nav, sub
+from nav_common import APP_URL, DXF, STEP_SRC, TESTDATA, Nav, sub
 from engine_net import Net
 
 STEP = str(STEP_SRC)
@@ -69,7 +69,7 @@ def main():
 
         Net.of(page).on_request(on_request)
         nav.stub_sidecar()  # from before the first load
-        page.goto(BASE_URL)
+        page.goto(APP_URL)
         page.evaluate("localStorage.removeItem('cad-viewer:view')")
         page.reload()
         page.wait_for_load_state("networkidle")
