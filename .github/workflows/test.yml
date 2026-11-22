@@ -12,8 +12,22 @@ name: test
 
 on:
   pull_request:
+    # a change that touches only Markdown (logs/, docs/, README, CLAUDE.md)
+    # runs nothing: no test reads those files. CHANGELOG.md stays in, because
+    # backend/tests/test_version.py checks it against the version numbers.
+    # Later patterns override earlier ones. master has no required checks, so
+    # a skipped run does not leave a PR waiting.
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'CHANGELOG.md'
   push:
     branches: [master]
+    # the same filter as for PRs
+    paths:
+      - '**'
+      - '!**/*.md'
+      - 'CHANGELOG.md'
 
 permissions:
   contents: read
