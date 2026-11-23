@@ -19,6 +19,7 @@ free; 位置合わせを外す; Esc gives a choice up; so does opening the 記�
 """
 import csv
 import io
+import json
 import math
 from pathlib import Path
 
@@ -72,13 +73,62 @@ with nav_session(timeout=SLOW_SCENE_TIMEOUT) as nav:
     def hud():
         return page.inner_text("#hud-info")
 
+    def miss_report(p, kind, at, xy, got):
+        """what the page had when the probe before a click missed p (issue #126: on CI the boss's
+        foot was missed for the plate's bottom, 9 mm across from it): the view, the side, what the
+        pixels around take, and the same a second later (still moving, or a steady miss?)"""
+
+        def snap():
+            v = nav.view()
+            q = nav.project(at or p)
+            grid = page.evaluate(
+                """([x, y]) => { const rows = []
+                for (let dy = -3; dy <= 3; dy++) { const row = []
+                  for (let dx = -3; dx <= 3; dx++) {
+                    const r = window.__cadAlignPick(x + dx, y + dy)
+                    row.push(r ? r.kind[0] + r.id : '-') }
+                  rows.push(row.join(' ')) }
+                return rows }""",
+                list(q),
+            )
+            hit = page.evaluate("([x, y]) => window.__cadAlignPick(x, y)", list(q))
+            return {
+                "camera": {k: [round(c, 3) for c in v[k]] for k in ("position", "target", "up")},
+                "projection": v["projection"],
+                "zoom": round(v["zoom"], 4),
+                "xy": [round(c, 1) for c in q],
+                "pick": hit and {"kind": hit["kind"], "id": hit["id"], "point": [round(c, 2) for c in hit["point"]]},
+                "around (±3 px, kind+id)": grid,
+            }
+
+        first = snap()
+        size = page.evaluate("[innerWidth, innerHeight, devicePixelRatio]")
+        s = align_state()
+        page.screenshot(path="/tmp/cad_viewer_compare_align_miss.png")
+        page.wait_for_timeout(1000)
+        later = snap()
+        return json.dumps(
+            {
+                "want": {"point": p, "kind": kind, "at": at},
+                "got": got,
+                "clicked xy": [round(c, 1) for c in xy],
+                "window": size,
+                "side": s["side"],
+                "counts": s["counts"],
+                "now": first,
+                "1 s later": later,
+            },
+            ensure_ascii=False,
+        )
+
     def click_datum(p, kind="face", at=None):
         """click the model point p, or `at` near it (a corner on the outline: just inside it), as
         the side shown has it: what the click takes is checked first (p, or on p's edge)"""
         nav.settle()
         x, y = nav.project(at or p)
         got = page.evaluate("([x, y]) => window.__cadAlignPick(x, y)", [x, y])
-        assert got and got["kind"] == kind and math.dist(got["point"], p) < 0.5, (p, got)
+        if not (got and got["kind"] == kind and math.dist(got["point"], p) < 0.5):
+            raise AssertionError(miss_report(p, kind, at, (x, y), got))
         before = align_state()["counts"]
         page.mouse.click(x, y)
         page.wait_for_function(
